@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kinect Depth Servo Console</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="hero">
+    <div>
+      <p class="eyebrow">Azure Kinect + PCA9685</p>
+      <h1>Depth Servo Console</h1>
+      <p class="lede">Watch the color feed and depth map, drag boxes on the depth map, and tune target depth for channels 0-3.</p>
+    </div>
+    <div class="status-card">
+      <span class="status-dot" id="cameraDot"></span>
+      <div>
+        <strong id="cameraStatus">camera starting</strong>
+        <span id="cameraMeta">waiting for frames</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="feeds">
+      <article class="panel feed-panel">
+        <div class="panel-head">
+          <h2>Color Video</h2>
+          <span class="pill">live</span>
+        </div>
+        <img class="feed-img" id="colorFeed" src="/stream/color.mjpg" alt="Azure Kinect color stream">
+      </article>
+
+      <article class="panel feed-panel depth-panel">
+        <div class="panel-head">
+          <h2>Depth Map</h2>
+          <span class="pill accent">drag to set box</span>
+        </div>
+        <div class="depth-stage" id="depthStage">
+          <img class="feed-img" id="depthFeed" src="/stream/depth.mjpg" alt="Azure Kinect depth stream">
+          <canvas id="depthOverlay" aria-hidden="true"></canvas>
+        </div>
+        <p class="hint" id="clickHint">Selected channel: <strong>0</strong>. Drag on the depth map to set its depth box.</p>
+      </article>
+    </section>
+
+    <aside class="panel controls">
+      <div class="panel-head sticky-head">
+        <div>
+          <h2>Servo Targets</h2>
+          <p>Four channels, four depth boxes, four target depths.</p>
+        </div>
+        <div class="control-buttons">
+          <button class="action start" id="startControl" type="button">Start</button>
+          <button class="action stop" id="stopControl" type="button">Stop</button>
+        </div>
+      </div>
+
+      <div class="control-status" id="controlStatus">control idle</div>
+      <div class="servo-list" id="servoList"></div>
+    </aside>
+  </main>
+
+  <template id="servoTemplate">
+    <section class="servo-card">
+      <button class="select-servo" type="button"></button>
+      <div class="servo-grid">
+        <label>
+          <span>Target depth</span>
+          <input class="target-input" type="number" min="1" step="1" inputmode="decimal">
+        </label>
+        <label>
+          <span>Box X</span>
+          <input class="box-x" type="number" min="0" step="1" inputmode="numeric">
+        </label>
+        <label>
+          <span>Box Y</span>
+          <input class="box-y" type="number" min="0" step="1" inputmode="numeric">
+        </label>
+        <label>
+          <span>Box W</span>
+          <input class="box-width" type="number" min="1" step="1" inputmode="numeric">
+        </label>
+        <label>
+          <span>Box H</span>
+          <input class="box-height" type="number" min="1" step="1" inputmode="numeric">
+        </label>
+        <button class="apply-box" type="button">Apply Box</button>
+      </div>
+      <dl class="readout">
+        <div><dt>Mean depth</dt><dd class="current-depth">--</dd></div>
+        <div><dt>Error</dt><dd class="current-error">--</dd></div>
+        <div><dt>Angle</dt><dd class="angle">--</dd></div>
+        <div><dt>Valid</dt><dd class="valid-pixels">--</dd></div>
+      </dl>
+    </section>
+  </template>
+
+  <script src="/app.js"></script>
+</body>
+</html>
