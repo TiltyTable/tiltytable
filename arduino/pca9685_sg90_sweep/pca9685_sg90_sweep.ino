@@ -1,11 +1,12 @@
 #include <Wire.h>
 
 const uint8_t PCA9685_ADDR = 0x40;
-const uint8_t SERVO_CHANNEL = 0;
+const uint8_t SERVO_CHANNELS = 16;
 
 const float PWM_FREQ_HZ = 50.0;
 const uint16_t SERVO_MIN_US = 500;
 const uint16_t SERVO_MAX_US = 2400;
+const uint16_t SWEEP_STEP_DELAY_MS = 100;
 
 const uint8_t MODE1 = 0x00;
 const uint8_t PRESCALE = 0xFE;
@@ -55,6 +56,12 @@ void writeServoAngle(uint8_t channel, int degrees) {
   setPWM(channel, ticks);
 }
 
+void writeAllServoAngles(int degrees) {
+  for (uint8_t channel = 0; channel < SERVO_CHANNELS; channel++) {
+    writeServoAngle(channel, degrees);
+  }
+}
+
 void setup() {
   Wire.begin();
 
@@ -65,12 +72,12 @@ void setup() {
 
 void loop() {
   for (int angle = 30; angle <= 150; angle++) {
-    writeServoAngle(SERVO_CHANNEL, angle);
-    delay(20);
+    writeAllServoAngles(angle);
+    delay(SWEEP_STEP_DELAY_MS);
   }
 
   for (int angle = 150; angle >= 30; angle--) {
-    writeServoAngle(SERVO_CHANNEL, angle);
-    delay(20);
+    writeAllServoAngles(angle);
+    delay(SWEEP_STEP_DELAY_MS);
   }
 }

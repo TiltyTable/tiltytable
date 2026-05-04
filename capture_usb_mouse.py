@@ -123,6 +123,16 @@ class StewartController:
             raise RuntimeError(response)
         return response
 
+    def fire(self, command: str) -> None:
+        """Send a command without waiting for a response."""
+        line = command.rstrip() + "\n"
+        if self.dry_run or not self.port:
+            print(f"arduino <= {line.strip()}")
+            return
+        if self.fd is None:
+            raise RuntimeError("serial port is not open")
+        os.write(self.fd, line.encode("ascii"))
+
     def enable(self) -> None:
         self.send("enable")
 
@@ -296,6 +306,7 @@ def read_events(device_path: str, args: argparse.Namespace) -> None:
             controller.pose(args.initial_roll, args.initial_pitch)
             last_velocity_sent = time.monotonic()
 
+        serial_fd = controller.fd
         while True:
             timeout_s = next_velocity_timeout(
                 last_velocity_sent,
@@ -304,8 +315,14 @@ def read_events(device_path: str, args: argparse.Namespace) -> None:
                 stop_timeout_s,
                 velocity_active,
             )
-            readable, _, _ = select.select([fd], [], [], timeout_s)
-            if not readable:
+            watch = [fd] if serial_fd is None else [fd, serial_fd]
+            readable, _, _ = select.select(watch, [], [], timeout_s)
+            if serial_fd is not None and serial_fd in readable:
+                try:
+                    os.read(serial_fd, 4096)
+                except OSError:
+                    pass
+            if fd not in readable:
                 last_velocity_sent, velocity_active, pending_dx, pending_dy = maybe_send_velocity(
                     controller,
                     args,
@@ -452,12 +469,12 @@ def main() -> int:
     parser.add_argument("--initial-roll", type=float, default=0.0, help="Starting roll target in degrees")
     parser.add_argument("--initial-pitch", type=float, default=0.0, help="Starting pitch target in degrees")
     parser.add_argument("--heave", type=float, default=0.0, help="Fixed heave target in millimeters")
-    parser.add_argument("--velocity-scale", type=float, default=0.25, help="Degrees/second per mouse count")
-    parser.add_argument("--velocity-rate-hz", type=float, default=12.0, help="Maximum velocity command rate")
-    parser.add_argument("--stop-timeout-ms", type=float, default=120.0, help="Send zero velocity after this much input silence")
+    parser.add_argument("--velocity-scale", type=float, default=0.5, help="Degrees/second per mouse count")
+    parser.add_argument("--velocity-rate-hz", type=float, default=20.0, help="Maximum velocity command rate")
+    parser.add_argument("--stop-timeout-ms", type=float, default=50.0, help="Send zero velocity after this much input silence")
     parser.add_argument("--input-deadband", type=int, default=2, help="Ignore accumulated mouse counts at or below this size")
-    parser.add_argument("--max-roll-rate", type=float, default=8.0, help="Clamp roll velocity to +/- this many deg/s")
-    parser.add_argument("--max-pitch-rate", type=float, default=8.0, help="Clamp pitch velocity to +/- this many deg/s")
+    parser.add_argument("--max-roll-rate", type=float, default=15.0, help="Clamp roll velocity to +/- this many deg/s")
+    parser.add_argument("--max-pitch-rate", type=float, default=15.0, help="Clamp pitch velocity to +/- this many deg/s")
     parser.add_argument("--roll-sign", type=float, choices=(-1.0, 1.0), default=1.0, help="Flip roll direction")
     parser.add_argument("--pitch-sign", type=float, choices=(-1.0, 1.0), default=1.0, help="Flip pitch direction")
     parser.add_argument("--response-wait", type=float, default=0.02, help="Seconds to read Arduino response after each command")
