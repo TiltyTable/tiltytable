@@ -8,16 +8,15 @@ const uint8_t PCA9685_ADDR = 0x40;
 
 // SG90 180-degree servo defaults. If your horn buzzes or binds at the ends,
 // trim these inward with the serial "min" and "max" commands.
-const uint8_t DEFAULT_CHANNEL = 0;
 const float DEFAULT_FREQ_HZ = 50.0;
 const uint16_t DEFAULT_MIN_US = 500;
 const uint16_t DEFAULT_MAX_US = 2400;
+const uint8_t SERVO_CHANNELS = 16;
 
 const uint8_t MODE1 = 0x00;
 const uint8_t PRESCALE = 0xFE;
 const uint8_t LED0_ON_L = 0x06;
 
-uint8_t currentChannel = DEFAULT_CHANNEL;
 float pwmFreqHz = DEFAULT_FREQ_HZ;
 uint16_t minPulseUs = DEFAULT_MIN_US;
 uint16_t maxPulseUs = DEFAULT_MAX_US;
@@ -88,6 +87,22 @@ bool setPWM(int channel, uint16_t onTick, uint16_t offTick) {
   return true;
 }
 
+bool setPWMFullOff(int channel) {
+  if (!validChannel(channel)) {
+    return false;
+  }
+
+  uint8_t reg = LED0_ON_L + 4 * channel;
+  Wire.beginTransmission(PCA9685_ADDR);
+  Wire.write(reg);
+  Wire.write((uint8_t)0);
+  Wire.write((uint8_t)0);
+  Wire.write((uint8_t)0);
+  Wire.write((uint8_t)0x10);  // LEDn_OFF_H full-off bit.
+  Wire.endTransmission();
+  return true;
+}
+
 uint16_t microsecondsToTicks(uint16_t pulseUs) {
   float periodUs = 1000000.0 / pwmFreqHz;
   float ticks = pulseUs * 4096.0 / periodUs;
@@ -114,6 +129,21 @@ void writePulse(int channel, uint16_t pulseUs) {
   Serial.println(ticks);
 }
 
+void writeAllPulses(uint16_t pulseUs) {
+  uint16_t ticks = microsecondsToTicks(pulseUs);
+
+  for (uint8_t channel = 0; channel < SERVO_CHANNELS; channel++) {
+    if (!setPWM(channel, 0, ticks)) {
+      return;
+    }
+  }
+
+  Serial.print(F("OK all pulse_us "));
+  Serial.print(pulseUs);
+  Serial.print(F(" ticks "));
+  Serial.println(ticks);
+}
+
 void writeAngle(int channel, float degrees) {
   if (degrees < 0.0) {
     degrees = 0.0;
@@ -126,9 +156,20 @@ void writeAngle(int channel, float degrees) {
   writePulse(channel, pulseUs);
 }
 
+void writeAllAngles(float degrees) {
+  if (degrees < 0.0) {
+    degrees = 0.0;
+  }
+  if (degrees > 180.0) {
+    degrees = 180.0;
+  }
+
+  uint16_t pulseUs = (uint16_t)(minPulseUs + (maxPulseUs - minPulseUs) * (degrees / 180.0) + 0.5);
+  writeAllPulses(pulseUs);
+}
+
 void turnOff(int channel) {
-  // Full off bit is bit 12 in LEDn_OFF_H.
-  if (!setPWM(channel, 0, 4096)) {
+  if (!setPWMFullOff(channel)) {
     return;
   }
   Serial.print(F("OK channel "));
@@ -136,20 +177,37 @@ void turnOff(int channel) {
   Serial.println(F(" off"));
 }
 
+void turnAllOff() {
+  for (uint8_t channel = 0; channel < SERVO_CHANNELS; channel++) {
+    if (!setPWMFullOff(channel)) {
+      return;
+    }
+  }
+
+  Serial.println(F("OK all off"));
+}
+
+void turnAllOffQuietly() {
+  for (uint8_t channel = 0; channel < SERVO_CHANNELS; channel++) {
+    setPWMFullOff(channel);
+  }
+}
+
 void printHelp() {
   Serial.println(F("PCA9685 serial servo controller"));
   Serial.println(F("Commands:"));
-  Serial.println(F("  a <deg>              set default channel angle, 0-180"));
+  Serial.println(F("  <deg>                set all channels angle, 0-180"));
+  Serial.println(F("  a <deg>              set all channels angle, 0-180"));
   Serial.println(F("  a <ch> <deg>         set channel angle, 0-180"));
-  Serial.println(F("  u <us>               set default channel pulse width"));
+  Serial.println(F("  u <us>               set all channels pulse width"));
   Serial.println(F("  u <ch> <us>          set channel pulse width"));
-  Serial.println(F("  c <ch>               choose default channel, 0-15"));
   Serial.println(F("  min <us>             set angle 0 pulse width"));
   Serial.println(F("  max <us>             set angle 180 pulse width"));
   Serial.println(F("  freq <hz>            set PCA9685 PWM frequency"));
-  Serial.println(F("  off                  disable default channel output"));
+  Serial.println(F("  p                    disable all channel outputs"));
+  Serial.println(F("  off                  disable all channel outputs"));
   Serial.println(F("  off <ch>             disable channel output"));
-  Serial.println(F("Examples: a 90, a 3 45, u 1500, u 3 1200"));
+  Serial.println(F("Examples: a 90, a 3 45, u 1500, u 3 1200, p"));
 }
 
 int splitTokens(char *input, char *tokens[], int maxTokens) {
@@ -202,7 +260,7 @@ void handleCommand(String command) {
   cmd.toLowerCase();
 
   if (count == 1 && isNumberToken(tokens[0])) {
-    writeAngle(currentChannel, atof(tokens[0]));
+    writeAllAngles(atof(tokens[0]));
     return;
   }
 
@@ -213,7 +271,7 @@ void handleCommand(String command) {
 
   if (cmd == "a" || cmd == "angle") {
     if (count == 2) {
-      writeAngle(currentChannel, atof(tokens[1]));
+      writeAllAngles(atof(tokens[1]));
       return;
     }
     if (count == 3) {
@@ -226,7 +284,7 @@ void handleCommand(String command) {
 
   if (cmd == "u" || cmd == "us" || cmd == "pulse") {
     if (count == 2) {
-      writePulse(currentChannel, (uint16_t)atoi(tokens[1]));
+      writeAllPulses((uint16_t)atoi(tokens[1]));
       return;
     }
     if (count == 3) {
@@ -234,21 +292,6 @@ void handleCommand(String command) {
       return;
     }
     Serial.println(F("ERR usage: u <us> or u <ch> <us>"));
-    return;
-  }
-
-  if (cmd == "c" || cmd == "channel") {
-    if (count != 2) {
-      Serial.println(F("ERR usage: c <ch>"));
-      return;
-    }
-    int channel = atoi(tokens[1]);
-    if (!validChannel(channel)) {
-      return;
-    }
-    currentChannel = (uint8_t)channel;
-    Serial.print(F("OK default_channel "));
-    Serial.println(currentChannel);
     return;
   }
 
@@ -297,9 +340,13 @@ void handleCommand(String command) {
     return;
   }
 
-  if (cmd == "off") {
+  if (cmd == "p" || cmd == "pause" || cmd == "off") {
     if (count == 1) {
-      turnOff(currentChannel);
+      turnAllOff();
+      return;
+    }
+    if (cmd == "p" || cmd == "pause") {
+      Serial.println(F("ERR usage: p"));
       return;
     }
     if (count == 2) {
@@ -325,7 +372,7 @@ void setup() {
   write8(MODE1, 0x00);
   delay(10);
   setPWMFreq(DEFAULT_FREQ_HZ);
-  writeAngle(DEFAULT_CHANNEL, 90.0);
+  turnAllOffQuietly();
 
   Serial.println(F("READY"));
   printHelp();

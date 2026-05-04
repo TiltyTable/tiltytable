@@ -1,6 +1,6 @@
 # PCA9685 SG90 Serial Servo Controller
 
-Arduino sketch for driving an SG90 180-degree servo through a PCA9685 PWM driver.
+Arduino sketch for driving up to 16 SG90 180-degree servos through a PCA9685 PWM driver.
 The Jetson talks to the Arduino over USB serial at `115200` baud.
 
 ## Wiring
@@ -9,7 +9,7 @@ The Jetson talks to the Arduino over USB serial at `115200` baud.
 - Arduino `GND` to PCA9685 `GND`
 - Arduino `SDA` to PCA9685 `SDA`
 - Arduino `SCL` to PCA9685 `SCL`
-- Servo signal wire to PCA9685 channel `0` by default
+- Servo signal wires to PCA9685 channels `0` through `15`
 - Servo power supply `+5V` to PCA9685 `V+`
 - Servo power supply ground to PCA9685 `GND`
 
@@ -23,15 +23,14 @@ it. Keep all grounds common: Jetson, Arduino, PCA9685, and servo supply.
 Open the Arduino serial port at `115200` baud and send one command per line.
 
 ```text
-<deg>         set default channel angle, 0-180
-a <deg>       set default channel angle, 0-180
+<deg>         set all channel angles, 0-180
+a <deg>       set all channel angles, 0-180
 a <ch> <deg>  set channel angle, 0-180
-u <us>        set default channel raw pulse width
+u <us>        set all channel raw pulse widths
 u <ch> <us>   set channel raw pulse width
-c <ch>        choose default channel, 0-15
 min <us>      set angle 0 pulse width
 max <us>      set angle 180 pulse width
-off           disable default channel output
+off           disable all channel outputs
 off <ch>      disable channel output
 help          print command help
 ```
@@ -65,6 +64,16 @@ python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 90
 python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --channel 3 45
 python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --pulse-us 1500
 ```
+
+Control one servo at a time from the keyboard:
+
+```bash
+python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --interactive
+```
+
+In interactive mode, left/right selects the previous/next PCA9685 channel, and
+up/down changes the angle in degrees. The terminal prints the selected channel
+and current angle after each keypress. Use `q` to quit.
 
 Or send a raw serial command:
 
