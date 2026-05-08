@@ -4,6 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Kinect Depth Servo Console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=JetBrains+Mono:wght@400;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
@@ -24,13 +27,31 @@
 
   <main class="layout">
     <section class="feeds">
-      <article class="panel feed-panel">
-        <div class="panel-head">
-          <h2>Color Video</h2>
-          <span class="pill">live</span>
-        </div>
-        <img class="feed-img" id="colorFeed" src="/stream/color.mjpg" alt="Azure Kinect color stream">
-      </article>
+      <div class="feed-col">
+        <article class="panel feed-panel">
+          <div class="panel-head">
+            <h2>Color Video</h2>
+            <span class="pill">live</span>
+          </div>
+          <div class="color-stage" id="colorStage">
+            <img class="feed-img" id="colorFeed" src="/stream/color.mjpg" alt="Azure Kinect color stream">
+            <canvas id="colorOverlay" aria-hidden="true"></canvas>
+          </div>
+        </article>
+
+        <article class="panel ball-panel" id="ballSection" hidden>
+          <div class="panel-head">
+            <h2>Ball Position</h2>
+            <span class="pill" id="ballPill">searching</span>
+          </div>
+          <dl class="readout ball-readout">
+            <div><dt>X</dt><dd id="ballX">--</dd></div>
+            <div><dt>Y</dt><dd id="ballY">--</dd></div>
+            <div><dt>Z (depth)</dt><dd id="ballZ">--</dd></div>
+            <div><dt>Radius</dt><dd id="ballR">--</dd></div>
+          </dl>
+        </article>
+      </div>
 
       <article class="panel feed-panel depth-panel">
         <div class="panel-head">
@@ -45,21 +66,23 @@
       </article>
     </section>
 
-    <aside class="panel controls">
-      <div class="panel-head sticky-head">
-        <div>
-          <h2>Servo Targets</h2>
-          <p>Four channels, four depth boxes, four target depths.</p>
+    <div class="right-col">
+      <aside class="panel controls">
+        <div class="panel-head sticky-head">
+          <div>
+            <h2>Servo Targets</h2>
+            <p>Four channels, four depth boxes, four target depths.</p>
+          </div>
+          <div class="control-buttons">
+            <button class="action start" id="startControl" type="button">Start</button>
+            <button class="action stop" id="stopControl" type="button">Stop</button>
+          </div>
         </div>
-        <div class="control-buttons">
-          <button class="action start" id="startControl" type="button">Start</button>
-          <button class="action stop" id="stopControl" type="button">Stop</button>
-        </div>
-      </div>
 
-      <div class="control-status" id="controlStatus">control idle</div>
-      <div class="servo-list" id="servoList"></div>
-    </aside>
+        <div class="control-status" id="controlStatus">control idle</div>
+        <div class="servo-list" id="servoList"></div>
+      </aside>
+    </div>
   </main>
 
   <template id="servoTemplate">

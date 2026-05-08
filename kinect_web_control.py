@@ -221,6 +221,7 @@ class WebState:
             "servos": servos,
             "servo_channels": list(SERVO_CHANNELS),
             "depth_image": {"width": width, "height": height},
+            "ball": camera.get_ball_state(),
             "camera": camera.status_snapshot(),
             "control": {
                 "running": control_running,
@@ -255,6 +256,9 @@ class KinectFrameHub:
         self._fps_started_at = time.monotonic()
         self.placeholder_color = make_placeholder_jpeg(960, 540, "Waiting for Kinect color")
         self.placeholder_depth = make_placeholder_jpeg(640, 576, "Waiting for Kinect depth")
+        self.tracker = None
+        self.ball_position = None
+        self.ball_detection = None
 
     def start(self):
         self.thread = threading.Thread(target=self._run, name="kinect-capture", daemon=True)
@@ -300,6 +304,19 @@ class KinectFrameHub:
             self.k4a.start()
             self._set_status("running")
 
+            if getattr(args, "ball_calibration", None):
+                try:
+                    from ball_tracker import BallTracker
+                    _t = BallTracker.from_calibration_file(
+                        args.ball_calibration,
+                        k4a_calibration=self.k4a.calibration,
+                    )
+                    with self.lock:
+                        self.tracker = _t
+                    print(f"Ball tracker ready ({args.ball_calibration})")
+                except Exception as exc:
+                    print(f"Ball tracker disabled: {exc}", file=sys.stderr)
+
             while not self.stop_event.is_set():
                 try:
                     capture = self.k4a.get_capture(timeout=args.timeout_ms)
@@ -329,6 +346,14 @@ class KinectFrameHub:
                     self.fps = self._frame_count / elapsed
                     self._frame_count = 0
                     self._fps_started_at = now
+
+                with self.lock:
+                    _tracker = self.tracker
+                if _tracker is not None and color_bgr is not None:
+                    _pos, _det = _tracker.update(color_bgr, depth_mm)
+                    with self.lock:
+                        self.ball_position = _pos
+                        self.ball_detection = _det
 
                 with self.lock:
                     self.seq += 1
@@ -373,6 +398,26 @@ class KinectFrameHub:
                 "fps": self.fps,
                 "frame_seq": self.seq,
             }
+
+    def get_ball_state(self):
+        with self.lock:
+            if self.tracker is None:
+                return {"enabled": False}
+            pos = self.ball_position
+            det = self.ball_detection
+        if pos is None:
+            return {"enabled": True, "detected": False, "position": None, "pixel": None, "radius_mm": None}
+        return {
+            "enabled": True,
+            "detected": True,
+            "position": {"x": round(pos[0], 1), "y": round(pos[1], 1), "z": round(pos[2], 1)},
+            "pixel": {
+                "cx": round(det.cx),
+                "cy": round(det.cy),
+                "radius": round(det.radius_px),
+            } if det is not None else None,
+            "radius_mm": round(det.radius_mm, 1) if det is not None else None,
+        }
 
 
 class ServoControlRunner:
@@ -774,12 +819,16 @@ def parse_args():
     servo.add_argument("--no-auto-reverse", dest="auto_reverse", action="store_false")
     servo.add_argument("--worse-margin-mm", type=float, default=25.0)
     servo.add_argument("--step-shrink", type=float, default=0.5)
+    parser.add_argument("--ball-calibration", default=None, metavar="JSON",
+                        help="Path to ball_hsv_calibration.json; enables ball tracking (requires --aligned-depth)")
     parser.add_argument("--verbose", action="store_true")
     parser.set_defaults(auto_reverse=True)
 
     args = parser.parse_args()
     if args.aligned_depth and args.color_resolution == "off":
         parser.error("--aligned-depth requires --color-resolution to be enabled")
+    if args.ball_calibration and not args.aligned_depth:
+        parser.error("--ball-calibration requires --aligned-depth")
     if not 1 <= args.jpeg_quality <= 100:
         parser.error("--jpeg-quality must be 1-100")
     if args.max_depth <= 0:

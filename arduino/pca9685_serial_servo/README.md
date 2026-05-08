@@ -65,15 +65,27 @@ python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --channe
 python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --pulse-us 1500
 ```
 
+Initialize all servos from a calibration file:
+
+```bash
+python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --calib arduino/pca9685_serial_servo/calib.txt
+```
+
+The calibration file is one `servo_index,neutral_angle` pair per line. Angles
+must be degrees; `nan` keeps that servo channel disabled.
+
 Control one servo at a time from the keyboard:
 
 ```bash
 python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --interactive
+python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --interactive --calib arduino/pca9685_serial_servo/calib.txt
 ```
 
 In interactive mode, left/right selects the previous/next PCA9685 channel, and
-up/down changes the angle in degrees. The terminal prints the selected channel
-and current angle after each keypress. Use `q` to quit.
+up/down changes the angle in degrees. With `--calib`, neutral angles are used as
+the starting positions and `nan` channels stay off until moved. The terminal
+prints the selected channel and current angle after each keypress. Use `q` to
+quit.
 
 Or send a raw serial command:
 
