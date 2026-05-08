@@ -63,8 +63,8 @@ const float NEUTRAL_CRANK_DEG = 180.0;
 const float ZERO_CRANK_DEG = 102.37;
 const float ZERO_CRANK_DELTA_DEG = ZERO_CRANK_DEG - NEUTRAL_CRANK_DEG;
 
-const float MAX_ROLL_DEG = 10.0;
-const float MAX_PITCH_DEG = 10.0;
+const float MAX_ROLL_DEG = 5.0;
+const float MAX_PITCH_DEG = 5.0;
 const float MIN_HEAVE_MM = -8.0;
 const float MAX_HEAVE_MM = 8.0;
 const unsigned long VELOCITY_UPDATE_MS = 25;

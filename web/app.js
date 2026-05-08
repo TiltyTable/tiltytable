@@ -10,6 +10,14 @@ const cameraMeta = document.querySelector('#cameraMeta');
 const controlStatus = document.querySelector('#controlStatus');
 const startControl = document.querySelector('#startControl');
 const stopControl = document.querySelector('#stopControl');
+const colorFeed = document.querySelector('#colorFeed');
+const colorOverlay = document.querySelector('#colorOverlay');
+const ballSection = document.querySelector('#ballSection');
+const ballPill = document.querySelector('#ballPill');
+const ballX = document.querySelector('#ballX');
+const ballY = document.querySelector('#ballY');
+const ballZ = document.querySelector('#ballZ');
+const ballR = document.querySelector('#ballR');
 
 let selectedChannel = 0;
 let latestState = null;
@@ -69,6 +77,7 @@ function renderState(state) {
     renderServo(servo);
   }
   clickHint.innerHTML = `Selected channel: <strong>${selectedChannel}</strong>. Drag on the depth map to set its depth box.`;
+  renderBall(state.ball);
   drawOverlay();
 }
 
@@ -225,7 +234,7 @@ function drawOverlay() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, rect.width, rect.height);
   ctx.lineWidth = 2;
-  ctx.font = '800 13px Trebuchet MS, sans-serif';
+  ctx.font = '700 12px "JetBrains Mono", monospace';
   ctx.textBaseline = 'middle';
 
   for (const servo of state.servos) {
@@ -282,6 +291,70 @@ stopControl.addEventListener('click', async () => {
 
 window.addEventListener('resize', drawOverlay);
 depthImg.addEventListener('load', drawOverlay);
+colorFeed.addEventListener('load', () => { if (latestState) renderBall(latestState.ball); });
 
 fetchState();
 stateTimer = window.setInterval(fetchState, 350);
+
+function renderBall(ball) {
+  if (!ball || !ball.enabled) {
+    ballSection.hidden = true;
+    clearBallOverlay();
+    return;
+  }
+  ballSection.hidden = false;
+  if (ball.detected) {
+    ballPill.textContent = 'detected';
+    ballPill.className = 'pill detected';
+    ballX.textContent = fmtMm(ball.position?.x);
+    ballY.textContent = fmtMm(ball.position?.y);
+    ballZ.textContent = fmtMm(ball.position?.z);
+    ballR.textContent = fmtMm(ball.radius_mm);
+    if (ball.pixel) drawBallOnColor(ball.pixel);
+  } else {
+    ballPill.textContent = 'searching';
+    ballPill.className = 'pill';
+    ballX.textContent = '--';
+    ballY.textContent = '--';
+    ballZ.textContent = '--';
+    ballR.textContent = '--';
+    clearBallOverlay();
+  }
+}
+
+function drawBallOnColor(pixel) {
+  const rect = colorFeed.getBoundingClientRect();
+  const nw = colorFeed.naturalWidth;
+  const nh = colorFeed.naturalHeight;
+  if (!rect.width || !nw || !nh) return;
+
+  const dpr = window.devicePixelRatio || 1;
+  colorOverlay.width = Math.round(rect.width * dpr);
+  colorOverlay.height = Math.round(rect.height * dpr);
+  colorOverlay.style.width = `${rect.width}px`;
+  colorOverlay.style.height = `${rect.height}px`;
+
+  const ctx = colorOverlay.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, rect.width, rect.height);
+
+  const cx = pixel.cx * rect.width / nw;
+  const cy = pixel.cy * rect.height / nh;
+  const r  = pixel.radius * rect.width / nw;
+
+  ctx.strokeStyle = '#ff3355';
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+  ctx.stroke();
+
+  ctx.fillStyle = '#ff3355';
+  ctx.beginPath();
+  ctx.arc(cx, cy, 3.5, 0, 2 * Math.PI);
+  ctx.fill();
+}
+
+function clearBallOverlay() {
+  const ctx = colorOverlay.getContext('2d');
+  ctx.clearRect(0, 0, colorOverlay.width, colorOverlay.height);
+}
