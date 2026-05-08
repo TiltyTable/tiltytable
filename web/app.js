@@ -19,6 +19,144 @@ const ballY = document.querySelector('#ballY');
 const ballZ = document.querySelector('#ballZ');
 const ballR = document.querySelector('#ballR');
 
+// ── Calibration elements ───────────────────────────────────────────────────
+const calibSection = document.querySelector('#calibSection');
+const calibFeed    = document.querySelector('#calibFeed');
+const calibCanvas  = document.querySelector('#calibCanvas');
+const calibStatus  = document.querySelector('#calibStatus');
+const saveCalib    = document.querySelector('#saveCalib');
+
+const calibSliders = {
+  hlo: { input: document.querySelector('#sHlo'), label: document.querySelector('#lblHlo') },
+  hhi: { input: document.querySelector('#sHhi'), label: document.querySelector('#lblHhi') },
+  slo: { input: document.querySelector('#sSlo'), label: document.querySelector('#lblSlo') },
+  shi: { input: document.querySelector('#sShi'), label: document.querySelector('#lblShi') },
+  vlo: { input: document.querySelector('#sVlo'), label: document.querySelector('#lblVlo') },
+  vhi: { input: document.querySelector('#sVhi'), label: document.querySelector('#lblVhi') },
+};
+
+let calibStreamLoaded = false;
+
+function applyCalibState(calib) {
+  const lo = calib.hsv_low, hi = calib.hsv_high;
+  calibSliders.hlo.input.value = lo[0]; calibSliders.hlo.label.textContent = lo[0];
+  calibSliders.hhi.input.value = hi[0]; calibSliders.hhi.label.textContent = hi[0];
+  calibSliders.slo.input.value = lo[1]; calibSliders.slo.label.textContent = lo[1];
+  calibSliders.shi.input.value = hi[1]; calibSliders.shi.label.textContent = hi[1];
+  calibSliders.vlo.input.value = lo[2]; calibSliders.vlo.label.textContent = lo[2];
+  calibSliders.vhi.input.value = hi[2]; calibSliders.vhi.label.textContent = hi[2];
+}
+
+function renderCalibration(calib) {
+  if (!calib) { calibSection.hidden = true; return; }
+  calibSection.hidden = false;
+  if (!calibStreamLoaded) {
+    calibFeed.src = '/stream/ball_calibration.mjpg';
+    calibStreamLoaded = true;
+  }
+  // Only sync sliders when no slider is focused (avoid fighting user input).
+  if (!Object.values(calibSliders).some(s => document.activeElement === s.input)) {
+    applyCalibState(calib);
+  }
+}
+
+let calibDebounce = null;
+Object.values(calibSliders).forEach(({ input, label }) => {
+  input.addEventListener('input', () => {
+    label.textContent = input.value;
+    clearTimeout(calibDebounce);
+    calibDebounce = setTimeout(pushCalibBounds, 60);
+  });
+});
+
+async function pushCalibBounds() {
+  try {
+    const s = calibSliders;
+    const result = await postJson('/api/ball/calibration/bounds', {
+      h_lo: +s.hlo.input.value, h_hi: +s.hhi.input.value,
+      s_lo: +s.slo.input.value, s_hi: +s.shi.input.value,
+      v_lo: +s.vlo.input.value, v_hi: +s.vhi.input.value,
+    });
+    applyCalibState(result);
+    calibStatus.textContent = '';
+  } catch (e) {
+    calibStatus.textContent = `bounds error: ${e.message}`;
+  }
+}
+
+saveCalib.addEventListener('click', async () => {
+  try {
+    const result = await postJson('/api/ball/calibration/save');
+    calibStatus.textContent = result.ok ? `Saved ✓` : `Save failed: ${result.error}`;
+  } catch (e) {
+    calibStatus.textContent = `save error: ${e.message}`;
+  }
+});
+
+// ── Calibration drag-to-select ─────────────────────────────────────────────
+function syncCalibCanvas() {
+  calibCanvas.width  = calibFeed.clientWidth  || 1;
+  calibCanvas.height = calibFeed.clientHeight || 1;
+}
+new ResizeObserver(syncCalibCanvas).observe(calibFeed);
+calibFeed.addEventListener('load', syncCalibCanvas);
+
+let calibDrag = null;
+const calibCtx = calibCanvas.getContext('2d');
+
+calibCanvas.addEventListener('mousedown', e => {
+  const r = calibCanvas.getBoundingClientRect();
+  calibDrag = { x0: e.clientX - r.left, y0: e.clientY - r.top };
+});
+
+calibCanvas.addEventListener('mousemove', e => {
+  if (!calibDrag) return;
+  const r = calibCanvas.getBoundingClientRect();
+  calibDrag.x1 = e.clientX - r.left;
+  calibDrag.y1 = e.clientY - r.top;
+  calibCtx.clearRect(0, 0, calibCanvas.width, calibCanvas.height);
+  calibCtx.strokeStyle = 'rgba(255,255,255,0.85)';
+  calibCtx.lineWidth = 1.5;
+  calibCtx.strokeRect(calibDrag.x0, calibDrag.y0, calibDrag.x1 - calibDrag.x0, calibDrag.y1 - calibDrag.y0);
+});
+
+calibCanvas.addEventListener('mouseup', async e => {
+  if (!calibDrag) return;
+  const r = calibCanvas.getBoundingClientRect();
+  calibDrag.x1 = e.clientX - r.left;
+  calibDrag.y1 = e.clientY - r.top;
+  calibCtx.clearRect(0, 0, calibCanvas.width, calibCanvas.height);
+
+  // Map CSS coords → stream left-pane natural coords.
+  // The stream image is display_width*2 wide; left pane occupies the first half.
+  const scaleX = calibFeed.naturalWidth  / calibFeed.clientWidth;
+  const scaleY = calibFeed.naturalHeight / calibFeed.clientHeight;
+  const x = Math.round(Math.min(calibDrag.x0, calibDrag.x1) * scaleX);
+  const y = Math.round(Math.min(calibDrag.y0, calibDrag.y1) * scaleY);
+  const w = Math.round(Math.abs(calibDrag.x1 - calibDrag.x0) * scaleX);
+  const h = Math.round(Math.abs(calibDrag.y1 - calibDrag.y0) * scaleY);
+  calibDrag = null;
+
+  if (w < 4 || h < 4) return;
+  try {
+    const result = await postJson('/api/ball/calibration/select', { x, y, w, h });
+    if (result.ok) {
+      applyCalibState(result);
+      calibStatus.textContent = 'Bounds updated from selection.';
+    } else {
+      calibStatus.textContent = 'Selection too small or out of range.';
+    }
+  } catch (e) {
+    calibStatus.textContent = `select error: ${e.message}`;
+  }
+});
+
+calibCanvas.addEventListener('mouseleave', () => {
+  if (!calibDrag) return;
+  calibDrag = null;
+  calibCtx.clearRect(0, 0, calibCanvas.width, calibCanvas.height);
+});
+
 let selectedChannel = 0;
 let latestState = null;
 let stateTimer = null;
@@ -78,6 +216,7 @@ function renderState(state) {
   }
   clickHint.innerHTML = `Selected channel: <strong>${selectedChannel}</strong>. Drag on the depth map to set its depth box.`;
   renderBall(state.ball);
+  renderCalibration(state.ball_calibration);
   drawOverlay();
 }
 

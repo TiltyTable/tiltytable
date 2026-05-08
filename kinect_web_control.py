@@ -42,6 +42,36 @@ from live_capture_viewer import (
     set_display,
 )
 from servo_write import BAUD_RATES
+from ball_calibrate import CalibrationState
+
+
+_CALIB_OVERLAY_BGR   = np.array([50, 220, 50], dtype=np.uint8)
+_CALIB_OVERLAY_ALPHA = 0.45
+
+
+def _render_calibration_jpeg(color_bgr, calib_state, display_width, jpeg_quality):
+    """Render a side-by-side color+mask JPEG for the calibration stream."""
+    w = display_width
+    h_src, w_src = color_bgr.shape[:2]
+    dh = max(1, int(round(h_src * w / w_src)))
+
+    small   = cv2.resize(color_bgr, (w, dh), interpolation=cv2.INTER_AREA)
+    hsv     = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    low, high = calib_state.get_bounds()
+    mask    = cv2.inRange(hsv, low, high)
+
+    overlay = small.copy()
+    overlay[mask > 0] = _CALIB_OVERLAY_BGR
+    left  = cv2.addWeighted(small, 1 - _CALIB_OVERLAY_ALPHA, overlay, _CALIB_OVERLAY_ALPHA, 0)
+    right = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+
+    label = f"H {low[0]}-{high[0]}  S {low[1]}-{high[1]}  V {low[2]}-{high[2]}"
+    for pane in (left, right):
+        cv2.rectangle(pane, (0, dh - 22), (w, dh), (0, 0, 0), -1)
+        cv2.putText(pane, label, (6, dh - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.48, (210, 210, 210), 1, cv2.LINE_AA)
+
+    return encode_jpeg(np.hstack((left, right)), jpeg_quality)
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -222,6 +252,7 @@ class WebState:
             "servo_channels": list(SERVO_CHANNELS),
             "depth_image": {"width": width, "height": height},
             "ball": camera.get_ball_state(),
+            "ball_calibration": camera.get_calib_json(),
             "camera": camera.status_snapshot(),
             "control": {
                 "running": control_running,
@@ -259,6 +290,8 @@ class KinectFrameHub:
         self.tracker = None
         self.ball_position = None
         self.ball_detection = None
+        self.calib_state = None
+        self.calib_jpeg = make_placeholder_jpeg(1280, 360, "Ball calibration not enabled")
 
     def start(self):
         self.thread = threading.Thread(target=self._run, name="kinect-capture", daemon=True)
@@ -310,10 +343,14 @@ class KinectFrameHub:
                     _t = BallTracker.from_calibration_file(
                         args.ball_calibration,
                         k4a_calibration=self.k4a.calibration,
+                        ball_radius_min_mm=20.0,
+                        ball_radius_max_mm=30.0,
                     )
+                    _calib = CalibrationState(args.ball_calibration)
                     with self.lock:
                         self.tracker = _t
-                    print(f"Ball tracker ready ({args.ball_calibration})")
+                        self.calib_state = _calib
+                    print(f"Ball tracker + calibration state ready ({args.ball_calibration})")
                 except Exception as exc:
                     print(f"Ball tracker disabled: {exc}", file=sys.stderr)
 
@@ -349,16 +386,35 @@ class KinectFrameHub:
 
                 with self.lock:
                     _tracker = self.tracker
+                    _calib   = self.calib_state
+
+                # Sync live HSV bounds from calibration state into the tracker.
+                if _calib is not None and _tracker is not None:
+                    _low, _high = _calib.get_bounds()
+                    _tracker.hsv_low  = _low
+                    _tracker.hsv_high = _high
+
                 if _tracker is not None and color_bgr is not None:
                     _pos, _det = _tracker.update(color_bgr, depth_mm)
                     with self.lock:
                         self.ball_position = _pos
                         self.ball_detection = _det
 
+                calib_jpeg = None
+                if _calib is not None and color_bgr is not None:
+                    _calib.store_frame(color_bgr)
+                    calib_jpeg = _render_calibration_jpeg(
+                        color_bgr, _calib,
+                        getattr(args, "ball_calibration_display_width", 640),
+                        args.jpeg_quality,
+                    )
+
                 with self.lock:
                     self.seq += 1
                     self.color_jpeg = color_jpeg
                     self.depth_jpeg = depth_jpeg
+                    if calib_jpeg is not None:
+                        self.calib_jpeg = calib_jpeg
                     self.depth_mm = depth_mm.copy()
                     self.depth_shape = depth_mm.shape[:2]
                     self.status = "running"
@@ -375,9 +431,12 @@ class KinectFrameHub:
             if self.seq == last_seq:
                 self.lock.wait(timeout=timeout)
             seq = self.seq
-            jpeg = self.color_jpeg if kind == "color" else self.depth_jpeg
-            if jpeg is None:
-                jpeg = self.placeholder_color if kind == "color" else self.placeholder_depth
+            if kind == "color":
+                jpeg = self.color_jpeg or self.placeholder_color
+            elif kind == "ball_calibration":
+                jpeg = self.calib_jpeg
+            else:
+                jpeg = self.depth_jpeg or self.placeholder_depth
             return seq, jpeg
 
     def get_depth_snapshot(self):
@@ -398,6 +457,15 @@ class KinectFrameHub:
                 "fps": self.fps,
                 "frame_seq": self.seq,
             }
+
+    def get_calib_state(self):
+        with self.lock:
+            return self.calib_state
+
+    def get_calib_json(self):
+        with self.lock:
+            calib = self.calib_state
+        return calib.to_json() if calib is not None else None
 
     def get_ball_state(self):
         with self.lock:
@@ -573,6 +641,14 @@ class KinectWebHandler(BaseHTTPRequestHandler):
             self.serve_mjpeg("color")
         elif path == "/stream/depth.mjpg":
             self.serve_mjpeg("depth")
+        elif path == "/stream/ball_calibration.mjpg":
+            self.serve_mjpeg("ball_calibration")
+        elif path == "/api/ball/calibration":
+            calib_json = self.camera.get_calib_json()
+            if calib_json is None:
+                self.send_error(404, "ball tracking not enabled")
+                return
+            self.send_json(calib_json)
         else:
             self.send_error(404, "not found")
 
@@ -615,6 +691,39 @@ class KinectWebHandler(BaseHTTPRequestHandler):
             if path == ["api", "control", "stop"]:
                 self.control.stop()
                 self.send_json({"ok": True})
+                return
+            if path == ["api", "ball", "calibration", "bounds"]:
+                calib = self.camera.get_calib_state()
+                if calib is None:
+                    self.send_json({"ok": False, "error": "ball tracking not enabled"}, status=404)
+                    return
+                calib.set_bounds(
+                    int(data["h_lo"]), int(data["h_hi"]),
+                    int(data["s_lo"]), int(data["s_hi"]),
+                    int(data["v_lo"]), int(data["v_hi"]),
+                )
+                self.send_json({**calib.to_json(), "ok": True})
+                return
+            if path == ["api", "ball", "calibration", "select"]:
+                calib = self.camera.get_calib_state()
+                if calib is None:
+                    self.send_json({"ok": False, "error": "ball tracking not enabled"}, status=404)
+                    return
+                ok = calib.auto_select(
+                    int(data["x"]), int(data["y"]),
+                    int(data["w"]), int(data["h"]),
+                    getattr(self.args, "ball_calibration_display_width", 640),
+                )
+                self.send_json({**calib.to_json(), "ok": ok})
+                return
+            if path == ["api", "ball", "calibration", "save"]:
+                calib = self.camera.get_calib_state()
+                if calib is None:
+                    self.send_json({"ok": False, "error": "ball tracking not enabled"}, status=404)
+                    return
+                saved = calib.save()
+                print(f"Saved ball calibration: {saved}")
+                self.send_json({"ok": True, "saved": saved})
                 return
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
             self.send_json({"ok": False, "error": str(exc)}, status=400)
@@ -821,6 +930,8 @@ def parse_args():
     servo.add_argument("--step-shrink", type=float, default=0.5)
     parser.add_argument("--ball-calibration", default=None, metavar="JSON",
                         help="Path to ball_hsv_calibration.json; enables ball tracking (requires --aligned-depth)")
+    parser.add_argument("--ball-calibration-display-width", type=int, default=640, metavar="PX",
+                        help="Width (px) of each pane in the calibration stream")
     parser.add_argument("--verbose", action="store_true")
     parser.set_defaults(auto_reverse=True)
 

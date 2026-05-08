@@ -37,10 +37,18 @@ _DEPTH_SAMPLE_FRACTION = 0.40
 # has valid depth values (handles specular glare at the ball's highlight).
 _MIN_VALID_DEPTH_FRACTION = 0.25
 
-# Contour shape filters
-_MIN_CIRCULARITY = 0.72
-_MIN_CONTOUR_AREA_PX = 150    # ignore tiny speckles
-_MAX_CONTOUR_AREA_PX = 80_000 # ignore room-sized blobs
+# HoughCircles parameters (applied to the HSV mask image).
+_HOUGH_DP          = 1    # accumulator resolution ratio (1 = same as image)
+_HOUGH_MIN_DIST    = 40   # minimum pixel distance between circle centres
+_HOUGH_PARAM1      = 100  # Canny upper threshold
+_HOUGH_PARAM2      = 12   # accumulator votes needed (lower → more detections)
+_HOUGH_MIN_RADIUS  = 5    # pixel radius lower bound (generous; depth filters mm)
+_HOUGH_MAX_RADIUS  = 120  # pixel radius upper bound
+
+# When already tracking, detections farther than this from the predicted XY
+# position are rejected as false positives. At 30 fps a fast-rolling ball
+# moves ~30–50 mm/frame, so 150 mm gives ample margin without letting outliers in.
+_GATE_DISTANCE_MM = 150.0
 
 # Kalman filter assumes 30 fps; updated via reset_dt() if the pipeline knows better.
 _DEFAULT_DT = 1.0 / 30.0
@@ -190,27 +198,37 @@ class BallTracker:
         """
         detection = self._detect(color_bgr, depth_mm)
 
-        if detection is not None:
-            meas = np.array(
-                [[detection.x_mm], [detection.y_mm], [detection.z_mm]],
-                dtype=np.float32,
-            )
-            if not self._tracking:
+        if not self._tracking:
+            # Not yet tracking: accept the first good detection unconditionally.
+            if detection is not None:
                 self._init_filter(detection)
-            else:
-                self._kf.predict()
-                self._kf.correct(meas)
-            self._tracking = True
-            self._miss_count = 0
+                self._tracking = True
+                self._miss_count = 0
         else:
-            if self._tracking:
-                self._miss_count += 1
-                if self._miss_count >= _MAX_MISS_FRAMES:
-                    self._tracking = False
+            # Tracking: advance the filter, then gate the detection against the
+            # predicted position to reject false positives far from the ball.
+            predicted = self._kf.predict()
+
+            if detection is not None:
+                px, py = float(predicted[0]), float(predicted[1])
+                dist_mm = ((detection.x_mm - px) ** 2 + (detection.y_mm - py) ** 2) ** 0.5
+                if dist_mm <= _GATE_DISTANCE_MM:
+                    meas = np.array(
+                        [[detection.x_mm], [detection.y_mm], [detection.z_mm]],
+                        dtype=np.float32,
+                    )
+                    self._kf.correct(meas)
                     self._miss_count = 0
                 else:
-                    # Pure prediction — keep the filter warm
-                    self._kf.predict()
+                    # Detection is an outlier — treat this frame as a miss.
+                    detection = None
+                    self._miss_count += 1
+            else:
+                self._miss_count += 1
+
+            if self._miss_count >= _MAX_MISS_FRAMES:
+                self._tracking = False
+                self._miss_count = 0
 
         if not self._tracking:
             return None, None
@@ -232,29 +250,31 @@ class BallTracker:
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  self.morph_kernel)
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self.morph_kernel)
 
-        # --- contour candidates ---
-        contours, _ = cv2.findContours(
-            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        # --- Hough circle detection on the colour mask ---
+        circles = cv2.HoughCircles(
+            mask,
+            cv2.HOUGH_GRADIENT,
+            dp=_HOUGH_DP,
+            minDist=_HOUGH_MIN_DIST,
+            param1=_HOUGH_PARAM1,
+            param2=_HOUGH_PARAM2,
+            minRadius=_HOUGH_MIN_RADIUS,
+            maxRadius=_HOUGH_MAX_RADIUS,
         )
 
+        if circles is None:
+            return None
+
+        radius_mid = (self.ball_radius_min_mm + self.ball_radius_max_mm) / 2.0
+
         best: Optional[BallDetection] = None
-        best_score = -1.0
+        best_score = float("inf")  # lower = closer to target radius
 
-        for contour in contours:
-            area = cv2.contourArea(contour)
-            if not (_MIN_CONTOUR_AREA_PX <= area <= _MAX_CONTOUR_AREA_PX):
-                continue
+        for cx, cy, radius_px in circles[0]:
+            # Cast to Python float immediately so all derived values are plain float.
+            cx, cy, radius_px = float(cx), float(cy), float(radius_px)
 
-            perimeter = cv2.arcLength(contour, True)
-            if perimeter == 0:
-                continue
-            circularity = 4.0 * np.pi * area / (perimeter ** 2)
-            if circularity < _MIN_CIRCULARITY:
-                continue
-
-            (cx, cy), radius_px = cv2.minEnclosingCircle(contour)
-
-            # --- depth sample ---
+            # --- depth sample at circle centre ---
             z_mm = self._sample_depth(depth_mm, cx, cy, radius_px)
             if z_mm is None:
                 continue
@@ -263,24 +283,24 @@ class BallTracker:
             x_mm = (cx - self.ppx) * z_mm / self.fx
             y_mm = (cy - self.ppy) * z_mm / self.fy
 
-            # --- radius sanity check (use fx as proxy; ball is roughly round) ---
+            # --- radius sanity check ---
             radius_mm = radius_px * z_mm / self.fx
             if not (self.ball_radius_min_mm <= radius_mm <= self.ball_radius_max_mm):
                 continue
 
-            # Score: circularity × log(area) — prefers round, larger blobs
-            score = circularity * np.log(area + 1.0)
-            if score > best_score:
+            # Score: pick the circle whose physical radius is closest to the midpoint
+            score = abs(radius_mm - radius_mid)
+            if score < best_score:
                 best_score = score
                 best = BallDetection(
-                    cx=float(cx),
-                    cy=float(cy),
-                    radius_px=float(radius_px),
+                    cx=cx,
+                    cy=cy,
+                    radius_px=radius_px,
                     x_mm=x_mm,
                     y_mm=y_mm,
                     z_mm=z_mm,
                     radius_mm=radius_mm,
-                    circularity=circularity,
+                    circularity=1.0,  # Hough inherently finds circles
                 )
 
         return best

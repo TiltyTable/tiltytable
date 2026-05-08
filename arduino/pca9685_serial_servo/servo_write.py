@@ -48,6 +48,27 @@ def read_available(fd, seconds):
     return b"".join(chunks).decode("utf-8", errors="replace")
 
 
+def read_until_idle(fd, wait_seconds, idle_seconds):
+    end = time.time() + wait_seconds
+    text = ""
+    last_data = None
+
+    while time.time() < end:
+        ready, _, _ = select.select([fd], [], [], idle_seconds)
+        if not ready:
+            if last_data is not None:
+                break
+            continue
+
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            break
+        text += chunk.decode("utf-8", errors="replace")
+        last_data = time.time()
+
+    return text
+
+
 def wait_for_ready(fd, seconds):
     end = time.time() + seconds
     text = ""
@@ -66,6 +87,11 @@ def clamp(value, min_value, max_value):
 
 def send_command(fd, command):
     os.write(fd, command.encode("ascii"))
+
+
+def send_command_wait(fd, command, response_wait, response_idle):
+    send_command(fd, command)
+    return read_until_idle(fd, response_wait, response_idle)
 
 
 def load_calibration(path):
@@ -103,24 +129,129 @@ def load_calibration(path):
     return calibration
 
 
+def load_game(path):
+    game = []
+    seen = set()
+
+    with open(path, "r", encoding="utf-8") as file:
+        for line_number, line in enumerate(file, start=1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            parts = [part.strip() for part in line.split(",")]
+            if len(parts) != 4:
+                raise ValueError(f"{path}:{line_number}: expected servo_index,angle_1,angle_2,period")
+
+            try:
+                channel = int(parts[0])
+            except ValueError as exc:
+                raise ValueError(f"{path}:{line_number}: servo_index must be an integer") from exc
+
+            if channel < 0 or channel > 15:
+                raise ValueError(f"{path}:{line_number}: servo_index must be 0-15")
+            if channel in seen:
+                raise ValueError(f"{path}:{line_number}: duplicate servo_index {channel}")
+            seen.add(channel)
+
+            try:
+                angle_1 = float(parts[1])
+                angle_2 = float(parts[2])
+                period = float(parts[3])
+            except ValueError as exc:
+                raise ValueError(f"{path}:{line_number}: angles and period must be numbers") from exc
+
+            if math.isnan(angle_1) or math.isnan(angle_2):
+                raise ValueError(f"{path}:{line_number}: game angles cannot be nan")
+            if math.isnan(period) or period <= 0:
+                raise ValueError(f"{path}:{line_number}: period must be greater than 0")
+
+            game.append(
+                {
+                    "channel": channel,
+                    "angles": (angle_1, angle_2),
+                    "period": period,
+                    "state": 0,
+                    "next_switch": 0.0,
+                }
+            )
+
+    if not game:
+        raise ValueError(f"{path}: no servo rows found")
+
+    return game
+
+
 def validate_calibration_angles(calibration, min_angle, max_angle):
     for channel, angle in calibration:
         if not math.isnan(angle) and (angle < min_angle or angle > max_angle):
             raise ValueError(f"servo_index {channel}: neutral_angle must be {min_angle:g}-{max_angle:g} or nan")
 
 
-def apply_calibration(fd, calibration):
-    send_command(fd, "off\n")
-    print("all channels off", flush=True)
+def validate_game_angles(game, min_angle, max_angle):
+    for entry in game:
+        for angle in entry["angles"]:
+            if angle < min_angle or angle > max_angle:
+                channel = entry["channel"]
+                raise ValueError(f"servo_index {channel}: angles must be {min_angle:g}-{max_angle:g}")
+
+
+def print_response_or_fallback(response, fallback):
+    text = response.strip()
+    if text:
+        print(text, flush=True)
+    else:
+        print(fallback, flush=True)
+
+
+def apply_calibration(fd, calibration, response_wait, response_idle):
+    response = send_command_wait(fd, "off\n", response_wait, response_idle)
+    print_response_or_fallback(response, "all channels off")
 
     for channel, angle in calibration:
         if math.isnan(angle):
-            send_command(fd, f"off {channel}\n")
-            print_off(channel)
+            response = send_command_wait(fd, f"off {channel}\n", response_wait, response_idle)
+            print_response_or_fallback(response, f"channel {channel:02d} off")
             continue
 
-        send_command(fd, f"a {channel} {angle:g}\n")
-        print_position(channel, angle)
+        response = send_command_wait(fd, f"a {channel} {angle:g}\n", response_wait, response_idle)
+        print_response_or_fallback(response, f"channel {channel:02d} angle {angle:g} deg")
+
+
+def write_angle_wait(fd, channel, angle, response_wait, response_idle):
+    response = send_command_wait(fd, f"a {channel} {angle:g}\n", response_wait, response_idle)
+    print_response_or_fallback(response, f"channel {channel:02d} angle {angle:g} deg")
+
+
+def run_game(fd, game, response_wait, response_idle):
+    now = time.monotonic()
+    for entry in game:
+        entry["state"] = 0
+        entry["next_switch"] = now + entry["period"]
+        write_angle_wait(fd, entry["channel"], entry["angles"][0], response_wait, response_idle)
+
+    print("Game loop running. Press Ctrl-C to stop.", flush=True)
+    while True:
+        now = time.monotonic()
+        next_switch = min(entry["next_switch"] for entry in game)
+        sleep_seconds = max(0.0, min(next_switch - now, 0.1))
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
+            now = time.monotonic()
+
+        for entry in game:
+            if entry["next_switch"] <= now:
+                entry["state"] = 1 - entry["state"]
+                entry["next_switch"] += entry["period"]
+                while entry["next_switch"] <= now:
+                    entry["next_switch"] += entry["period"]
+                write_angle_wait(
+                    fd,
+                    entry["channel"],
+                    entry["angles"][entry["state"]],
+                    response_wait,
+                    response_idle,
+                )
 
 
 def calibration_angles(calibration, fallback_angle):
@@ -255,6 +386,13 @@ def main():
         metavar="FILE",
         help="CSV calibration file with servo_index,neutral_angle; nan angles are left off",
     )
+    parser.add_argument(
+        "--game",
+        metavar="FILE",
+        help="CSV game file with servo_index,angle_1,angle_2,period; repeats indefinitely",
+    )
+    parser.add_argument("--response-wait", type=float, default=0.2, help="seconds to wait for each Arduino response")
+    parser.add_argument("--response-idle", type=float, default=0.02, help="serial idle seconds that ends a response")
     parser.add_argument("--interactive", action="store_true", help="control one servo at a time with arrow keys")
     parser.add_argument("--start-angle", type=float, default=90.0, help="initial angle for interactive mode")
     parser.add_argument("--step", type=float, default=5.0, help="degrees per up/down keypress in interactive mode")
@@ -262,20 +400,29 @@ def main():
     parser.add_argument("--max-angle", type=float, default=180.0, help="maximum angle in interactive mode")
     args = parser.parse_args()
 
-    if args.position is None and not args.interactive and not args.calib:
-        parser.error("position is required unless --interactive or --calib is used")
-    if args.pulse_us and (args.interactive or args.calib):
-        parser.error("--pulse-us cannot be used with --interactive or --calib")
+    if args.position is None and not args.interactive and not args.calib and not args.game:
+        parser.error("position is required unless --interactive, --calib, or --game is used")
+    if args.pulse_us and (args.interactive or args.calib or args.game):
+        parser.error("--pulse-us cannot be used with --interactive, --calib, or --game")
+    if args.game and args.interactive:
+        parser.error("--game cannot be used with --interactive")
     if args.channel is not None and args.calib and not args.interactive:
         parser.error("--channel can only be used with --calib in --interactive mode")
     if args.interactive and not sys.stdin.isatty():
         parser.error("--interactive requires a terminal")
 
     calibration = None
+    game = None
     if args.calib:
         try:
             calibration = load_calibration(args.calib)
             validate_calibration_angles(calibration, args.min_angle, args.max_angle)
+        except ValueError as exc:
+            parser.error(str(exc))
+    if args.game:
+        try:
+            game = load_game(args.game)
+            validate_game_angles(game, args.min_angle, args.max_angle)
         except ValueError as exc:
             parser.error(str(exc))
 
@@ -287,10 +434,14 @@ def main():
             if startup.strip():
                 print(startup.strip())
             if calibration is not None:
-                apply_calibration(fd, calibration)
+                apply_calibration(fd, calibration, args.response_wait, args.response_idle)
             run_interactive(fd, args, calibration)
+        elif game is not None:
+            if calibration is not None:
+                apply_calibration(fd, calibration, args.response_wait, args.response_idle)
+            run_game(fd, game, args.response_wait, args.response_idle)
         elif calibration is not None:
-            apply_calibration(fd, calibration)
+            apply_calibration(fd, calibration, args.response_wait, args.response_idle)
         else:
             verb = "u" if args.pulse_us else "a"
             if args.channel is None:

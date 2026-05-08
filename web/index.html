@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kinect Depth Servo Console</title>
+  <title>TiltyTable Command Center</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=JetBrains+Mono:wght@400;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
@@ -13,7 +13,7 @@
   <header class="hero">
     <div>
       <p class="eyebrow">Azure Kinect + PCA9685</p>
-      <h1>Depth Servo Console</h1>
+      <h1>TiltyTable Command Center</h1>
       <p class="lede">Watch the color feed and depth map, drag boxes on the depth map, and tune target depth for channels 0-3.</p>
     </div>
     <div class="status-card">
@@ -50,6 +50,45 @@
             <div><dt>Z (depth)</dt><dd id="ballZ">--</dd></div>
             <div><dt>Radius</dt><dd id="ballR">--</dd></div>
           </dl>
+        </article>
+
+        <article class="panel calib-panel" id="calibSection" hidden>
+          <div class="panel-head">
+            <h2>Ball HSV Calibration</h2>
+            <button class="action calib-save" id="saveCalib" type="button">Save</button>
+          </div>
+          <div class="calib-stage" id="calibStage">
+            <img id="calibFeed" alt="Calibration stream">
+            <canvas id="calibCanvas"></canvas>
+          </div>
+          <p class="hint">Drag on the color pane (left half) to auto-sample the ball&rsquo;s HSV range.</p>
+          <div class="calib-sliders">
+            <div class="slider-row">
+              <div class="slider-label">H low <span id="lblHlo">100</span></div>
+              <input type="range" id="sHlo" min="0" max="179" value="100">
+            </div>
+            <div class="slider-row">
+              <div class="slider-label">H high <span id="lblHhi">130</span></div>
+              <input type="range" id="sHhi" min="0" max="179" value="130">
+            </div>
+            <div class="slider-row">
+              <div class="slider-label">S low <span id="lblSlo">60</span></div>
+              <input type="range" id="sSlo" min="0" max="255" value="60">
+            </div>
+            <div class="slider-row">
+              <div class="slider-label">S high <span id="lblShi">255</span></div>
+              <input type="range" id="sShi" min="0" max="255" value="255">
+            </div>
+            <div class="slider-row">
+              <div class="slider-label">V low <span id="lblVlo">30</span></div>
+              <input type="range" id="sVlo" min="0" max="255" value="30">
+            </div>
+            <div class="slider-row">
+              <div class="slider-label">V high <span id="lblVhi">255</span></div>
+              <input type="range" id="sVhi" min="0" max="255" value="255">
+            </div>
+          </div>
+          <div class="calib-status" id="calibStatus"></div>
         </article>
       </div>
 
