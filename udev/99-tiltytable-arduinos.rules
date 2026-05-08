@@ -1,0 +1,6 @@
+# Stable Arduino serial aliases for the tiltytable project.
+# Install to /etc/udev/rules.d/99-tiltytable-arduinos.rules, then reload udev.
+
+SUBSYSTEM=="tty", ENV{ID_BUS}=="usb", ENV{ID_VENDOR_ID}=="2341", ENV{ID_MODEL_ID}=="0043", ENV{ID_SERIAL_SHORT}=="0353638323635150F080", SYMLINK+="arduino-servo", MODE="0666", GROUP="plugdev"
+SUBSYSTEM=="tty", ENV{ID_BUS}=="usb", ENV{ID_VENDOR_ID}=="2341", ENV{ID_MODEL_ID}=="1002", ENV{ID_SERIAL_SHORT}=="3CDC75443C14", SYMLINK+="arduino-led", MODE="0666", GROUP="plugdev"
+SUBSYSTEM=="tty", ENV{ID_BUS}=="usb", ENV{ID_VENDOR_ID}=="2341", ENV{ID_MODEL_ID}=="0069", ENV{ID_SERIAL_SHORT}=="360D16233631323166E233334B572F27", SYMLINK+="arduino-table", MODE="0666", GROUP="plugdev"

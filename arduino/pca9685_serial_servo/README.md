@@ -72,7 +72,21 @@ python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --calib 
 ```
 
 The calibration file is one `servo_index,neutral_angle` pair per line. Angles
-must be degrees; `nan` keeps that servo channel disabled.
+must be degrees; `nan` keeps that servo channel disabled. Calibration commands
+wait for each Arduino response before sending the next channel.
+
+Run a repeating servo game from a file:
+
+```bash
+python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --game arduino/pca9685_serial_servo/game.txt
+python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --calib arduino/pca9685_serial_servo/calib.txt --game arduino/pca9685_serial_servo/game.txt
+```
+
+The game file is one `servo_index,angle_1,angle_2,period` pair per line. Each
+listed servo starts at `angle_1`, switches to `angle_2` after `period` seconds,
+then switches back after another `period` seconds, repeating until stopped with
+Ctrl-C. When `--calib` is also provided, calibration runs first as the startup
+initialization step, then the game loop begins.
 
 Control one servo at a time from the keyboard:
 

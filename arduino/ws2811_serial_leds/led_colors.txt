@@ -1,0 +1,23 @@
+# You can list all 16 LEDs in order:
+# g,r,b
+0 green
+1 purple
+2 yellow
+3 red
+4 white
+5 white
+6 white
+7 white
+8 purple
+9 white
+10 red
+11 purple
+12 orange
+13 white
+14 yellow
+15 blue
+
+# Or use explicit indexes instead:
+# 0 red
+# 1 #00ff00
+# 2 0,0,255

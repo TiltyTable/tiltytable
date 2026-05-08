@@ -511,6 +511,105 @@ dd {
   color: var(--accent);
 }
 
+/* ── Calibration panel ──────────────────────────────────────── */
+
+.calib-panel {
+  border-color: rgba(90, 154, 245, 0.16);
+}
+
+.calib-stage {
+  position: relative;
+  background: #000;
+  /* stream is two equal panes side-by-side, so its natural aspect is ~32:9 */
+  aspect-ratio: 32 / 9;
+  overflow: hidden;
+  cursor: crosshair;
+}
+
+.calib-stage img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+#calibCanvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.calib-sliders {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem 1.2rem;
+  padding: 0.75rem 0.9rem;
+  border-top: 1px solid var(--border);
+}
+
+.slider-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.22rem;
+}
+
+.slider-label {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.slider-label span {
+  color: var(--accent);
+  font-weight: 700;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+input[type="range"] {
+  padding: 0;
+  border: none;
+  background: transparent;
+  accent-color: var(--accent);
+  cursor: pointer;
+  height: 1.1rem;
+}
+
+.calib-status {
+  padding: 0.35rem 0.9rem;
+  font-family: var(--mono);
+  font-size: 0.6rem;
+  color: var(--accent);
+  min-height: 1.5rem;
+  border-top: 1px solid var(--border);
+  letter-spacing: 0.04em;
+}
+
+.action.calib-save {
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  background: transparent;
+  border: 1px solid rgba(90, 154, 245, 0.35);
+  color: #5a9af5;
+  transition: background 0.12s, border-color 0.12s;
+}
+
+.action.calib-save:hover {
+  background: rgba(90, 154, 245, 0.10);
+  border-color: rgba(90, 154, 245, 0.55);
+}
+
 /* ── Responsive ─────────────────────────────────────────────── */
 
 @media (max-width: 1140px) {

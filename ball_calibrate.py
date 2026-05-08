@@ -67,6 +67,17 @@ class CalibrationState:
         self.hsv_low  = np.array([100,  60,  30], dtype=np.uint8)
         self.hsv_high = np.array([130, 255, 255], dtype=np.uint8)
         self._last_color_bgr = None
+        self._load()
+
+    def _load(self):
+        if not self.output_path.exists():
+            return
+        try:
+            data = json.loads(self.output_path.read_text(encoding="utf-8"))
+            self.hsv_low  = np.array(data["hsv_low"],  dtype=np.uint8)
+            self.hsv_high = np.array(data["hsv_high"], dtype=np.uint8)
+        except (OSError, json.JSONDecodeError, KeyError, ValueError):
+            pass
 
     def get_bounds(self):
         with self.lock:
