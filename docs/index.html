@@ -14,8 +14,8 @@
       <h1>A reprogrammable tilting ball game.</h1>
       <p>
         Imagine the wooden ball maze game, but the holes and walls can move. TiltyTable
-        is a modular, 3D-printed game platform with a tilting table, moving tiles, LEDs,
-        arcade roller-ball control, and Azure Kinect tracking.
+        is a modular, 3D-printed game platform with a tilting table, 144 moving cells,
+        LEDs, arcade roller-ball control, and Azure Kinect tracking.
       </p>
       <nav>
         <a href="https://github.com/TiltyTable/tiltytable">GitHub</a>
@@ -51,7 +51,8 @@
         TiltyTable is an open-source hardware/software project for building physical ball
         games on a reconfigurable table. Instead of one fixed maze, the platform can change
         the board while someone is playing: walls can become holes, tiles can drop out, and
-        LEDs can tell the player what is about to happen.
+        LEDs can tell the player what is about to happen. The full build is planned as
+        9 modules in a 3x3 layout, with each module holding a 4x4 grid of cells.
       </p>
     </section>
 
@@ -60,7 +61,8 @@
       <ul>
         <li>The table tilts using three NEMA-25 motors in a Stewart-platform layout.</li>
         <li>The player input is an arcade roller ball, not a joystick.</li>
-        <li>Each tile has an individual servo motor that controls its up/down position.</li>
+        <li>The full system has 9 modules, each with a 4x4 cell grid, for 144 total cells.</li>
+        <li>Each cell has an individual servo motor that controls its up/down position.</li>
         <li>An Azure Kinect looks down at the board for ball tracking and automatic calibration.</li>
         <li>The whole system is designed to be 3D printed, modular, and easy to assemble.</li>
       </ul>
@@ -90,7 +92,7 @@
       <article>
         <img src="./assets/stills/total-system-cad.jpg" alt="CAD render of the TiltyTable Stewart platform and labyrinth assembly">
         <h2>System CAD</h2>
-        <p>The current full-system CAD for the tilting platform and modular board.</p>
+        <p>The current full-system CAD for the 9-module tilting platform and board.</p>
       </article>
 
       <article>
@@ -117,7 +119,8 @@
         <h2>Hardware</h2>
         <ul>
           <li>3 NEMA-25 motor Stewart platform</li>
-          <li>Servo-driven moving tiles</li>
+          <li>9 modules with 144 total cells</li>
+          <li>Servo-driven moving cells</li>
           <li>Arcade roller ball input</li>
           <li>Azure Kinect overhead sensor</li>
           <li>Addressable LED feedback</li>

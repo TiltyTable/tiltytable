@@ -225,7 +225,14 @@ figcaption {
 .media-list video {
   aspect-ratio: 16 / 10;
   border-radius: 14px;
+}
+
+.media-list img {
   object-fit: cover;
+}
+
+.media-list video {
+  object-fit: contain;
 }
 
 .media-list h2,
