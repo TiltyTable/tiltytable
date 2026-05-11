@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="TiltyTable is a reconfigurable labyrinth maze driven by a Stewart platform, controlled with an arcade roller ball, and tracked with an Azure Kinect.">
+  <meta name="description" content="TiltyTable is a reprogrammable tilting-table ball game with moving tiles, LEDs, Stewart platform motion, and Azure Kinect tracking.">
   <title>TiltyTable</title>
   <link rel="stylesheet" href="./styles/site.css">
 </head>
@@ -11,11 +11,11 @@
   <main>
     <header class="intro">
       <p class="kicker">TiltyTable</p>
-      <h1>A reconfigurable labyrinth maze.</h1>
+      <h1>A reprogrammable tilting ball game.</h1>
       <p>
-        We are building a physical maze that tilts on a Stewart platform. You control it
-        with an arcade roller ball. An Azure Kinect watches the board so the software can
-        track the game state.
+        Imagine the wooden ball maze game, but the holes and walls can move. TiltyTable
+        is a modular, 3D-printed game platform with a tilting table, moving tiles, LEDs,
+        arcade roller-ball control, and Azure Kinect tracking.
       </p>
       <nav>
         <a href="https://github.com/TiltyTable/tiltytable">GitHub</a>
@@ -41,44 +41,56 @@
     </section>
 
     <figure class="wide-media">
-      <img src="./assets/stills/total-system-cad.jpg" alt="CAD render of the TiltyTable Stewart platform and labyrinth assembly">
-      <figcaption>Current full-system CAD.</figcaption>
+      <video src="./assets/media/main-demo.mp4" poster="./assets/stills/main-demo-poster.jpg" muted loop playsinline controls></video>
+      <figcaption>Main prototype demo.</figcaption>
     </figure>
 
     <section class="text-block">
       <h2>Overview</h2>
       <p>
-        TiltyTable is an open-source hardware/software project for a physical labyrinth game.
-        The current repo contains early control code, computer vision experiments, Arduino
-        firmware, and prototype media.
+        TiltyTable is an open-source hardware/software project for building physical ball
+        games on a reconfigurable table. Instead of one fixed maze, the platform can change
+        the board while someone is playing: walls can become holes, tiles can drop out, and
+        LEDs can tell the player what is about to happen.
       </p>
     </section>
 
     <section class="text-block">
       <h2>System</h2>
       <ul>
-        <li>The maze surface tilts on a 3-axis Stewart-style platform.</li>
+        <li>The table tilts using three NEMA-25 motors in a Stewart-platform layout.</li>
         <li>The player input is an arcade roller ball, not a joystick.</li>
-        <li>An Azure Kinect looks down at the board for depth and game-state tracking.</li>
-        <li>The maze cells are being designed to change state: floor, wall, trap, or hole.</li>
+        <li>Each tile has an individual servo motor that controls its up/down position.</li>
+        <li>An Azure Kinect looks down at the board for ball tracking and automatic calibration.</li>
+        <li>The whole system is designed to be 3D printed, modular, and easy to assemble.</li>
+      </ul>
+    </section>
+
+    <section class="text-block">
+      <h2>Game ideas</h2>
+      <ul>
+        <li>A classic point-A-to-point-B maze where the board changes while you play.</li>
+        <li>Tiles that suddenly turn from walls into holes, with LEDs warning the player first.</li>
+        <li>A snake-like survival mode where every tile the ball touches drops down afterward.</li>
+        <li>More short arcade-style games built on the same moving-tile platform.</li>
       </ul>
     </section>
 
     <section class="text-block">
       <h2>Current status</h2>
       <ul>
-        <li>Stewart platform motion tests are running on the bench.</li>
-        <li>Azure Kinect color/depth capture and ball tracking code exists.</li>
+        <li>Stewart-platform motion tests are running on the bench.</li>
+        <li>Azure Kinect color/depth capture, ball tracking, and calibration code exists.</li>
         <li>Roller-ball input is wired into the control path as a USB input device.</li>
-        <li>Reconfigurable maze-cell mechanisms are still being designed and tested.</li>
+        <li>Moving-tile modules, servo control, and LED feedback are being integrated.</li>
       </ul>
     </section>
 
     <section class="media-list">
       <article>
-        <video src="./assets/media/full-module-demo.mp4" poster="./assets/stills/full-module-demo-poster.jpg" muted loop playsinline controls></video>
-        <h2>Module demo</h2>
-        <p>The full module working as a standalone demo.</p>
+        <img src="./assets/stills/total-system-cad.jpg" alt="CAD render of the TiltyTable Stewart platform and labyrinth assembly">
+        <h2>System CAD</h2>
+        <p>The current full-system CAD for the tilting platform and modular board.</p>
       </article>
 
       <article>
@@ -104,19 +116,20 @@
       <article>
         <h2>Hardware</h2>
         <ul>
-          <li>3-axis Stewart-style tilt platform</li>
+          <li>3 NEMA-25 motor Stewart platform</li>
+          <li>Servo-driven moving tiles</li>
           <li>Arcade roller ball input</li>
           <li>Azure Kinect overhead sensor</li>
-          <li>Arduino motor and LED control</li>
+          <li>Addressable LED feedback</li>
         </ul>
       </article>
       <article>
         <h2>Software</h2>
         <ul>
           <li>Python Kinect web control</li>
-          <li>OpenCV ball tracking</li>
+          <li>OpenCV ball tracking and calibration</li>
           <li>USB input capture</li>
-          <li>Arduino pose commands</li>
+          <li>Arduino motor, servo, and LED commands</li>
         </ul>
       </article>
     </section>
