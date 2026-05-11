@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="TiltyTable is a reconfigurable labyrinth maze driven by a Stewart platform, controlled with an arcade roller ball, and tracked with an Azure Kinect.">
+  <title>TiltyTable | Reconfigurable Stewart Platform Labyrinth</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles/site.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="TiltyTable home">
+      <span class="brand-mark"></span>
+      <span>TiltyTable</span>
+    </a>
+    <nav class="site-nav" aria-label="Page navigation">
+      <a href="#demo">Demo</a>
+      <a href="#system">System</a>
+      <a href="#proposal">Proposal</a>
+      <a href="https://github.com/lijerryli/tiltytable">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero section">
+      <div class="hero-copy">
+        <p class="eyebrow">Open Sauce proposal</p>
+        <h1>A reconfigurable labyrinth maze on a Stewart platform.</h1>
+        <p class="lede">
+          TiltyTable is a physical arcade machine: a player steers a rolling ball with an
+          arcade roller ball while a 3-axis Stewart platform tilts the maze, an Azure Kinect
+          watches the game state, and modular cells change the maze underneath the player.
+        </p>
+        <div class="hero-actions">
+          <a class="button primary" href="#demo">Watch the prototype</a>
+          <a class="button secondary" href="#proposal">Read the proposal</a>
+        </div>
+      </div>
+
+      <figure class="hero-visual">
+        <img src="./assets/stills/total-system-cad.jpg" alt="CAD render of the full TiltyTable Stewart platform and labyrinth assembly">
+        <figcaption>Total-system CAD: maze surface, Stewart platform, motorized links, and table-scale assembly.</figcaption>
+      </figure>
+    </section>
+
+    <section class="section marquee" aria-label="Project summary">
+      <div>
+        <strong>3-axis</strong>
+        <span>Stewart platform tilt</span>
+      </div>
+      <div>
+        <strong>Azure Kinect</strong>
+        <span>depth and game-state tracking</span>
+      </div>
+      <div>
+        <strong>Roller ball</strong>
+        <span>arcade-native input</span>
+      </div>
+      <div>
+        <strong>Modular cells</strong>
+        <span>reconfigurable labyrinth states</span>
+      </div>
+    </section>
+
+    <section class="section demo-section" id="demo">
+      <div class="section-heading">
+        <p class="eyebrow">Prototype evidence</p>
+        <h2>Built enough to be real. Weird enough to be worth seeing.</h2>
+        <p>
+          The current work combines a moving platform prototype, Kinect-based sensing,
+          module CAD, and early electronics tests. The next step is integration into a
+          public-demo machine that feels like a mechanical video game.
+        </p>
+      </div>
+
+      <div class="demo-grid">
+        <article class="video-card large">
+          <video src="./assets/media/module-demo.mp4" poster="./assets/stills/module-demo-poster.jpg" muted loop playsinline controls></video>
+          <div>
+            <span>Module concept</span>
+            <h3>Reconfigurable maze cells</h3>
+            <p>Each module is being designed as a physical state machine: floor, wall, trap, or hole.</p>
+          </div>
+        </article>
+
+        <article class="video-card">
+          <video src="./assets/media/early-test-3.mp4" poster="./assets/stills/early-test-3-poster.jpg" muted loop playsinline controls></video>
+          <div>
+            <span>Motion test</span>
+            <h3>Stewart platform control</h3>
+            <p>Three motorized actuators drive the maze plane through roll, pitch, and heave commands.</p>
+          </div>
+        </article>
+
+        <article class="video-card">
+          <video src="./assets/media/early-test-2.mp4" poster="./assets/stills/early-test-2-poster.jpg" muted loop playsinline controls></video>
+          <div>
+            <span>Vision test</span>
+            <h3>Azure Kinect overhead</h3>
+            <p>The Kinect gives the software a live depth view of the board and the moving game pieces.</p>
+          </div>
+        </article>
+
+        <article class="video-card">
+          <video src="./assets/media/early-test-1.mp4" poster="./assets/stills/early-test-1-poster.jpg" muted loop playsinline controls></video>
+          <div>
+            <span>Bench test</span>
+            <h3>Cell and electronics bring-up</h3>
+            <p>Early cell prototypes, wiring, servos, and tracking experiments are already in motion.</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section system-section" id="system">
+      <div class="section-heading narrow">
+        <p class="eyebrow">System idea</p>
+        <h2>A physical game loop with mechanical consequences.</h2>
+      </div>
+
+      <div class="system-flow">
+        <article>
+          <span>01</span>
+          <h3>Player input</h3>
+          <p>An arcade roller ball becomes the main control surface, mapping hand motion to roll and pitch commands.</p>
+        </article>
+        <article>
+          <span>02</span>
+          <h3>Platform motion</h3>
+          <p>An Arduino-driven Stewart platform translates those commands into synchronized motor motion.</p>
+        </article>
+        <article>
+          <span>03</span>
+          <h3>Game-state sensing</h3>
+          <p>Azure Kinect depth and color streams track ball position, board state, and trigger zones.</p>
+        </article>
+        <article>
+          <span>04</span>
+          <h3>Maze response</h3>
+          <p>Software can reconfigure modules, trigger traps, light feedback, and make the maze fight back.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section split-section">
+      <div>
+        <p class="eyebrow">Why it belongs at a maker show</p>
+        <h2>It is legible from across the room.</h2>
+      </div>
+      <div class="reason-list">
+        <p>
+          The audience sees a real platform tilting, a real ball rolling, and a real maze changing.
+          The control loop is visible, mechanical, and a little chaotic in the best way.
+        </p>
+        <p>
+          Under the hood, it is a robotics demo: Stewart-platform kinematics, computer vision,
+          depth sensing, embedded motor control, and modular mechanism design all wrapped in a
+          game that anyone can understand instantly.
+        </p>
+      </div>
+    </section>
+
+    <section class="section build-section">
+      <div class="section-heading">
+        <p class="eyebrow">Build artifacts</p>
+        <h2>From CAD to code to bench tests.</h2>
+      </div>
+      <div class="artifact-grid">
+        <figure>
+          <img src="./assets/stills/build-still-1.jpg" alt="Early TiltyTable cell prototype with electronics and wiring">
+        </figure>
+        <figure>
+          <img src="./assets/stills/build-still-2.jpg" alt="Azure Kinect looking down at an early modular maze prototype">
+        </figure>
+        <figure>
+          <img src="./assets/stills/build-still-3.jpg" alt="Stewart platform motor and linkage prototype on the bench">
+        </figure>
+      </div>
+    </section>
+
+    <section class="section proposal-section" id="proposal">
+      <div class="proposal-card">
+        <div>
+          <p class="eyebrow">The proposal</p>
+          <h2>Turn the prototype into a playable exhibit.</h2>
+        </div>
+        <div class="proposal-copy">
+          <p>
+            The goal is to bring TiltyTable from working subsystems to a cohesive public demo:
+            a reconfigurable labyrinth that spectators can play, watch, and immediately understand.
+          </p>
+          <ul>
+            <li>Finish the table-scale Stewart platform and safety envelope.</li>
+            <li>Integrate roller-ball control with the motor command loop.</li>
+            <li>Use Azure Kinect tracking for scoring, trap timing, and game-state validation.</li>
+            <li>Build enough reconfigurable cells to make the maze visibly change during play.</li>
+            <li>Package the electronics, lighting, and software into a robust demo rig.</li>
+          </ul>
+          <div class="proposal-links">
+            <a class="button primary" href="https://github.com/lijerryli/tiltytable">View source</a>
+            <a class="button secondary" href="https://github.com/TiltyTable">TiltyTable org</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section technical-section">
+      <div class="section-heading narrow">
+        <p class="eyebrow">Technical stack</p>
+        <h2>Current repo pieces.</h2>
+      </div>
+      <div class="tech-grid">
+        <article>
+          <h3>Azure Kinect control center</h3>
+          <p>Python server and browser UI for color/depth feeds, depth boxes, ball calibration, and servo targets.</p>
+        </article>
+        <article>
+          <h3>Ball tracking</h3>
+          <p>OpenCV HSV detection, depth lookup, and Kalman tracking for a colored ball in camera coordinates.</p>
+        </article>
+        <article>
+          <h3>Roller input</h3>
+          <p>Raw Linux input capture maps USB mouse/trackball deltas into Stewart platform roll and pitch velocity.</p>
+        </article>
+        <article>
+          <h3>Embedded motion</h3>
+          <p>Arduino firmware converts pose commands into pulse/direction outputs for a three-axis Stewart controller.</p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <span>TiltyTable</span>
+    <a href="https://github.com/lijerryli/tiltytable">GitHub source</a>
+    <a href="https://github.com/TiltyTable">Organization</a>
+  </footer>
+</body>
+</html>
