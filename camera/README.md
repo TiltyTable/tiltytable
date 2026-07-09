@@ -43,6 +43,17 @@ python3 camera/mindvision_capture.py --save /tmp/sua134.png
 python3 camera/mindvision_capture.py --save /tmp/sua134.png --exposure-ms 10
 ```
 
+## Live focus preview
+
+```bash
+cd ~/tiltytable && . .venv/bin/activate
+python3 camera/focus_stream.py --port 8090 --exposure-ms 200
+```
+
+Then open `http://<jetson-ip>:8090/` on the LAN (e.g. `http://10.0.0.15:8090/`).
+Use the exposure chips / form while turning the lens focus ring. Green crosshair
+marks frame center.
+
 ## Kinect
 
 When the Azure Kinect is connected, use the existing root scripts
