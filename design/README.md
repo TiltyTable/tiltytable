@@ -22,10 +22,12 @@ Key pages:
 
 ## Hardware
 
-- `hardware/` contains the Raspberry Pi / Python control center, servo CLI, calibration data, and Arduino firmware.
-- `hardware/arduino/pca9685_servo_bridge/` controls SG90 servos through a PCA9685.
-- `hardware/arduino/tilt_table_leds/` contains the UNO R4 WS2811 LED test sketch.
-- `hardware/README.md` documents setup and wiring.
+- Live runtime boards:
+  - **Uno R3** (`/dev/arduino-stewart`) — 3-DOF Stewart tilt platform (`arduino/uim5756pm_stewart/`).
+  - **Uno R4 Minima** (`/dev/arduino-modules`) — module-grid PCA9685 servos **and** WS2812 LEDs (`arduino/servo_calib/`).
+- `calibration/` contains the grid calibration suite (`tilt_table_cli.py`, servo/LED cal tools, per-module configs).
+- `hardware/` contains an older Flask control-center stack, servo CLI, and related Arduino sketches.
+- `hardware/README.md` documents that older stack's setup and wiring.
 
 ## Serving Locally
 

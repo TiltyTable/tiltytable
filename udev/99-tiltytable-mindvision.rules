@@ -1,0 +1,9 @@
+# MindVision industrial camera USB access (vendor 0xf622 = MindVision).
+# Install alongside the Arduino rules:
+#   sudo cp udev/99-tiltytable-mindvision.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# This grants non-root access to the USB device. Frame capture still requires
+# MindVision's ARM64 linuxSDK (libMVSDK.so) — see camera/README.md.
+
+SUBSYSTEM=="usb", ATTR{idVendor}=="f622", MODE="0666", GROUP="plugdev"

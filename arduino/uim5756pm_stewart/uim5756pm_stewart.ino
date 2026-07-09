@@ -30,16 +30,19 @@
 const uint8_t AXES = 3;
 
 // ------------------------- Wiring -------------------------
-const uint8_t PLS_PIN[AXES] = {2, 7, 11};
-const uint8_t DIR_PIN[AXES] = {3, 8, 12};
-
-const uint8_t ENA_PIN[AXES] = {4, 9, 13};
+// Per-axis pin groups on the Uno R3:
+//   Axis 0: PLS=D2  DIR=D3  ENA=D4
+//   Axis 1: PLS=D5  DIR=D6  ENA=D7
+//   Axis 2: PLS=D10 DIR=D11 ENA=D12
+const uint8_t PLS_PIN[AXES] = {2, 5, 10};
+const uint8_t DIR_PIN[AXES] = {3, 6, 11};
+const uint8_t ENA_PIN[AXES] = {4, 7, 12};
 const bool ENA_ACTIVE_LOW = true;
 
 const bool DIR_INVERT[AXES] = {false, false, false};
 
 const bool USE_LIMITS = false;
-const uint8_t LIMIT_PIN[AXES] = {9, 10, 11};
+const uint8_t LIMIT_PIN[AXES] = {8, 9, 13};  // unused while USE_LIMITS is false
 const bool LIMIT_ACTIVE_LOW = true;
 
 // --------------------- Motion calibration ---------------------
