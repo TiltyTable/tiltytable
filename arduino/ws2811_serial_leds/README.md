@@ -1,15 +1,18 @@
-# WS2811 Serial LED Controller
+# WS2812 Serial LED Controller
 
-Arduino sketch and Python helper for setting each of 16 WS2811/NeoPixel LEDs
-from a text file.
+Arduino sketch plus Python helpers for driving a WS2812 / WS2812B / WS2811
+addressable LED strip (default **50 LEDs**) over USB serial.
 
 ## Wiring
 
-- WS2811 data input to Arduino `D11`
-- LED strip power to a matching external `5 V` or `12 V` supply
+- LED data input to Arduino `D4`
+- LED `5 V` power to an external `5 V` supply (do **not** power 50 LEDs from the
+  Arduino's 5 V pin)
 - LED supply ground to Arduino `GND`
 
-Keep the Arduino ground and LED power supply ground connected together.
+Keep the Arduino ground and the LED supply ground connected together. A
+`300-470` ohm resistor in series with the data line and a large capacitor
+(`1000 uF`) across the supply are recommended.
 
 ## Upload
 
@@ -19,41 +22,54 @@ sudo ~/bin/arduino-cli compile --fqbn arduino:avr:uno --upload -p /dev/ttyACM0 a
 
 The sketch needs the `Adafruit_NeoPixel` Arduino library.
 
-## Color File
+Strip size, data pin, and color order live at the top of
+`ws2811_serial_leds.ino` (`LED_COUNT`, `LED_PIN`, and `NEO_GRB`). WS2812 strips
+are usually `GRB`; if red and green look swapped, switch `NEO_GRB` to `NEO_RGB`
+and re-upload. The `rgb` test below makes this easy to check.
 
-Edit `led_colors.txt`. Use one LED per line. Blank lines and comments are
-ignored. Put inline comments after a space, like `red # LED 0`.
+## Test the strip (`led_test.py`)
 
-Supported formats:
+`led_test.py` is the single test tool for the strip. Run it with no test name
+to play a full self-test, or pass a test name to debug a specific thing.
 
-```text
-255,0,0
-red
-#00ff00
-0 255 0
-5 purple
-6 #ff0078
-7 20,20,20
+```bash
+# Full self-test: rgb check -> wipe -> chase -> rainbow -> blink -> off
+python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0
+
+# Individual tests
+python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 all red
+python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 index 17 cyan
+python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 rainbow
+python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 rgb     # verify color order
+python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 count   # count LEDs one by one
+python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 off
+
+# Useful flags
+--brightness 0-255   software brightness scaling (default 255)
+--count N            number of LEDs, must match the sketch (default 50)
+--delay SECONDS      animation step delay     --cycles N   animation repeats
+-v                   print the Arduino's replies
 ```
 
-If a line starts with an LED index, that color is assigned to that specific
-LED. Otherwise, colors are assigned in order from LED `0` through LED `15`.
+Colors accept a name (`off`, `red`, `orange`, `yellow`, `green`, `cyan`,
+`blue`, `purple`, `pink`, `white`), a hex value (`#ff0078`), or `r,g,b`.
 
-Named colors are `off`, `black`, `red`, `orange`, `yellow`, `green`, `cyan`,
-`blue`, `purple`, `pink`, and `white`.
+## Send a saved frame (`led_write.py`)
 
-## Send Colors
+`led_write.py` pushes a fixed picture from `led_colors.txt` to the strip:
 
 ```bash
 python3 arduino/ws2811_serial_leds/led_write.py --port /dev/ttyACM0
 python3 arduino/ws2811_serial_leds/led_write.py --port /dev/ttyACM0 --file arduino/ws2811_serial_leds/led_colors.txt
 ```
 
-You can also send serial commands manually at `115200` baud:
+## Serial protocol
+
+You can also drive the strip by hand at `115200` baud:
 
 ```text
 set 0 255 0 0
-frame 255 0 0 0 255 0 0 0 255 ...48 total color numbers...
+frame <r0> <g0> <b0> ... 150 numbers (50 LEDs x 3)
 clear
 help
 ```

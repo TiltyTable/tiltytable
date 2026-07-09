@@ -1,0 +1,3915 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3-Motor Tilt Table Simulator</title>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles/app.css">
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="module">
+    window.ThreeTiltSimStatus = 'loading';
+    import('https://esm.sh/three@0.160.1')
+      .then(async (threeModule) => {
+        const controlsModule = await import('https://esm.sh/three@0.160.1/examples/jsm/controls/OrbitControls');
+        window.ThreeTiltSim = {
+          THREE: threeModule,
+          OrbitControls: controlsModule.OrbitControls
+        };
+        window.ThreeTiltSimError = '';
+        window.ThreeTiltSimStatus = 'ready';
+      })
+      .catch((error) => {
+        window.ThreeTiltSimError = String(error);
+        window.ThreeTiltSimStatus = 'error';
+      });
+  </script>
+  <style>
+    body {
+      background:
+        radial-gradient(circle at top left, rgba(99, 196, 255, 0.12), transparent 28%),
+        radial-gradient(circle at top right, rgba(156, 222, 116, 0.1), transparent 26%),
+        var(--bg);
+    }
+
+    .sim-shell {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+    }
+
+    .sim-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 20px;
+      align-items: flex-start;
+      padding: 22px;
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      background: linear-gradient(180deg, rgba(32, 38, 49, 0.96), rgba(24, 28, 35, 0.96));
+      box-shadow: 0 24px 64px rgba(0, 0, 0, 0.24);
+    }
+
+    .sim-header h1 {
+      margin: 0 0 10px;
+      font-size: clamp(28px, 3vw, 42px);
+      line-height: 1.05;
+    }
+
+    .sim-header p {
+      margin: 0;
+      max-width: 72ch;
+      color: var(--text-dim);
+      line-height: 1.58;
+    }
+
+    .sim-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .summary-chip {
+      padding: 9px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-dim);
+      font-size: 12px;
+    }
+
+    .sim-grid {
+      display: grid;
+      grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
+      gap: 20px;
+      align-items: start;
+    }
+
+    .sim-sidebar,
+    .sim-main {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      min-width: 0;
+    }
+
+    .sim-panel {
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      overflow: hidden;
+      background: linear-gradient(180deg, rgba(32, 38, 49, 0.92), rgba(24, 28, 35, 0.94));
+      box-shadow: 0 18px 54px rgba(0, 0, 0, 0.2);
+    }
+
+    .sim-panel-header {
+      padding: 15px 18px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .sim-panel-header h2,
+    .sim-panel-header h3 {
+      margin: 0 0 6px;
+      font-size: 15px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .sim-panel-header p {
+      margin: 0;
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.52;
+    }
+
+    .sim-panel-body {
+      padding: 18px;
+    }
+
+    .chip-row,
+    .toggle-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .chip-button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-dim);
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease, transform 0.16s ease;
+    }
+
+    .chip-button:hover {
+      border-color: rgba(255, 179, 90, 0.5);
+      color: var(--text);
+      transform: translateY(-1px);
+    }
+
+    .chip-button.is-active {
+      border-color: var(--accent);
+      background: rgba(255, 179, 90, 0.14);
+      color: var(--text);
+    }
+
+    .control-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(152px, 1fr));
+      gap: 14px 16px;
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .control-group label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.05em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+    }
+
+    .control-help {
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.45;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+
+    .control-input,
+    .control-select {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text);
+      outline: none;
+    }
+
+    .control-input:focus,
+    .control-select:focus {
+      border-color: rgba(255, 179, 90, 0.65);
+      box-shadow: 0 0 0 1px rgba(255, 179, 90, 0.3);
+    }
+
+    .control-suffix {
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .slider-wrap {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .slider-wrap input[type="range"] {
+      width: 100%;
+      -webkit-appearance: none;
+      appearance: none;
+      height: 4px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.12);
+      outline: none;
+    }
+
+    .slider-wrap input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 0;
+      background: var(--accent);
+    }
+
+    .slider-wrap input[type="range"]::-moz-range-thumb {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 0;
+      background: var(--accent);
+    }
+
+    .slider-value {
+      min-width: 72px;
+      text-align: right;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--accent);
+    }
+
+    .hint {
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .results-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+    }
+
+    .result-card {
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.03);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .result-label {
+      color: var(--text-dim);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .result-value {
+      color: var(--text);
+      font-size: 23px;
+      font-weight: 700;
+      line-height: 1.1;
+      word-break: break-word;
+    }
+
+    .result-value.good { color: var(--good); }
+    .result-value.warn { color: var(--accent); }
+    .result-value.danger { color: var(--danger); }
+    .result-value.info { color: var(--vertical); }
+
+    .result-note {
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .visual-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
+    }
+
+    .svg-host {
+      padding: 16px;
+      background: rgba(16, 19, 24, 0.82);
+    }
+
+    .svg-host svg {
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .detail-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .detail-table th,
+    .detail-table td {
+      padding: 9px 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    .detail-table th {
+      color: var(--text-dim);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-weight: 600;
+    }
+
+    .detail-table td:last-child,
+    .detail-table th:last-child {
+      text-align: right;
+    }
+
+    .mono {
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .warning-list,
+    .validation-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .warning-item,
+    .validation-item {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .warning-item {
+      border-color: rgba(255, 111, 97, 0.28);
+      color: #ffd5d0;
+      background: rgba(255, 111, 97, 0.08);
+    }
+
+    .warning-item.warn {
+      border-color: rgba(255, 179, 90, 0.28);
+      color: #ffe8cc;
+      background: rgba(255, 179, 90, 0.08);
+    }
+
+    .validation-item {
+      color: var(--text-dim);
+    }
+
+    .callout {
+      border-top: 1px solid var(--border);
+      padding-top: 14px;
+      margin-top: 14px;
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .chart-stack {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 20px;
+    }
+
+    .legend-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 0 18px 14px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 12px;
+    }
+
+    .legend-swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 4px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      display: inline-block;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    .metric-pairs {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 14px;
+    }
+
+    .metric-list {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 13px;
+    }
+
+    .metric-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .metric-row span:first-child {
+      color: var(--text-dim);
+    }
+
+    .metric-row span:last-child {
+      text-align: right;
+    }
+
+    .footer-note {
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
+    .scene-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.75fr) minmax(280px, 0.95fr);
+      gap: 20px;
+      align-items: start;
+    }
+
+    .scene-main,
+    .scene-side {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      min-width: 0;
+    }
+
+    .scene-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 10px;
+      align-items: center;
+      padding: 12px 18px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .scene-toolbar-group {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      padding-right: 12px;
+      margin-right: 4px;
+      border-right: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .scene-toolbar-group:last-child {
+      border-right: 0;
+      padding-right: 0;
+      margin-right: 0;
+    }
+
+    .scene-toolbar-label {
+      color: var(--text-dim);
+      font-size: 12px;
+      margin-right: 4px;
+    }
+
+    .three-wrap {
+      position: relative;
+      background:
+        radial-gradient(circle at top, rgba(99, 196, 255, 0.12), transparent 34%),
+        rgba(16, 19, 24, 0.9);
+      min-height: 520px;
+    }
+
+    .three-canvas-host {
+      width: 100%;
+      height: 520px;
+      cursor: grab;
+    }
+
+    .three-canvas-host:active {
+      cursor: grabbing;
+    }
+
+    .three-overlay {
+      position: absolute;
+      left: 18px;
+      top: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .scene-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      width: fit-content;
+      max-width: min(100%, 340px);
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.09);
+      background: rgba(16, 19, 24, 0.78);
+      backdrop-filter: blur(12px);
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .three-loading {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 520px;
+      color: var(--text-dim);
+      font-size: 13px;
+      line-height: 1.6;
+      text-align: center;
+      padding: 18px;
+    }
+
+    .scene-legend-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .scene-legend-item {
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    .scene-legend-item strong {
+      color: var(--text);
+    }
+
+    .scene-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      margin-top: 3px;
+      flex: 0 0 auto;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.14);
+    }
+
+    .scene-note-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .scene-note-item {
+      color: var(--text-dim);
+      font-size: 12px;
+      line-height: 1.55;
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .scene-note-item strong {
+      color: var(--text);
+    }
+
+    .pose-leg-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+    }
+
+    .pose-leg-card {
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.03);
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .pose-leg-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      color: var(--text);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .pose-leg-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 700;
+    }
+
+    .pose-leg-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 22px;
+      height: 22px;
+      padding: 0 7px;
+      border-radius: 999px;
+      color: #081018;
+      font-size: 11px;
+      font-weight: 700;
+    }
+
+    .pose-leg-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 12px;
+    }
+
+    .pose-leg-meta-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .pose-leg-meta-row span:first-child {
+      color: var(--text-dim);
+    }
+
+    .leg-row-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+    }
+
+    .leg-row-label span {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+    }
+
+    html, body, #root {
+      height: 100%;
+      overflow: hidden;
+    }
+
+    body {
+      overflow: hidden;
+    }
+
+    .sim-shell {
+      height: 100dvh;
+      padding: 14px;
+      gap: 14px;
+      overflow: hidden;
+    }
+
+    .sim-header {
+      flex: 0 0 auto;
+      padding: 14px 16px;
+      align-items: center;
+    }
+
+    .sim-header h1 {
+      margin: 0;
+      font-size: clamp(22px, 2vw, 30px);
+    }
+
+    .sim-header p {
+      max-width: 56ch;
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .header-main {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .sim-summary {
+      margin-top: 0;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .summary-chip {
+      min-width: 0;
+      padding: 8px 10px;
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .summary-chip strong {
+      display: block;
+      color: var(--text);
+      font-size: 12px;
+      margin-bottom: 2px;
+    }
+
+    .sim-grid {
+      flex: 1;
+      min-height: 0;
+      grid-template-columns: minmax(300px, 320px) minmax(0, 1fr) minmax(320px, 360px);
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .sim-sidebar,
+    .sim-main,
+    .sim-detail {
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .sim-panel {
+      min-height: 0;
+    }
+
+    .sim-panel-header {
+      padding: 12px 14px;
+    }
+
+    .sim-panel-header h2,
+    .sim-panel-header h3 {
+      font-size: 14px;
+      margin: 0 0 4px;
+    }
+
+    .sim-panel-header p {
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .sim-panel-body {
+      padding: 12px;
+    }
+
+    .control-panel,
+    .detail-panel,
+    .hero-panel {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .control-panel .sim-panel-body,
+    .detail-panel .sim-panel-body {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .control-sections {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .control-section {
+      border-radius: 14px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+      padding: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .control-section-header {
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+
+    .control-section-header h3 {
+      margin: 0;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--text);
+    }
+
+    .control-section-header p {
+      display: none;
+      margin: 0;
+      color: var(--text-dim);
+      font-size: 11px;
+      line-height: 1.4;
+    }
+
+    .control-grid.compact-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .control-group.compact {
+      gap: 4px;
+    }
+
+    .control-group.compact label {
+      font-size: 10px;
+      letter-spacing: 0.04em;
+    }
+
+    .control-group.compact .control-input,
+    .control-group.compact .control-select {
+      padding: 8px 9px;
+      border-radius: 10px;
+      font-size: 13px;
+    }
+
+    .control-group.compact .control-suffix,
+    .control-group.compact .control-help {
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .control-inline {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+
+    .control-inline > * {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .compact-callout {
+      margin-top: 0;
+      padding-top: 8px;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .hero-panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+
+    .hero-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 10px;
+      align-items: center;
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .hero-toolbar-group {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
+    .hero-toolbar-label {
+      color: var(--text-dim);
+      font-size: 11px;
+      white-space: nowrap;
+    }
+
+    .progress-strip {
+      flex: 1 1 260px;
+      min-width: 220px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .progress-strip .slider-wrap {
+      gap: 8px;
+    }
+
+    .progress-caption {
+      color: var(--text-dim);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .hero-kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 8px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.02);
+    }
+
+    .mini-stat-card {
+      min-width: 0;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+      padding: 9px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .mini-stat-label {
+      color: var(--text-dim);
+      font-size: 10px;
+      line-height: 1.3;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .mini-stat-value {
+      color: var(--text);
+      font-size: 18px;
+      line-height: 1.05;
+      font-weight: 700;
+    }
+
+    .mini-stat-subtext {
+      color: var(--text-dim);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
+    .mini-stat-card.good .mini-stat-value { color: var(--good); }
+    .mini-stat-card.warn .mini-stat-value { color: var(--accent); }
+    .mini-stat-card.danger .mini-stat-value { color: var(--danger); }
+    .mini-stat-card.info .mini-stat-value { color: var(--vertical); }
+
+    .hero-scene-shell {
+      flex: 1;
+      min-height: 0;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .three-wrap {
+      flex: 1;
+      height: 100%;
+      min-height: 0;
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    .three-canvas-host,
+    .three-loading {
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+    }
+
+    .three-canvas-host canvas {
+      width: 100% !important;
+      height: 100% !important;
+      display: block;
+    }
+
+    .detail-panel {
+      height: 100%;
+    }
+
+    .detail-panel-header {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .detail-tabs {
+      gap: 6px;
+    }
+
+    .detail-panel-body {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .detail-tab-content {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 0;
+    }
+
+    .detail-block {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .detail-block-title {
+      color: var(--text);
+      font-size: 11px;
+      line-height: 1.35;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .detail-summary-grid,
+    .detail-grid-2 {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .status-strip {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 7px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-dim);
+      font-size: 11px;
+      line-height: 1.3;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    .status-pill.good {
+      color: var(--good);
+      border-color: rgba(114, 214, 141, 0.28);
+      background: rgba(114, 214, 141, 0.08);
+    }
+
+    .status-pill.warn {
+      color: var(--accent);
+      border-color: rgba(255, 179, 90, 0.28);
+      background: rgba(255, 179, 90, 0.08);
+    }
+
+    .compact-list {
+      gap: 6px;
+    }
+
+    .compact-list .warning-item,
+    .compact-list .validation-item {
+      padding: 8px 10px;
+      font-size: 11px;
+      line-height: 1.42;
+    }
+
+    .mini-note {
+      padding: 10px 12px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      background: rgba(255, 255, 255, 0.03);
+      color: var(--text-dim);
+      font-size: 11px;
+      line-height: 1.45;
+    }
+
+    .mini-note.good {
+      color: var(--good);
+      border-color: rgba(114, 214, 141, 0.24);
+      background: rgba(114, 214, 141, 0.08);
+    }
+
+    .compact-table {
+      font-size: 11px;
+    }
+
+    .compact-table th,
+    .compact-table td {
+      padding: 7px 8px;
+    }
+
+    .sim-detail > .sim-panel,
+    .sim-sidebar > .sim-panel,
+    .sim-main > .sim-panel {
+      flex: 1;
+    }
+
+    .sim-main > .sim-panel {
+      height: 100%;
+    }
+
+    @media (max-width: 1080px) {
+      .sim-grid {
+        grid-template-columns: 1fr;
+      }
+      .scene-layout {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 900px) {
+      html, body, #root, body {
+        overflow: auto;
+      }
+      .sim-shell {
+        height: auto;
+        min-height: 100dvh;
+        overflow: visible;
+      }
+      .sim-summary,
+      .hero-kpi-grid,
+      .detail-summary-grid,
+      .detail-grid-2,
+      .control-grid.compact-grid {
+        grid-template-columns: 1fr;
+      }
+      .sim-header {
+        flex-direction: column;
+      }
+      .three-wrap,
+      .three-canvas-host,
+      .three-loading {
+        height: 420px;
+        min-height: 420px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useEffect, useMemo, useRef, useState } = React;
+
+    const G = 9.81;
+    const IN_TO_M = 0.0254;
+    const LB_TO_KG = 0.45359237;
+    const LBFT3_TO_KGM3 = 16.01846337;
+    const RAD_TO_DEG = 180 / Math.PI;
+    const DEG_TO_RAD = Math.PI / 180;
+    const LEG_AZIMUTHS = [0, 120, 240].map((deg) => deg * DEG_TO_RAD);
+    const LEG_META = [
+      { name: 'Leg 1', color: 0x63c4ff, css: '#63c4ff', badgeText: 'L1' },
+      { name: 'Leg 2', color: 0xffb35a, css: '#ffb35a', badgeText: 'L2' },
+      { name: 'Leg 3', color: 0x72d68d, css: '#72d68d', badgeText: 'L3' }
+    ];
+    const MOTOR_OPTIONS = {
+      nema17_ung_0_6: {
+        key: 'nema17_ung_0_6',
+        label: 'NEMA 17 - Ungeared 0.6 Nm',
+        shortLabel: 'N17 direct 0.6',
+        torqueNm: 0.6
+      },
+      nema23_ung_1_26: {
+        key: 'nema23_ung_1_26',
+        label: 'NEMA 23 - Ungeared 1.26 Nm',
+        shortLabel: 'N23 direct 1.26',
+        torqueNm: 1.26
+      },
+      nema23_ung_3: {
+        key: 'nema23_ung_3',
+        label: 'NEMA 23 - Ungeared 3.0 Nm',
+        shortLabel: 'N23 direct 3.0',
+        torqueNm: 3
+      },
+      nema23_gear_5_1: {
+        key: 'nema23_gear_5_1',
+        label: 'NEMA 23 - 5:1 gearbox 6.3 Nm',
+        shortLabel: 'N23 5:1 6.3',
+        torqueNm: 6.3
+      }
+    };
+    const MOTOR_OPTION_LIST = Object.values(MOTOR_OPTIONS).sort((a, b) => a.torqueNm - b.torqueNm);
+
+    const PRESETS = {
+      prototype36: {
+        key: 'prototype36',
+        label: '36" x 36" x 6" Prototype',
+        unitSystem: 'imperial',
+        massMode: 'direct',
+        widthM: 36 * IN_TO_M,
+        lengthM: 36 * IN_TO_M,
+        thicknessM: 6 * IN_TO_M,
+        massKg: 25 * LB_TO_KG,
+        densityKgM3: 40 * LBFT3_TO_KGM3,
+        targetTiltDeg: 10,
+        headingDeg: 0,
+        moveTimeS: 5,
+        motorKey: 'nema23_ung_3',
+        baseRadiusM: 11.5 * IN_TO_M,
+        supportRadiusM: 12 * IN_TO_M,
+        crankRadiusM: 3.25 * IN_TO_M,
+        rodLengthM: 10 * IN_TO_M,
+        neutralHeightM: 12 * IN_TO_M,
+        shaftHeightM: 0,
+        safetyFactor: 2
+      },
+      compact24: {
+        key: 'compact24',
+        label: '24" x 24" Bench Rig',
+        unitSystem: 'imperial',
+        massMode: 'direct',
+        widthM: 24 * IN_TO_M,
+        lengthM: 24 * IN_TO_M,
+        thicknessM: 4 * IN_TO_M,
+        massKg: 14 * LB_TO_KG,
+        densityKgM3: 35 * LBFT3_TO_KGM3,
+        targetTiltDeg: 10,
+        headingDeg: 30,
+        moveTimeS: 4,
+        motorKey: 'nema23_ung_3',
+        baseRadiusM: 8.5 * IN_TO_M,
+        supportRadiusM: 8 * IN_TO_M,
+        crankRadiusM: 1 * IN_TO_M,
+        rodLengthM: 6.5 * IN_TO_M,
+        neutralHeightM: 6.25 * IN_TO_M,
+        shaftHeightM: 0,
+        safetyFactor: 2
+      },
+      metricConcept: {
+        key: 'metricConcept',
+        label: '900 x 900 x 120 mm Concept',
+        unitSystem: 'metric',
+        massMode: 'density',
+        widthM: 0.9,
+        lengthM: 0.9,
+        thicknessM: 0.12,
+        massKg: 18,
+        densityKgM3: 180,
+        targetTiltDeg: 12,
+        headingDeg: 45,
+        moveTimeS: 5,
+        motorKey: 'nema23_ung_3',
+        baseRadiusM: 0.27,
+        supportRadiusM: 0.29,
+        crankRadiusM: 0.028,
+        rodLengthM: 0.18,
+        neutralHeightM: 0.2,
+        shaftHeightM: 0,
+        safetyFactor: 2.5
+      }
+    };
+
+    function clamp(value, min, max) {
+      return Math.min(max, Math.max(min, value));
+    }
+
+    function round(value, digits = 2) {
+      const factor = 10 ** digits;
+      return Math.round(value * factor) / factor;
+    }
+
+    function toRadians(deg) {
+      return deg * DEG_TO_RAD;
+    }
+
+    function toDegrees(rad) {
+      return rad * RAD_TO_DEG;
+    }
+
+    function toDisplayLength(meters, unitSystem) {
+      return unitSystem === 'imperial' ? meters / IN_TO_M : meters * 1000;
+    }
+
+    function fromDisplayLength(value, unitSystem) {
+      return unitSystem === 'imperial' ? value * IN_TO_M : value / 1000;
+    }
+
+    function lengthUnit(unitSystem) {
+      return unitSystem === 'imperial' ? 'in' : 'mm';
+    }
+
+    function densityUnit(unitSystem) {
+      return unitSystem === 'imperial' ? 'lb/ft^3' : 'kg/m^3';
+    }
+
+    function toDisplayMass(kg, unitSystem) {
+      return unitSystem === 'imperial' ? kg / LB_TO_KG : kg;
+    }
+
+    function fromDisplayMass(value, unitSystem) {
+      return unitSystem === 'imperial' ? value * LB_TO_KG : value;
+    }
+
+    function massUnit(unitSystem) {
+      return unitSystem === 'imperial' ? 'lb' : 'kg';
+    }
+
+    function toDisplayDensity(value, unitSystem) {
+      return unitSystem === 'imperial' ? value / LBFT3_TO_KGM3 : value;
+    }
+
+    function fromDisplayDensity(value, unitSystem) {
+      return unitSystem === 'imperial' ? value * LBFT3_TO_KGM3 : value;
+    }
+
+    function toDisplayForce(newtons, unitSystem) {
+      return unitSystem === 'imperial' ? newtons / G / LB_TO_KG : newtons;
+    }
+
+    function forceUnit(unitSystem) {
+      return unitSystem === 'imperial' ? 'lbf' : 'N';
+    }
+
+    function toDisplayTorque(nm, unitSystem) {
+      return unitSystem === 'imperial' ? nm * 8.85074579 : nm;
+    }
+
+    function torqueUnit(unitSystem) {
+      return unitSystem === 'imperial' ? 'lbf·in' : 'N·m';
+    }
+
+    function motorUsageTone(usageRatio) {
+      if (!Number.isFinite(usageRatio)) {
+        return 'danger';
+      }
+      if (usageRatio <= 0.75) {
+        return 'good';
+      }
+      if (usageRatio <= 1) {
+        return 'warn';
+      }
+      return 'danger';
+    }
+
+    function requiredMotorTorque(peakTorqueNm, safetyFactor) {
+      return Number.isFinite(peakTorqueNm) ? peakTorqueNm * safetyFactor : NaN;
+    }
+
+    function sweepPointFitsMotor(entry, motorTorqueNm) {
+      return Boolean(entry?.feasible) && Number.isFinite(entry.requiredMotorTorqueNm) && entry.requiredMotorTorqueNm <= motorTorqueNm + 1e-9;
+    }
+
+    function smallestViableMotor(requiredTorqueNm) {
+      return MOTOR_OPTION_LIST.find((option) => option.torqueNm + 1e-9 >= requiredTorqueNm) ?? null;
+    }
+
+    function chooseNearMinimum(entries, valueAccessor, distanceAccessor = () => 0, toleranceRatio = 1.08) {
+      const valid = entries.filter((entry) => Number.isFinite(valueAccessor(entry)));
+      if (!valid.length) {
+        return null;
+      }
+      const bestValue = Math.min(...valid.map(valueAccessor));
+      const limit = bestValue <= 1e-9 ? bestValue + 1e-9 : bestValue * toleranceRatio;
+      return [...valid]
+        .filter((entry) => valueAccessor(entry) <= limit)
+        .sort((a, b) => distanceAccessor(a) - distanceAccessor(b) || valueAccessor(a) - valueAccessor(b))[0];
+    }
+
+    function sweepBounds(currentValue, { minValue, maxValue, lowFactor, highFactor, minSpan }) {
+      const boundedMax = Math.max(maxValue, minValue);
+      const low = Math.min(boundedMax, Math.max(minValue, currentValue * lowFactor));
+      let high = Math.min(boundedMax, Math.max(currentValue * highFactor, low + minSpan));
+      if (high <= low) {
+        high = Math.min(boundedMax, low + minSpan);
+      }
+      if (high < low) {
+        high = low;
+      }
+      return { low, high };
+    }
+
+    function signed(value, digits = 1) {
+      return `${value >= 0 ? '+' : ''}${round(value, digits)}`;
+    }
+
+    function nearestAngle(candidate, reference) {
+      if (reference == null) {
+        return candidate;
+      }
+      const twoPi = Math.PI * 2;
+      let best = candidate;
+      let bestDiff = Math.abs(candidate - reference);
+      for (let k = -2; k <= 2; k += 1) {
+        const shifted = candidate + k * twoPi;
+        const diff = Math.abs(shifted - reference);
+        if (diff < bestDiff) {
+          bestDiff = diff;
+          best = shifted;
+        }
+      }
+      return best;
+    }
+
+    function solve3x3(matrix, vector) {
+      const a = matrix.map((row, rowIndex) => [...row, vector[rowIndex]]);
+      for (let pivot = 0; pivot < 3; pivot += 1) {
+        let bestRow = pivot;
+        for (let row = pivot + 1; row < 3; row += 1) {
+          if (Math.abs(a[row][pivot]) > Math.abs(a[bestRow][pivot])) {
+            bestRow = row;
+          }
+        }
+        if (Math.abs(a[bestRow][pivot]) < 1e-12) {
+          return null;
+        }
+        if (bestRow !== pivot) {
+          const temp = a[pivot];
+          a[pivot] = a[bestRow];
+          a[bestRow] = temp;
+        }
+        const divisor = a[pivot][pivot];
+        for (let col = pivot; col < 4; col += 1) {
+          a[pivot][col] /= divisor;
+        }
+        for (let row = 0; row < 3; row += 1) {
+          if (row === pivot) continue;
+          const factor = a[row][pivot];
+          for (let col = pivot; col < 4; col += 1) {
+            a[row][col] -= factor * a[pivot][col];
+          }
+        }
+      }
+      return [a[0][3], a[1][3], a[2][3]];
+    }
+
+    function supportPositions(radius) {
+      return LEG_AZIMUTHS.map((phi, index) => ({
+        index,
+        phi,
+        x: radius * Math.cos(phi),
+        y: radius * Math.sin(phi)
+      }));
+    }
+
+    function motorPositions(radius) {
+      return supportPositions(radius);
+    }
+
+    function addVec3(a, b) {
+      return { x: a.x + b.x, y: a.y + b.y, z: a.z + b.z };
+    }
+
+    function subVec3(a, b) {
+      return { x: a.x - b.x, y: a.y - b.y, z: a.z - b.z };
+    }
+
+    function scaleVec3(vector, scalar) {
+      return { x: vector.x * scalar, y: vector.y * scalar, z: vector.z * scalar };
+    }
+
+    function dotVec3(a, b) {
+      return a.x * b.x + a.y * b.y + a.z * b.z;
+    }
+
+    function crossVec3(a, b) {
+      return {
+        x: a.y * b.z - a.z * b.y,
+        y: a.z * b.x - a.x * b.z,
+        z: a.x * b.y - a.y * b.x
+      };
+    }
+
+    function lengthVec3(vector) {
+      return Math.hypot(vector.x, vector.y, vector.z);
+    }
+
+    function normalizeVec3(vector) {
+      const magnitude = lengthVec3(vector);
+      if (magnitude < 1e-9) {
+        return { x: 0, y: 0, z: 0 };
+      }
+      return scaleVec3(vector, 1 / magnitude);
+    }
+
+    function rotateAroundAxis(vector, axis, angleRad) {
+      const unitAxis = normalizeVec3(axis);
+      const cosTheta = Math.cos(angleRad);
+      const sinTheta = Math.sin(angleRad);
+      const parallel = scaleVec3(unitAxis, dotVec3(unitAxis, vector));
+      const perpendicular = subVec3(vector, parallel);
+      const cross = crossVec3(unitAxis, vector);
+      return addVec3(
+        addVec3(scaleVec3(perpendicular, cosTheta), scaleVec3(cross, sinTheta)),
+        parallel
+      );
+    }
+
+    function tiltAxisFromHeading(headingRad) {
+      return {
+        x: -Math.sin(headingRad),
+        y: Math.cos(headingRad),
+        z: 0
+      };
+    }
+
+    function supportPlaneCenterHeight(config) {
+      return config.neutralHeightM - config.thicknessM / 2;
+    }
+
+    function buildPoseGeometry(config, thetaRad, headingRad) {
+      const axis = tiltAxisFromHeading(headingRad);
+      const supportCenterPoint = {
+        x: 0,
+        y: 0,
+        z: supportPlaneCenterHeight(config)
+      };
+      const supportPoints = supportPositions(config.supportRadiusM).map((point) => {
+        const rotated = rotateAroundAxis({ x: point.x, y: point.y, z: 0 }, axis, thetaRad);
+        return {
+          ...point,
+          x: supportCenterPoint.x + rotated.x,
+          y: supportCenterPoint.y + rotated.y,
+          z: supportCenterPoint.z + rotated.z,
+          neutralX: point.x,
+          neutralY: point.y
+        };
+      });
+      const comOffset = rotateAroundAxis({ x: 0, y: 0, z: config.thicknessM / 2 }, axis, thetaRad);
+      const comPoint = addVec3(supportCenterPoint, comOffset);
+      const normal = rotateAroundAxis({ x: 0, y: 0, z: 1 }, axis, thetaRad);
+      return {
+        axis,
+        supportCenterPoint,
+        supportPoints,
+        comPoint,
+        normal
+      };
+    }
+
+    function crankPointAtBeta(basePoint, phi, crankRadius, beta) {
+      return {
+        x: basePoint.x + Math.cos(phi) * crankRadius * Math.cos(beta),
+        y: basePoint.y + Math.sin(phi) * crankRadius * Math.cos(beta),
+        z: basePoint.z + crankRadius * Math.sin(beta)
+      };
+    }
+
+    function legKinematicsAtBeta(basePoint, supportPoint, phi, crankRadius, rodLength, beta) {
+      const crankPoint = crankPointAtBeta(basePoint, phi, crankRadius, beta);
+      const rodVector = subVec3(supportPoint, crankPoint);
+      const rodDistance = lengthVec3(rodVector);
+      const radialDirection = { x: Math.cos(phi), y: Math.sin(phi), z: 0 };
+      const tangentialDirection = { x: -Math.sin(phi), y: Math.cos(phi), z: 0 };
+      const crankVelocity = {
+        x: -radialDirection.x * crankRadius * Math.sin(beta),
+        y: -radialDirection.y * crankRadius * Math.sin(beta),
+        z: crankRadius * Math.cos(beta)
+      };
+      const horizontalDistance = Math.hypot(rodVector.x, rodVector.y);
+      const dfdBeta = -2 * dotVec3(rodVector, crankVelocity);
+      const dzdBeta = Math.abs(rodVector.z) > 1e-9 ? dotVec3(rodVector, crankVelocity) / rodVector.z : NaN;
+      return {
+        beta,
+        crankX: crankRadius * Math.cos(beta),
+        crankZ: crankRadius * Math.sin(beta),
+        crankPoint,
+        rodVector,
+        rodX: dotVec3(rodVector, radialDirection),
+        rodY: dotVec3(rodVector, tangentialDirection),
+        rodZ: rodVector.z,
+        rodDistance,
+        rodAngleDeg: rodDistance > 1e-9 ? toDegrees(Math.acos(clamp(rodVector.z / rodDistance, -1, 1))) : 0,
+        horizontalDistance,
+        f: rodDistance ** 2 - rodLength ** 2,
+        dfdBeta,
+        dzdBeta,
+        supportPoint,
+        basePoint,
+        localDx: dotVec3(subVec3(supportPoint, basePoint), radialDirection)
+      };
+    }
+
+    function solveLegWithGuess(basePoint, supportPoint, phi, crankRadius, rodLength, initialGuess) {
+      let beta = initialGuess;
+      for (let iteration = 0; iteration < 18; iteration += 1) {
+        const state = legKinematicsAtBeta(basePoint, supportPoint, phi, crankRadius, rodLength, beta);
+        if (Math.abs(state.f) < 1e-10) {
+          if (state.rodZ > 1e-6 && Number.isFinite(state.dzdBeta)) {
+            return state;
+          }
+          break;
+        }
+        if (!Number.isFinite(state.dfdBeta) || Math.abs(state.dfdBeta) < 1e-10) {
+          break;
+        }
+        beta -= state.f / state.dfdBeta;
+      }
+      const finalState = legKinematicsAtBeta(basePoint, supportPoint, phi, crankRadius, rodLength, beta);
+      if (Math.abs(finalState.f) < 1e-8 && finalState.rodZ > 1e-6 && Number.isFinite(finalState.dzdBeta)) {
+        return finalState;
+      }
+      return null;
+    }
+
+    function bisectionLegRoot(basePoint, supportPoint, phi, crankRadius, rodLength, leftBeta, rightBeta, leftF, rightF) {
+      let left = leftBeta;
+      let right = rightBeta;
+      let fLeft = leftF;
+      let fRight = rightF;
+      for (let iteration = 0; iteration < 40; iteration += 1) {
+        const mid = (left + right) / 2;
+        const state = legKinematicsAtBeta(basePoint, supportPoint, phi, crankRadius, rodLength, mid);
+        if (Math.abs(state.f) < 1e-10) {
+          return state;
+        }
+        if (fLeft === 0 || fLeft * state.f <= 0) {
+          right = mid;
+          fRight = state.f;
+        } else {
+          left = mid;
+          fLeft = state.f;
+        }
+      }
+      const mid = (left + right) / 2;
+      return legKinematicsAtBeta(basePoint, supportPoint, phi, crankRadius, rodLength, mid);
+    }
+
+    function legCrankSolutions(basePoint, supportPoint, phi, crankRadius, rodLength, previousBeta = null) {
+      const attempted = new Map();
+      const pushSolution = (solution, results) => {
+        if (!solution || Math.abs(solution.f) > 1e-7 || solution.rodZ <= 1e-6 || !Number.isFinite(solution.dzdBeta)) {
+          return;
+        }
+        const key = round(nearestAngle(solution.beta, 0), 6);
+        if (!attempted.has(key)) {
+          attempted.set(key, true);
+          results.push(solution);
+        }
+      };
+
+      const results = [];
+      if (previousBeta != null) {
+        [previousBeta, previousBeta + 0.16, previousBeta - 0.16].forEach((guess) => {
+          pushSolution(solveLegWithGuess(basePoint, supportPoint, phi, crankRadius, rodLength, guess), results);
+        });
+        if (results.length) {
+          return results;
+        }
+      }
+
+      const sampleCount = 144;
+      let previousState = legKinematicsAtBeta(basePoint, supportPoint, phi, crankRadius, rodLength, -Math.PI);
+      if (Math.abs(previousState.f) < 1e-10) {
+        pushSolution(previousState, results);
+      }
+
+      for (let index = 1; index <= sampleCount; index += 1) {
+        const beta = -Math.PI + (index / sampleCount) * Math.PI * 2;
+        const state = legKinematicsAtBeta(basePoint, supportPoint, phi, crankRadius, rodLength, beta);
+        if (Math.abs(state.f) < 1e-10) {
+          pushSolution(state, results);
+        } else if (previousState.f * state.f < 0) {
+          pushSolution(
+            bisectionLegRoot(basePoint, supportPoint, phi, crankRadius, rodLength, beta - (Math.PI * 2) / sampleCount, beta, previousState.f, state.f),
+            results
+          );
+        }
+        previousState = state;
+      }
+
+      return results;
+    }
+
+    function chooseLegSolution(solutions, previousBeta) {
+      if (!solutions.length) {
+        return null;
+      }
+      if (previousBeta != null) {
+        return solutions
+          .map((solution) => ({
+            ...solution,
+            beta: nearestAngle(solution.beta, previousBeta)
+          }))
+          .sort((a, b) => Math.abs(a.beta - previousBeta) - Math.abs(b.beta - previousBeta))[0];
+      }
+      return [...solutions].sort((a, b) => {
+        if (Math.abs(a.rodAngleDeg - b.rodAngleDeg) > 1e-6) {
+          return a.rodAngleDeg - b.rodAngleDeg;
+        }
+        return Math.abs(b.rodZ) - Math.abs(a.rodZ);
+      })[0];
+    }
+
+    function solvePose(config, thetaRad, headingRad, previousBetas = []) {
+      const geometry = buildPoseGeometry(config, thetaRad, headingRad);
+      const topPoints = geometry.supportPoints;
+      const legs = [];
+      for (let index = 0; index < topPoints.length; index += 1) {
+        const topPoint = topPoints[index];
+        const basePoint = {
+          x: config.baseRadiusM * Math.cos(topPoint.phi),
+          y: config.baseRadiusM * Math.sin(topPoint.phi),
+          z: config.shaftHeightM
+        };
+        const solutions = legCrankSolutions(basePoint, topPoint, topPoint.phi, config.crankRadiusM, config.rodLengthM, previousBetas[index] ?? null);
+        const leg = chooseLegSolution(solutions, previousBetas[index] ?? null);
+        if (!leg) {
+          return {
+            valid: false,
+            topPoints,
+            reason: `Leg ${index + 1} cannot reach the required support height.`
+          };
+        }
+        legs.push({
+          ...leg,
+          topZ: topPoint.z,
+          shaftZ: config.shaftHeightM,
+          topPoint,
+          basePoint
+        });
+      }
+      return {
+        valid: true,
+        thetaRad,
+        headingRad,
+        topPoints,
+        supportPoints: topPoints,
+        supportCenterPoint: geometry.supportCenterPoint,
+        comPoint: geometry.comPoint,
+        normal: geometry.normal,
+        legs
+      };
+    }
+
+    function motionStateAtProgress(progress, moveTimeS, targetTiltRad) {
+      const t = clamp(progress, 0, 1) * moveTimeS;
+      const half = moveTimeS / 2;
+      const accel = moveTimeS > 0 ? (4 * targetTiltRad) / (moveTimeS ** 2) : 0;
+      if (t <= half) {
+        return {
+          t,
+          thetaRad: 0.5 * accel * t ** 2,
+          alphaRadS2: accel
+        };
+      }
+      const dt = moveTimeS - t;
+      return {
+        t,
+        thetaRad: targetTiltRad - 0.5 * accel * dt ** 2,
+        alphaRadS2: -accel
+      };
+    }
+
+    function inertiaRectPrism(massKg, widthM, lengthM, thicknessM) {
+      return {
+        Ixx: (massKg * (lengthM ** 2 + thicknessM ** 2)) / 12,
+        Iyy: (massKg * (widthM ** 2 + thicknessM ** 2)) / 12,
+        Izz: (massKg * (widthM ** 2 + lengthM ** 2)) / 12
+      };
+    }
+
+    function supportForcesForMoment(points, comPoint, weightN, momentX, momentY) {
+      const matrix = [
+        [1, 1, 1],
+        points.map((point) => point.y - comPoint.y),
+        points.map((point) => -(point.x - comPoint.x))
+      ];
+      const vector = [weightN, momentX, momentY];
+      const solved = solve3x3(matrix, vector);
+      return solved;
+    }
+
+    function edgeClearance(points, widthM, lengthM) {
+      return Math.min(...points.map((point) => Math.min(widthM / 2 - Math.abs(point.x), lengthM / 2 - Math.abs(point.y))));
+    }
+
+    function supportHeightBoundsAtXY(basePoint, supportXY, phi, crankRadius, rodLength) {
+      let minZ = Number.POSITIVE_INFINITY;
+      let maxZ = Number.NEGATIVE_INFINITY;
+      for (let step = 0; step <= 720; step += 1) {
+        const beta = -Math.PI + (step / 720) * Math.PI * 2;
+        const crankPoint = crankPointAtBeta(basePoint, phi, crankRadius, beta);
+        const horizontalDistance = Math.hypot(supportXY.x - crankPoint.x, supportXY.y - crankPoint.y);
+        const verticalReachSquared = rodLength ** 2 - horizontalDistance ** 2;
+        if (verticalReachSquared < 0) {
+          continue;
+        }
+        const supportZ = crankPoint.z + Math.sqrt(verticalReachSquared);
+        minZ = Math.min(minZ, supportZ);
+        maxZ = Math.max(maxZ, supportZ);
+      }
+      if (!Number.isFinite(minZ) || !Number.isFinite(maxZ)) {
+        return null;
+      }
+      return { minZ, maxZ };
+    }
+
+    function isTrajectoryReachable(config, thetaRad, headingRad) {
+      let previousBetas = [];
+      const samples = 30;
+      for (let index = 0; index <= samples; index += 1) {
+        const progress = index / samples;
+        const pose = solvePose(config, thetaRad * progress, headingRad, previousBetas);
+        if (!pose.valid) {
+          return false;
+        }
+        previousBetas = pose.legs.map((leg) => leg.beta);
+      }
+      return true;
+    }
+
+    function findReachableTilt(config, headingRad, upperLimitDeg = 35) {
+      let low = 0;
+      let high = toRadians(upperLimitDeg);
+      if (!isTrajectoryReachable(config, low, headingRad)) {
+        return 0;
+      }
+      if (isTrajectoryReachable(config, high, headingRad)) {
+        return high;
+      }
+      for (let iteration = 0; iteration < 26; iteration += 1) {
+        const mid = (low + high) / 2;
+        if (isTrajectoryReachable(config, mid, headingRad)) {
+          low = mid;
+        } else {
+          high = mid;
+        }
+      }
+      return low;
+    }
+
+    function findMinimumCrankRadius(config, headingRad, targetTiltRad) {
+      const lower = Math.max(0.0025, config.crankRadiusM * 0.2);
+      let high = Math.max(config.crankRadiusM, 0.004);
+      let configAtHigh = { ...config, crankRadiusM: high };
+      let reachable = isTrajectoryReachable(configAtHigh, targetTiltRad, headingRad);
+      let guard = 0;
+      while (!reachable && high < 0.3 && guard < 18) {
+        high *= 1.35;
+        configAtHigh = { ...config, crankRadiusM: high };
+        reachable = isTrajectoryReachable(configAtHigh, targetTiltRad, headingRad);
+        guard += 1;
+      }
+      if (!reachable) {
+        return null;
+      }
+      let low = lower;
+      let best = high;
+      for (let iteration = 0; iteration < 24; iteration += 1) {
+        const mid = (low + high) / 2;
+        const trial = { ...config, crankRadiusM: mid };
+        if (isTrajectoryReachable(trial, targetTiltRad, headingRad)) {
+          best = mid;
+          high = mid;
+        } else {
+          low = mid;
+        }
+      }
+      return best;
+    }
+
+    function evaluateModel(config) {
+      const massKg = config.massMode === 'density'
+        ? config.densityKgM3 * config.widthM * config.lengthM * config.thicknessM
+        : config.massKg;
+      const weightN = massKg * G;
+      const inertia = inertiaRectPrism(massKg, config.widthM, config.lengthM, config.thicknessM);
+      const targetTiltRad = toRadians(config.targetTiltDeg);
+      const headingRad = toRadians(config.headingDeg);
+      const selectedMotor = MOTOR_OPTIONS[config.motorKey] ?? MOTOR_OPTION_LIST[0];
+      const targetGeometry = buildPoseGeometry(config, targetTiltRad, headingRad);
+      const supportPlaneCenterHeightM = supportPlaneCenterHeight(config);
+      const requiredSupportStrokeM = Math.max(...targetGeometry.supportPoints.map((point) => Math.abs(point.z - supportPlaneCenterHeightM)));
+      const tanApproxStrokeM = config.supportRadiusM * Math.tan(targetTiltRad);
+      const sinApproxStrokeM = config.supportRadiusM * Math.sin(targetTiltRad);
+      const supportPoints = supportPositions(config.supportRadiusM);
+      const basePoints = motorPositions(config.baseRadiusM);
+      const neutralSupportPoint = supportPoints[0];
+      const neutralBasePoint = {
+        x: basePoints[0].x,
+        y: basePoints[0].y,
+        z: config.shaftHeightM
+      };
+      const strokeBounds = supportHeightBoundsAtXY(
+        neutralBasePoint,
+        { x: neutralSupportPoint.x, y: neutralSupportPoint.y },
+        neutralSupportPoint.phi,
+        config.crankRadiusM,
+        config.rodLengthM
+      );
+      const motorClearance = edgeClearance(basePoints, config.widthM, config.lengthM);
+      const supportClearance = edgeClearance(supportPoints, config.widthM, config.lengthM);
+
+      const sampleCount = 60;
+      const samples = [];
+      let previousBetas = [];
+      let trajectoryValid = true;
+      let trajectoryError = null;
+      let peakDynamicTorque = 0;
+      let peakDynamicSupportForce = 0;
+      let peakDynamicAxialForce = 0;
+      let minTravelPerRad = Number.POSITIVE_INFINITY;
+      let maxRodAngleDeg = 0;
+      const legPeakTorque = [0, 0, 0];
+      const legPeakForce = [0, 0, 0];
+      let neutralPose = null;
+      let finalPose = null;
+      let lowestForce = Number.POSITIVE_INFINITY;
+      let highestForce = Number.NEGATIVE_INFINITY;
+      let headingAxis = {
+        x: -Math.sin(headingRad),
+        y: Math.cos(headingRad)
+      };
+      const alphaMagnitude = config.moveTimeS > 0 ? (4 * targetTiltRad) / (config.moveTimeS ** 2) : 0;
+
+      for (let index = 0; index <= sampleCount; index += 1) {
+        const progress = index / sampleCount;
+        const motion = motionStateAtProgress(progress, config.moveTimeS, targetTiltRad);
+        const pose = solvePose(config, motion.thetaRad, headingRad, previousBetas);
+        if (!pose.valid) {
+          trajectoryValid = false;
+          trajectoryError = pose.reason;
+          break;
+        }
+        previousBetas = pose.legs.map((leg) => leg.beta);
+        if (!neutralPose) {
+          neutralPose = pose;
+        }
+        finalPose = pose;
+
+        const alphaX = headingAxis.x * motion.alphaRadS2;
+        const alphaY = headingAxis.y * motion.alphaRadS2;
+        const momentX = inertia.Ixx * alphaX;
+        const momentY = inertia.Iyy * alphaY;
+        const supportLoads = supportForcesForMoment(pose.topPoints, pose.comPoint, weightN, momentX, momentY);
+        if (!supportLoads) {
+          trajectoryValid = false;
+          trajectoryError = 'Could not solve support reactions for the requested motion.';
+          break;
+        }
+
+        const legData = pose.legs.map((leg, legIndex) => {
+          const supportForceN = supportLoads[legIndex];
+          const travelPerRad = Math.abs(leg.dzdBeta);
+          const torqueNm = Math.abs(supportForceN * leg.dzdBeta);
+          const rodCos = leg.rodDistance > 0 ? clamp(leg.rodZ / leg.rodDistance, 1e-5, 1) : 1e-5;
+          const axialForceN = Math.abs(supportForceN / rodCos);
+          legPeakTorque[legIndex] = Math.max(legPeakTorque[legIndex], torqueNm);
+          legPeakForce[legIndex] = Math.max(legPeakForce[legIndex], Math.abs(supportForceN));
+          peakDynamicTorque = Math.max(peakDynamicTorque, torqueNm);
+          peakDynamicSupportForce = Math.max(peakDynamicSupportForce, Math.abs(supportForceN));
+          peakDynamicAxialForce = Math.max(peakDynamicAxialForce, axialForceN);
+          minTravelPerRad = Math.min(minTravelPerRad, travelPerRad);
+          maxRodAngleDeg = Math.max(maxRodAngleDeg, leg.rodAngleDeg);
+          lowestForce = Math.min(lowestForce, supportForceN);
+          highestForce = Math.max(highestForce, supportForceN);
+          return {
+            ...leg,
+            supportForceN,
+            torqueNm,
+            axialForceN,
+            travelPerRad
+          };
+        });
+
+        samples.push({
+          progress,
+          ...motion,
+          pose,
+          legs: legData,
+          supportLoads
+        });
+      }
+
+      const actualReachableTiltRad = findReachableTilt(config, headingRad);
+      const minimumCrankRadiusM = findMinimumCrankRadius(config, headingRad, targetTiltRad);
+      const neutralStaticLoads = trajectoryValid && neutralPose
+        ? supportForcesForMoment(neutralPose.topPoints, neutralPose.comPoint, weightN, 0, 0)
+        : null;
+      const staticSupportForceN = neutralStaticLoads ? neutralStaticLoads[0] : weightN / 3;
+      let staticHoldTorqueNm = 0;
+      let staticHoldAxialForceN = 0;
+      let staticLegRows = [];
+
+      if (trajectoryValid && finalPose) {
+        const finalStaticLoads = supportForcesForMoment(finalPose.topPoints, finalPose.comPoint, weightN, 0, 0) ?? [weightN / 3, weightN / 3, weightN / 3];
+        staticLegRows = finalPose.legs.map((leg, legIndex) => {
+          const supportForceN = finalStaticLoads[legIndex];
+          const torqueNm = Math.abs(supportForceN * leg.dzdBeta);
+          const rodCos = leg.rodDistance > 0 ? clamp(leg.rodZ / leg.rodDistance, 1e-5, 1) : 1e-5;
+          const axialForceN = Math.abs(supportForceN / rodCos);
+          staticHoldTorqueNm = Math.max(staticHoldTorqueNm, torqueNm);
+          staticHoldAxialForceN = Math.max(staticHoldAxialForceN, axialForceN);
+          return {
+            legIndex,
+            heightM: leg.topZ,
+            crankDeg: toDegrees(leg.beta),
+            rodAngleDeg: leg.rodAngleDeg,
+            supportForceN,
+            torqueNm,
+            axialForceN
+          };
+        });
+      }
+
+      const dynamicSizingTorqueNm = Math.max(staticHoldTorqueNm, peakDynamicTorque);
+      const recommendedTorqueNm = dynamicSizingTorqueNm * config.safetyFactor;
+      const selectedMotorUsageRatio = recommendedTorqueNm / selectedMotor.torqueNm;
+      const selectedMotorCanDrive = selectedMotorUsageRatio <= 1 + 1e-9;
+      const recommendedMotorOption = smallestViableMotor(recommendedTorqueNm);
+      const motorOptionRows = MOTOR_OPTION_LIST.map((option) => {
+        const usageRatio = recommendedTorqueNm / option.torqueNm;
+        return {
+          ...option,
+          usageRatio,
+          headroomRatio: option.torqueNm / Math.max(recommendedTorqueNm, 1e-9),
+          fits: usageRatio <= 1 + 1e-9,
+          tone: motorUsageTone(usageRatio)
+        };
+      });
+      const centeredLoadError = neutralStaticLoads
+        ? Math.max(...neutralStaticLoads.map((load) => Math.abs(load - weightN / 3)))
+        : Math.abs(staticSupportForceN - weightN / 3);
+      const strokeCheckError = Math.abs(tanApproxStrokeM - requiredSupportStrokeM);
+
+      const warnings = [];
+      if (!trajectoryValid) {
+        warnings.push({
+          kind: 'danger',
+          text: trajectoryError || 'The current geometry cannot trace the requested tilt path.'
+        });
+      }
+      if (toDegrees(actualReachableTiltRad) + 1e-6 < config.targetTiltDeg) {
+        warnings.push({
+          kind: 'warn',
+          text: `Chosen geometry reaches only ${round(toDegrees(actualReachableTiltRad), 2)}° before a leg runs out of stroke or linkage reach.`
+        });
+      }
+      if (strokeBounds) {
+        const neutralZ = supportPlaneCenterHeightM;
+        const marginDown = neutralZ - strokeBounds.minZ;
+        const marginUp = strokeBounds.maxZ - neutralZ;
+        if (marginDown < requiredSupportStrokeM * 0.9) {
+          warnings.push({
+            kind: 'warn',
+            text: `Neutral underside height is low for the requested tilt. Available downstroke at the rod mount is ${round(toDisplayLength(marginDown, config.unitSystem), 2)} ${lengthUnit(config.unitSystem)}.`
+          });
+        }
+        if (marginUp < requiredSupportStrokeM * 0.55) {
+          warnings.push({
+            kind: 'warn',
+            text: `Upstroke margin is tight at the bottom-plane support joint. Available upstroke is ${round(toDisplayLength(marginUp, config.unitSystem), 2)} ${lengthUnit(config.unitSystem)}.`
+          });
+        }
+      }
+      if (config.rodLengthM / Math.max(config.crankRadiusM, 1e-6) < 4) {
+        warnings.push({
+          kind: 'warn',
+          text: 'Rod length is less than 4x crank length. Expect higher rod angle, more side load, and less linear motion.'
+        });
+      }
+      if (maxRodAngleDeg > 32) {
+        warnings.push({
+          kind: 'warn',
+          text: `Rod articulation peaks at ${round(maxRodAngleDeg, 1)}°. That is workable, but it is getting steep for a clean crank-and-rod layout.`
+        });
+      }
+      if (minTravelPerRad < config.crankRadiusM * 0.12) {
+        warnings.push({
+          kind: 'warn',
+          text: 'One or more legs are near a crank singularity. Travel per motor degree collapses and control sensitivity becomes poor.'
+        });
+      }
+      if (supportClearance < 0) {
+        warnings.push({
+          kind: 'danger',
+          text: 'At least one support point lies outside the table footprint. Reduce mounting radius or increase the table footprint.'
+        });
+      }
+      if (motorClearance < 0) {
+        warnings.push({
+          kind: 'danger',
+          text: 'At least one motor shaft center lies outside the table footprint. Reduce motor radius or place the actuators outside the table envelope on purpose.'
+        });
+      }
+      if (lowestForce < -1e-6) {
+        warnings.push({
+          kind: 'warn',
+          text: 'The dynamic load case briefly unloads one leg below zero support force. That implies lift-off unless the linkage can pull as well as push.'
+        });
+      }
+
+      const validations = [
+        {
+          label: 'Support stroke check',
+          value: `${round(toDisplayLength(requiredSupportStrokeM, config.unitSystem), 3)} ${lengthUnit(config.unitSystem)}`,
+          note: `Exact body-mounted underside stroke is ${round(toDisplayLength(sinApproxStrokeM, config.unitSystem), 3)} ${lengthUnit(config.unitSystem)} from mountingRadius × sin(tilt). The old plane-at-fixed-XY estimate mountingRadius × tan(tilt) is ${round(toDisplayLength(tanApproxStrokeM, config.unitSystem), 3)} ${lengthUnit(config.unitSystem)}.`
+        },
+        {
+          label: 'Centered static load check',
+          value: `${round(toDisplayForce(staticSupportForceN, config.unitSystem), 3)} ${forceUnit(config.unitSystem)}`,
+          note: `At level, all three legs are near tableWeight / 3. Maximum neutral-load deviation is ${round(toDisplayForce(centeredLoadError, config.unitSystem), 6)} ${forceUnit(config.unitSystem)}.`
+        }
+      ];
+
+      const annotateSweepPoint = (entry) => ({
+        ...entry,
+        selectedMotorFits: sweepPointFitsMotor(entry, selectedMotor.torqueNm),
+        selectedMotorUsageRatio: Number.isFinite(entry.requiredMotorTorqueNm) ? entry.requiredMotorTorqueNm / selectedMotor.torqueNm : NaN
+      });
+
+      const torqueSweep = [];
+      const currentCrank = config.crankRadiusM;
+      const sweepMin = Math.max(0.004, currentCrank * 0.45);
+      const sweepMax = Math.min(0.4, Math.max(currentCrank * 2.4, minimumCrankRadiusM ? minimumCrankRadiusM * 1.4 : currentCrank * 1.8));
+      for (let index = 0; index <= 26; index += 1) {
+        const crankRadiusM = sweepMin + ((sweepMax - sweepMin) * index) / 26;
+        const trial = annotateSweepPoint(evaluateSweepPoint({ ...config, crankRadiusM }));
+        torqueSweep.push({
+          crankRadiusM,
+          ...trial
+        });
+      }
+
+      const rodSweep = [];
+      const rodRange = sweepBounds(config.rodLengthM, {
+        minValue: Math.max(config.crankRadiusM * 3.2, 0.04),
+        maxValue: 2,
+        lowFactor: 0.65,
+        highFactor: 1.85,
+        minSpan: 0.05
+      });
+      for (let index = 0; index <= 22; index += 1) {
+        const rodLengthM = rodRange.low + ((rodRange.high - rodRange.low) * index) / 22;
+        const trial = annotateSweepPoint(evaluateSweepPoint({ ...config, rodLengthM }));
+        rodSweep.push({
+          rodLengthM,
+          ...trial
+        });
+      }
+
+      const baseRadiusSweep = [];
+      const baseRadiusRange = sweepBounds(config.baseRadiusM, {
+        minValue: 0.01,
+        maxValue: Math.min(Math.min(config.widthM, config.lengthM) * 0.48, 2),
+        lowFactor: 0.55,
+        highFactor: 1.55,
+        minSpan: 0.02
+      });
+      for (let index = 0; index <= 20; index += 1) {
+        const baseRadiusM = baseRadiusRange.low + ((baseRadiusRange.high - baseRadiusRange.low) * index) / 20;
+        const trial = annotateSweepPoint(evaluateSweepPoint({ ...config, baseRadiusM }));
+        baseRadiusSweep.push({
+          baseRadiusM,
+          ...trial
+        });
+      }
+
+      const supportSweep = [];
+      const currentSupport = config.supportRadiusM;
+      const supportRange = sweepBounds(currentSupport, {
+        minValue: 0.03,
+        maxValue: Math.min(Math.min(config.widthM, config.lengthM) * 0.48, 2),
+        lowFactor: 0.55,
+        highFactor: 1.6,
+        minSpan: 0.02
+      });
+      for (let index = 0; index <= 20; index += 1) {
+        const supportRadiusM = supportRange.low + ((supportRange.high - supportRange.low) * index) / 20;
+        const trialConfig = { ...config, supportRadiusM };
+        const reachableTiltRad = findReachableTilt(trialConfig, headingRad);
+        const trial = annotateSweepPoint(evaluateSweepPoint(trialConfig));
+        supportSweep.push({
+          supportRadiusM,
+          reachableTiltDeg: toDegrees(reachableTiltRad),
+          ...trial
+        });
+      }
+
+      const crankFitSweep = torqueSweep.filter((entry) => entry.selectedMotorFits);
+      const crankSizingPoint = crankFitSweep.length
+        ? chooseNearMinimum(crankFitSweep, (entry) => entry.requiredMotorTorqueNm, (entry) => entry.crankRadiusM)
+        : null;
+
+      const rodFitSweep = rodSweep.filter((entry) => entry.selectedMotorFits);
+      const comfortableRodSweep = rodFitSweep.filter((entry) => entry.maxRodAngleDeg <= 25);
+      const rodSizingPoint = comfortableRodSweep.length
+        ? [...comfortableRodSweep].sort((a, b) => a.rodLengthM - b.rodLengthM)[0]
+        : rodFitSweep.length
+          ? [...rodFitSweep].sort((a, b) => a.maxRodAngleDeg - b.maxRodAngleDeg || a.rodLengthM - b.rodLengthM)[0]
+          : null;
+
+      const baseFitSweep = baseRadiusSweep.filter((entry) => entry.selectedMotorFits);
+      const baseSizingPoint = baseFitSweep.length
+        ? chooseNearMinimum(baseFitSweep, (entry) => entry.requiredMotorTorqueNm, (entry) => Math.abs(entry.baseRadiusM - config.baseRadiusM))
+        : null;
+
+      const supportFitSweep = supportSweep.filter((entry) => entry.selectedMotorFits && entry.reachableTiltDeg + 1e-6 >= config.targetTiltDeg);
+      const supportSizingPoint = supportFitSweep.length
+        ? [...supportFitSweep].sort((a, b) => b.supportRadiusM - a.supportRadiusM)[0]
+        : null;
+
+      const sizingGuides = {
+        crank: crankSizingPoint
+          ? {
+            valueM: crankSizingPoint.crankRadiusM,
+            tone: 'good',
+            note: `One-axis crank sweep with all other inputs fixed. Selected motor uses ${round(crankSizingPoint.selectedMotorUsageRatio * 100, 1)}% of its torque here.`
+          }
+          : {
+            valueM: minimumCrankRadiusM,
+            tone: minimumCrankRadiusM ? 'warn' : 'danger',
+            note: minimumCrankRadiusM
+              ? 'This is the geometric minimum crank that reaches the target tilt, but the selected motor still has no margin in the sampled sweep.'
+              : 'No crank length in the sampled range reaches the requested motion with the current fixed geometry.'
+          },
+        rod: rodSizingPoint
+          ? {
+            valueM: rodSizingPoint.rodLengthM,
+            tone: rodSizingPoint.maxRodAngleDeg <= 25 ? 'good' : 'warn',
+            note: rodSizingPoint.maxRodAngleDeg <= 25
+              ? `Shortest rod in the sweep that keeps peak rod angle at or below ${round(rodSizingPoint.maxRodAngleDeg, 1)}°.`
+              : `Selected motor only works with steeper rod posture. Best sampled rod angle is ${round(rodSizingPoint.maxRodAngleDeg, 1)}°.`
+          }
+          : {
+            valueM: null,
+            tone: 'danger',
+            note: 'No rod length in the sampled range both meets the target motion and stays within the selected motor torque.'
+          },
+        baseRadius: baseSizingPoint
+          ? {
+            valueM: baseSizingPoint.baseRadiusM,
+            tone: 'good',
+            note: `Best motor-radius sweep point for torque demand. Selected motor uses ${round(baseSizingPoint.selectedMotorUsageRatio * 100, 1)}% of its torque there.`
+          }
+          : {
+            valueM: null,
+            tone: 'danger',
+            note: 'No motor radius in the sampled range meets the requested motion with the selected motor while other inputs stay fixed.'
+          },
+        supportRadius: supportSizingPoint
+          ? {
+            valueM: supportSizingPoint.supportRadiusM,
+            tone: 'good',
+            note: `Largest sampled mounting radius that still reaches ${round(supportSizingPoint.reachableTiltDeg, 2)}° with the selected motor.`
+          }
+          : {
+            valueM: null,
+            tone: 'danger',
+            note: 'No sampled mounting radius both reaches the target tilt and stays within the selected motor torque.'
+          }
+      };
+
+      return {
+        ...config,
+        massKg,
+        weightN,
+        inertia,
+        targetTiltRad,
+        headingRad,
+        alphaMagnitude,
+        supportPoints,
+        basePoints,
+        supportPlaneCenterHeightM,
+        requiredSupportStrokeM,
+        tanApproxStrokeM,
+        sinApproxStrokeM,
+        strokeBounds,
+        motorClearance,
+        supportClearance,
+        samples,
+        trajectoryValid,
+        warnings,
+        validations,
+        staticSupportForceN,
+        peakDynamicSupportForce,
+        peakDynamicAxialForce,
+        peakDynamicTorque,
+        staticHoldTorqueNm,
+        staticHoldAxialForceN,
+        dynamicSizingTorqueNm,
+        recommendedTorqueNm,
+        selectedMotor,
+        selectedMotorUsageRatio,
+        selectedMotorCanDrive,
+        recommendedMotorOption,
+        motorOptionRows,
+        actualReachableTiltRad,
+        actualReachableTiltDeg: toDegrees(actualReachableTiltRad),
+        minimumCrankRadiusM,
+        legPeakTorque,
+        legPeakForce,
+        neutralPose,
+        finalPose,
+        staticLegRows,
+        highestForce,
+        lowestForce,
+        maxRodAngleDeg,
+        minTravelPerRad,
+        torqueSweep,
+        rodSweep,
+        baseRadiusSweep,
+        sizingGuides,
+        supportSweep
+      };
+    }
+
+    function evaluateSweepPoint(config) {
+      const massKg = config.massMode === 'density'
+        ? config.densityKgM3 * config.widthM * config.lengthM * config.thicknessM
+        : config.massKg;
+      const weightN = massKg * G;
+      const targetTiltRad = toRadians(config.targetTiltDeg);
+      const headingRad = toRadians(config.headingDeg);
+      const inertia = inertiaRectPrism(massKg, config.widthM, config.lengthM, config.thicknessM);
+      let previousBetas = [];
+      let peakTorqueNm = 0;
+      let maxRodAngleDeg = 0;
+      const axis = { x: -Math.sin(headingRad), y: Math.cos(headingRad) };
+      for (let index = 0; index <= 34; index += 1) {
+        const progress = index / 34;
+        const motion = motionStateAtProgress(progress, config.moveTimeS, targetTiltRad);
+        const pose = solvePose(config, motion.thetaRad, headingRad, previousBetas);
+        if (!pose.valid) {
+          return {
+            feasible: false,
+            peakTorqueNm: null,
+            requiredMotorTorqueNm: null,
+            maxRodAngleDeg: null
+          };
+        }
+        previousBetas = pose.legs.map((leg) => leg.beta);
+        const momentX = inertia.Ixx * axis.x * motion.alphaRadS2;
+        const momentY = inertia.Iyy * axis.y * motion.alphaRadS2;
+        const loads = supportForcesForMoment(pose.topPoints, pose.comPoint, weightN, momentX, momentY);
+        if (!loads) {
+          return {
+            feasible: false,
+            peakTorqueNm: null,
+            requiredMotorTorqueNm: null,
+            maxRodAngleDeg: null
+          };
+        }
+        pose.legs.forEach((leg, legIndex) => {
+          peakTorqueNm = Math.max(peakTorqueNm, Math.abs(loads[legIndex] * leg.dzdBeta));
+          maxRodAngleDeg = Math.max(maxRodAngleDeg, leg.rodAngleDeg);
+        });
+      }
+      return {
+        feasible: true,
+        peakTorqueNm,
+        requiredMotorTorqueNm: requiredMotorTorque(peakTorqueNm, config.safetyFactor),
+        maxRodAngleDeg
+      };
+    }
+
+    function formatLength(meters, unitSystem, digits = 2) {
+      return `${round(toDisplayLength(meters, unitSystem), digits)} ${lengthUnit(unitSystem)}`;
+    }
+
+    function formatForce(newtons, unitSystem, digits = 2) {
+      return `${round(toDisplayForce(newtons, unitSystem), digits)} ${forceUnit(unitSystem)}`;
+    }
+
+    function formatTorque(nm, unitSystem, digits = 2) {
+      return `${round(toDisplayTorque(nm, unitSystem), digits)} ${torqueUnit(unitSystem)}`;
+    }
+
+    function sceneVectorFromModel(THREE, x, y, z) {
+      return new THREE.Vector3(x, z, y);
+    }
+
+    function disposeThreeObject(object) {
+      if (!object) {
+        return;
+      }
+      object.traverse((node) => {
+        if (node.geometry) {
+          node.geometry.dispose();
+        }
+        if (node.material) {
+          if (Array.isArray(node.material)) {
+            node.material.forEach((material) => material.dispose());
+          } else {
+            node.material.dispose();
+          }
+        }
+      });
+    }
+
+    function createCylinderBetweenPoints(THREE, start, end, radius, options = {}) {
+      const direction = new THREE.Vector3().subVectors(end, start);
+      const length = direction.length();
+      const geometry = new THREE.CylinderGeometry(radius, radius, Math.max(length, 1e-5), options.segments ?? 18);
+      const material = new THREE.MeshStandardMaterial({
+        color: options.color ?? 0xffffff,
+        roughness: options.roughness ?? 0.45,
+        metalness: options.metalness ?? 0.18,
+        transparent: options.opacity !== undefined && options.opacity < 1,
+        opacity: options.opacity ?? 1
+      });
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.position.copy(start).add(end).multiplyScalar(0.5);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction.clone().normalize());
+      return mesh;
+    }
+
+    function currentTableNormal(THREE, sample) {
+      if (!sample?.pose?.topPoints?.length || sample.pose.topPoints.length < 3) {
+        return new THREE.Vector3(0, 1, 0);
+      }
+      const p0 = sceneVectorFromModel(THREE, sample.pose.topPoints[0].x, sample.pose.topPoints[0].y, sample.pose.topPoints[0].z);
+      const p1 = sceneVectorFromModel(THREE, sample.pose.topPoints[1].x, sample.pose.topPoints[1].y, sample.pose.topPoints[1].z);
+      const p2 = sceneVectorFromModel(THREE, sample.pose.topPoints[2].x, sample.pose.topPoints[2].y, sample.pose.topPoints[2].z);
+      const normal = new THREE.Vector3().subVectors(p1, p0).cross(new THREE.Vector3().subVectors(p2, p0)).normalize();
+      if (normal.y < 0) {
+        normal.multiplyScalar(-1);
+      }
+      return normal;
+    }
+
+    function legWorldPoints(THREE, model, sample, legIndex) {
+      if (!sample?.legs?.[legIndex]) {
+        return null;
+      }
+      const leg = sample.legs[legIndex];
+      const basePoint = model.basePoints[legIndex];
+      const topPoint = sample.pose.topPoints[legIndex];
+      const phi = basePoint.phi;
+      const shaft = sceneVectorFromModel(THREE, basePoint.x, basePoint.y, model.shaftHeightM);
+      const crankPin = sceneVectorFromModel(
+        THREE,
+        basePoint.x + Math.cos(phi) * leg.crankX,
+        basePoint.y + Math.sin(phi) * leg.crankX,
+        model.shaftHeightM + leg.crankZ
+      );
+      const support = sceneVectorFromModel(THREE, topPoint.x, topPoint.y, topPoint.z);
+      return { shaft, crankPin, support, leg };
+    }
+
+    function downhillSceneVector(THREE, headingRad, thetaRad) {
+      return new THREE.Vector3(Math.cos(headingRad), -Math.tan(thetaRad), Math.sin(headingRad)).normalize();
+    }
+
+    function NumericField({ label, help, value, unit, min, max, step, onChange, compact = false }) {
+      return (
+        <div className={`control-group ${compact ? 'compact' : ''}`}>
+          <label>{label}</label>
+          {help ? <div className="control-help">{help}</div> : null}
+          <input
+            className="control-input"
+            type="number"
+            value={Number.isFinite(value) ? value : ''}
+            min={min}
+            max={max}
+            step={step}
+            onChange={(event) => onChange(Number(event.target.value))}
+          />
+          <div className="control-suffix">{unit}</div>
+        </div>
+      );
+    }
+
+    function SelectField({ label, options, value, onChange, compact = false, help = '' }) {
+      return (
+        <div className={`control-group ${compact ? 'compact' : ''}`}>
+          <label>{label}</label>
+          {help ? <div className="control-help">{help}</div> : null}
+          <select className="control-select" value={value} onChange={(event) => onChange(event.target.value)}>
+            {options.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
+      );
+    }
+
+    function MiniStatCard({ label, value, subtext, tone = '' }) {
+      return (
+        <div className={`mini-stat-card ${tone}`}>
+          <div className="mini-stat-label">{label}</div>
+          <div className="mini-stat-value">{value}</div>
+          {subtext ? <div className="mini-stat-subtext">{subtext}</div> : null}
+        </div>
+      );
+    }
+
+    function StatCard({ label, value, note, tone = '' }) {
+      return (
+        <div className="result-card">
+          <div className="result-label">{label}</div>
+          <div className={`result-value ${tone}`}>{value}</div>
+          {note ? <div className="result-note">{note}</div> : null}
+        </div>
+      );
+    }
+
+    function ScaleChart({ title, subtitle, xLabel, yLabel, data, xAccessor, yAccessor, currentX, currentY, unitSystem, xFormatter, yFormatter }) {
+      const width = 520;
+      const height = 240;
+      const margin = { top: 20, right: 18, bottom: 40, left: 54 };
+      const plotWidth = width - margin.left - margin.right;
+      const plotHeight = height - margin.top - margin.bottom;
+      const valid = data.filter((entry) => Number.isFinite(yAccessor(entry)));
+      const xValues = data.map(xAccessor);
+      const yValues = valid.map(yAccessor);
+      const xMin = Math.min(...xValues);
+      const xMax = Math.max(...xValues);
+      const yMin = Math.min(...yValues, 0);
+      const yMax = Math.max(...yValues, 1e-6);
+
+      const xToPx = (value) => margin.left + ((value - xMin) / Math.max(xMax - xMin, 1e-9)) * plotWidth;
+      const yToPx = (value) => margin.top + plotHeight - ((value - yMin) / Math.max(yMax - yMin, 1e-9)) * plotHeight;
+
+      const path = valid.map((entry, index) => `${index === 0 ? 'M' : 'L'} ${xToPx(xAccessor(entry))} ${yToPx(yAccessor(entry))}`).join(' ');
+      const currentPoint = Number.isFinite(currentY) ? { x: xToPx(currentX), y: yToPx(currentY) } : null;
+      const ticks = 4;
+      const xTicks = Array.from({ length: ticks + 1 }, (_, index) => xMin + ((xMax - xMin) * index) / ticks);
+      const yTicks = Array.from({ length: ticks + 1 }, (_, index) => yMin + ((yMax - yMin) * index) / ticks);
+
+      return (
+        <div className="sim-panel">
+          <div className="sim-panel-header">
+            <h3>{title}</h3>
+            <p>{subtitle}</p>
+          </div>
+          <div className="svg-host">
+            <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label={title}>
+              <rect x="0" y="0" width={width} height={height} fill="rgba(16, 19, 24, 0.82)" rx="14" />
+              {yTicks.map((tick, index) => (
+                <g key={`y-${index}`}>
+                  <line x1={margin.left} y1={yToPx(tick)} x2={width - margin.right} y2={yToPx(tick)} stroke="rgba(255,255,255,0.08)" strokeDasharray="4 4" />
+                  <text x={margin.left - 10} y={yToPx(tick) + 4} textAnchor="end" fill="var(--text-dim)" fontSize="11">{yFormatter(tick)}</text>
+                </g>
+              ))}
+              {xTicks.map((tick, index) => (
+                <g key={`x-${index}`}>
+                  <line x1={xToPx(tick)} y1={margin.top} x2={xToPx(tick)} y2={margin.top + plotHeight} stroke="rgba(255,255,255,0.05)" />
+                  <text x={xToPx(tick)} y={height - 14} textAnchor="middle" fill="var(--text-dim)" fontSize="11">{xFormatter(tick)}</text>
+                </g>
+              ))}
+              <path d={path} fill="none" stroke="var(--vertical)" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
+              {currentPoint ? (
+                <>
+                  <line x1={currentPoint.x} y1={margin.top} x2={currentPoint.x} y2={margin.top + plotHeight} stroke="var(--accent)" strokeDasharray="5 4" />
+                  <circle cx={currentPoint.x} cy={currentPoint.y} r="5.5" fill="var(--accent)" stroke="rgba(16,19,24,0.95)" strokeWidth="2" />
+                </>
+              ) : null}
+              <text x={margin.left + plotWidth / 2} y={height - 4} fill="var(--text-dim)" fontSize="12" textAnchor="middle">{xLabel}</text>
+              <text x="18" y={margin.top + plotHeight / 2} fill="var(--text-dim)" fontSize="12" textAnchor="middle" transform={`rotate(-90 18 ${margin.top + plotHeight / 2})`}>{yLabel}</text>
+            </svg>
+          </div>
+        </div>
+      );
+    }
+
+    function TopView({ model, displaySample }) {
+      const width = 420;
+      const height = 420;
+      const padding = 36;
+      const extent = Math.max(model.widthM, model.lengthM, model.baseRadiusM * 2.4, model.supportRadiusM * 2.4);
+      const scale = (Math.min(width, height) - padding * 2) / Math.max(extent, 1e-6);
+      const cx = width / 2;
+      const cy = height / 2;
+      const legHeights = displaySample ? displaySample.legs.map((leg) => leg.topZ - model.supportPlaneCenterHeightM) : [0, 0, 0];
+      const minH = Math.min(...legHeights);
+      const maxH = Math.max(...legHeights);
+      const colorForHeight = (value) => {
+        const normalized = (value - minH) / Math.max(maxH - minH, 1e-9);
+        const hue = 215 - normalized * 120;
+        return `hsl(${hue}, 85%, 62%)`;
+      };
+      const headingLength = Math.min(model.widthM, model.lengthM) * 0.22;
+      const arrowX = Math.cos(model.headingRad) * headingLength * scale;
+      const arrowY = Math.sin(model.headingRad) * headingLength * scale;
+
+      return (
+        <div className="sim-panel">
+          <div className="sim-panel-header">
+            <h3>Top View</h3>
+            <p>Base motor radius, mounting radius, footprint clearance, and tilt heading all share the same plan view.</p>
+          </div>
+          <div className="svg-host">
+            <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Top view">
+              <rect x="0" y="0" width={width} height={height} fill="rgba(16,19,24,0.84)" rx="18" />
+              <rect
+                x={cx - (model.widthM * scale) / 2}
+                y={cy - (model.lengthM * scale) / 2}
+                width={model.widthM * scale}
+                height={model.lengthM * scale}
+                rx="10"
+                fill="rgba(255,255,255,0.02)"
+                stroke="rgba(255,255,255,0.16)"
+              />
+              <circle cx={cx} cy={cy} r={model.baseRadiusM * scale} fill="none" stroke="rgba(156, 222, 116, 0.45)" strokeDasharray="6 5" />
+              <circle cx={cx} cy={cy} r={model.supportRadiusM * scale} fill="none" stroke="rgba(99, 196, 255, 0.5)" strokeDasharray="6 5" />
+              <line x1={cx - 10} y1={cy} x2={cx + 10} y2={cy} stroke="rgba(255,255,255,0.25)" />
+              <line x1={cx} y1={cy - 10} x2={cx} y2={cy + 10} stroke="rgba(255,255,255,0.25)" />
+              <defs>
+                <marker id="heading-arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+                  <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--accent)" />
+                </marker>
+              </defs>
+              <line x1={cx} y1={cy} x2={cx + arrowX} y2={cy + arrowY} stroke="var(--accent)" strokeWidth="3" markerEnd="url(#heading-arrow)" />
+              <text x={cx + arrowX + 10} y={cy + arrowY + 4} fill="var(--accent)" fontSize="12" fontFamily="JetBrains Mono, monospace">tilt heading</text>
+
+              {model.basePoints.map((point, index) => (
+                <g key={`motor-${index}`}>
+                  <circle cx={cx + point.x * scale} cy={cy + point.y * scale} r="9" fill="rgba(156, 222, 116, 0.9)" stroke="rgba(16,19,24,0.9)" strokeWidth="2" />
+                  <text x={cx + point.x * scale} y={cy + point.y * scale + 23} textAnchor="middle" fill="var(--text-dim)" fontSize="11">M{index + 1}</text>
+                </g>
+              ))}
+
+              {model.supportPoints.map((point, index) => (
+                <g key={`support-${index}`}>
+                  <circle cx={cx + point.x * scale} cy={cy + point.y * scale} r="7" fill={colorForHeight(legHeights[index])} stroke="rgba(16,19,24,0.9)" strokeWidth="2" />
+                  <text x={cx + point.x * scale} y={cy + point.y * scale - 14} textAnchor="middle" fill="var(--text)" fontSize="11">S{index + 1}</text>
+                </g>
+              ))}
+
+              <text x={18} y={26} fill="var(--text-dim)" fontSize="12">Table footprint: {formatLength(model.widthM, model.unitSystem)} × {formatLength(model.lengthM, model.unitSystem)}</text>
+              <text x={18} y={44} fill="var(--text-dim)" fontSize="12">Motor radius: {formatLength(model.baseRadiusM, model.unitSystem)} | Mounting radius: {formatLength(model.supportRadiusM, model.unitSystem)}</text>
+              <text x={18} y={62} fill="var(--text-dim)" fontSize="12">Edge clearance: motors {formatLength(model.motorClearance, model.unitSystem)} | supports {formatLength(model.supportClearance, model.unitSystem)}</text>
+            </svg>
+          </div>
+        </div>
+      );
+    }
+
+    function PlaneSectionView({ model, displaySample }) {
+      const width = 480;
+      const height = 280;
+      const padding = 28;
+      const sectionSpan = model.supportRadiusM * 2;
+      const maxDelta = Math.max(model.requiredSupportStrokeM * 1.5, 0.001);
+      const xToPx = (x) => padding + ((x + sectionSpan / 2) / Math.max(sectionSpan, 1e-6)) * (width - padding * 2);
+      const yToPx = (z) => height - padding - ((z - (model.neutralHeightM - maxDelta * 1.25)) / Math.max(maxDelta * 2.5, 1e-6)) * (height - padding * 2);
+      const downhill = { x: Math.cos(model.headingRad), y: Math.sin(model.headingRad) };
+      const projections = model.supportPoints.map((point, index) => ({
+        index,
+        s: point.x * downhill.x + point.y * downhill.y,
+        z: displaySample ? displaySample.pose.topPoints[index].z : model.supportPlaneCenterHeightM
+      })).sort((a, b) => a.s - b.s);
+
+      return (
+        <div className="sim-panel">
+          <div className="sim-panel-header">
+            <h3>Plane Section</h3>
+            <p>Height difference between the three support points along the commanded downhill direction.</p>
+          </div>
+          <div className="svg-host">
+            <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Plane section">
+              <rect x="0" y="0" width={width} height={height} fill="rgba(16,19,24,0.84)" rx="14" />
+              <line x1={padding} y1={yToPx(model.supportPlaneCenterHeightM)} x2={width - padding} y2={yToPx(model.supportPlaneCenterHeightM)} stroke="rgba(255,255,255,0.12)" strokeDasharray="5 4" />
+              <text x={padding} y={yToPx(model.supportPlaneCenterHeightM) - 8} fill="var(--text-dim)" fontSize="11">neutral underside support plane</text>
+
+              {projections.map((point) => (
+                <g key={point.index}>
+                  <line x1={xToPx(point.s)} y1={height - padding} x2={xToPx(point.s)} y2={yToPx(point.z)} stroke="rgba(255,255,255,0.14)" />
+                  <circle cx={xToPx(point.s)} cy={yToPx(point.z)} r="7" fill="var(--vertical)" />
+                  <text x={xToPx(point.s)} y={yToPx(point.z) - 14} textAnchor="middle" fill="var(--text)" fontSize="11">S{point.index + 1}</text>
+                </g>
+              ))}
+
+              <polyline
+                points={projections.map((point) => `${xToPx(point.s)},${yToPx(point.z)}`).join(' ')}
+                fill="none"
+                stroke="var(--accent)"
+                strokeWidth="4"
+                strokeLinejoin="round"
+                strokeLinecap="round"
+              />
+
+              <text x={padding} y={height - 10} fill="var(--text-dim)" fontSize="12">Projected support position along heading</text>
+            </svg>
+          </div>
+        </div>
+      );
+    }
+
+    function LegView({ model, displaySample }) {
+      const width = 480;
+      const height = 280;
+      const pad = 24;
+      if (!displaySample || !displaySample.legs?.length) {
+        return null;
+      }
+      const leg = displaySample.legs[0];
+      const shaftX = 0;
+      const shaftZ = model.shaftHeightM;
+      const topX = leg.localDx;
+      const topZ = leg.topZ - model.shaftHeightM;
+      const minX = Math.min(shaftX - model.crankRadiusM * 1.5, topX - model.crankRadiusM * 1.3);
+      const maxX = Math.max(shaftX + model.crankRadiusM * 1.6, topX + model.crankRadiusM * 1.2);
+      const minZ = Math.min(-model.crankRadiusM * 1.2, topZ - model.rodLengthM * 0.3);
+      const maxZ = Math.max(topZ + model.crankRadiusM * 0.8, model.neutralHeightM - model.shaftHeightM + model.requiredSupportStrokeM);
+      const scale = Math.min((width - pad * 2) / Math.max(maxX - minX, 1e-6), (height - pad * 2) / Math.max(maxZ - minZ, 1e-6));
+      const xToPx = (x) => pad + (x - minX) * scale;
+      const yToPx = (z) => height - pad - (z - minZ) * scale;
+
+      return (
+        <div className="sim-panel">
+          <div className="sim-panel-header">
+            <h3>Representative Leg</h3>
+            <p>One crank-and-rod leg in its local radial plane, solved at the inspected motion pose.</p>
+          </div>
+          <div className="svg-host">
+            <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Representative leg">
+              <rect x="0" y="0" width={width} height={height} fill="rgba(16,19,24,0.84)" rx="14" />
+              <line x1={pad} y1={yToPx(0)} x2={width - pad} y2={yToPx(0)} stroke="rgba(255,255,255,0.08)" />
+              <text x={pad} y={yToPx(0) - 8} fill="var(--text-dim)" fontSize="11">motor shaft height datum</text>
+              <line x1={xToPx(shaftX)} y1={pad} x2={xToPx(shaftX)} y2={height - pad} stroke="rgba(255,255,255,0.06)" />
+              <line x1={xToPx(topX)} y1={pad} x2={xToPx(topX)} y2={height - pad} stroke="rgba(255,255,255,0.06)" />
+              <circle cx={xToPx(shaftX)} cy={yToPx(shaftZ - model.shaftHeightM)} r="10" fill="rgba(156,222,116,0.88)" stroke="rgba(16,19,24,0.9)" strokeWidth="2" />
+              <line x1={xToPx(shaftX)} y1={yToPx(shaftZ - model.shaftHeightM)} x2={xToPx(leg.crankX)} y2={yToPx(leg.crankZ)} stroke="var(--accent)" strokeWidth="5" strokeLinecap="round" />
+              <line x1={xToPx(leg.crankX)} y1={yToPx(leg.crankZ)} x2={xToPx(topX)} y2={yToPx(topZ)} stroke="var(--vertical)" strokeWidth="4" strokeLinecap="round" />
+              <circle cx={xToPx(leg.crankX)} cy={yToPx(leg.crankZ)} r="7" fill="var(--accent)" />
+              <circle cx={xToPx(topX)} cy={yToPx(topZ)} r="7" fill="var(--vertical)" />
+              <text x={xToPx(shaftX)} y={yToPx(shaftZ - model.shaftHeightM) + 24} textAnchor="middle" fill="var(--text-dim)" fontSize="11">shaft</text>
+              <text x={xToPx(leg.crankX)} y={yToPx(leg.crankZ) - 14} textAnchor="middle" fill="var(--accent)" fontSize="11">crank pin</text>
+              <text x={xToPx(topX)} y={yToPx(topZ) - 14} textAnchor="middle" fill="var(--vertical)" fontSize="11">upper joint</text>
+              <text x={18} y={24} fill="var(--text-dim)" fontSize="12">crank length {formatLength(model.crankRadiusM, model.unitSystem)}</text>
+              <text x={18} y={42} fill="var(--text-dim)" fontSize="12">rod length {formatLength(model.rodLengthM, model.unitSystem)}</text>
+              <text x={18} y={60} fill="var(--text-dim)" fontSize="12">rod angle {round(leg.rodAngleDeg, 1)}° from vertical</text>
+              <text x={18} y={78} fill="var(--text-dim)" fontSize="12">travel ratio {round(toDisplayLength(leg.travelPerRad, model.unitSystem), 2)} {lengthUnit(model.unitSystem)}/rad</text>
+            </svg>
+          </div>
+        </div>
+      );
+    }
+
+    function sceneCameraDirection(THREE, preset, headingRad) {
+      if (preset === 'top') {
+        return new THREE.Vector3(0.001, 1, 0.001).normalize();
+      }
+      if (preset === 'downhill') {
+        return new THREE.Vector3(Math.cos(headingRad) * 1.3, 0.42, Math.sin(headingRad) * 1.3).normalize();
+      }
+      return new THREE.Vector3(1.25, 0.82, 1.1).normalize();
+    }
+
+    function SceneClarityPanel({ model, displaySample, inspectProgress }) {
+      if (!displaySample?.legs?.length) {
+        return null;
+      }
+
+      const legSnapshots = displaySample.legs.map((leg, index) => ({
+        index,
+        meta: LEG_META[index],
+        supportDeltaM: leg.topZ - model.supportPlaneCenterHeightM,
+        supportForceN: leg.supportForceN,
+        torqueNm: leg.torqueNm,
+        rodAngleDeg: leg.rodAngleDeg,
+        crankDeg: toDegrees(leg.beta)
+      }));
+
+      const highestLeg = [...legSnapshots].sort((a, b) => b.supportDeltaM - a.supportDeltaM)[0];
+      const lowestLeg = [...legSnapshots].sort((a, b) => a.supportDeltaM - b.supportDeltaM)[0];
+      const motionPhase = displaySample.alphaRadS2 > 1e-6
+        ? 'accelerating toward the target tilt'
+        : displaySample.alphaRadS2 < -1e-6
+          ? 'decelerating into the target tilt'
+          : 'coasting / static';
+
+      return (
+        <div className="scene-side">
+          <section className="sim-panel">
+            <div className="sim-panel-header">
+              <h3>3D Legend</h3>
+              <p>The scene is color coded by leg so the model, forces, and tables all stay in sync.</p>
+            </div>
+            <div className="sim-panel-body">
+              <div className="scene-legend-list">
+                {LEG_META.map((leg) => (
+                  <div key={leg.name} className="scene-legend-item">
+                    <span className="scene-dot" style={{ background: leg.css }} />
+                    <div><strong>{leg.name}</strong> shows that motor shaft, crank, rod, underside support joint, and its current support-force arrow.</div>
+                  </div>
+                ))}
+                <div className="scene-legend-item">
+                  <span className="scene-dot" style={{ background: '#c7d1dd' }} />
+                  <div><strong>Ghost prism</strong> is the level reference table. The rods mount to the bottom face of that prism, not its midplane.</div>
+                </div>
+                <div className="scene-legend-item">
+                  <span className="scene-dot" style={{ background: '#ffb35a' }} />
+                  <div><strong>Orange arrow on the table</strong> points downhill. It is a heading cue taken from the solver, not a support-force arrow.</div>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          <section className="sim-panel">
+            <div className="sim-panel-header">
+              <h3>Current Pose Cues</h3>
+              <p>Plain-language callouts for the pose you are inspecting right now.</p>
+            </div>
+            <div className="sim-panel-body">
+              <div className="scene-note-list">
+                <div className="scene-note-item"><strong>Motion progress:</strong> {round(inspectProgress * 100, 0)}% of the level-to-target move.</div>
+                <div className="scene-note-item"><strong>Downhill heading:</strong> {round(model.headingDeg, 1)}°. `0°` points toward +X, which is rightward in the plan view and 3D base layout.</div>
+                <div className="scene-note-item"><strong>Highest underside joint:</strong> {highestLeg.meta.name} at {signed(toDisplayLength(highestLeg.supportDeltaM, model.unitSystem), 2)} {lengthUnit(model.unitSystem)} relative to the neutral underside support plane.</div>
+                <div className="scene-note-item"><strong>Lowest underside joint:</strong> {lowestLeg.meta.name} at {signed(toDisplayLength(lowestLeg.supportDeltaM, model.unitSystem), 2)} {lengthUnit(model.unitSystem)} relative to the neutral underside support plane.</div>
+                <div className="scene-note-item"><strong>COM offset at tilt:</strong> because the rod plane is on the bottom face while the table COM is at mid-thickness, the COM shifts laterally as the table tilts and the static support loads stop being perfectly equal.</div>
+                <div className="scene-note-item"><strong>Signed angular acceleration:</strong> {round(displaySample.alphaRadS2, 4)} rad/s², which means the table is currently {motionPhase}.</div>
+                <div className="scene-note-item"><strong>Scene frame:</strong> Y is vertical. X and Z span the base plane. Drag to orbit and scroll to zoom.</div>
+              </div>
+            </div>
+          </section>
+
+          <section className="sim-panel">
+            <div className="sim-panel-header">
+              <h3>Current Leg States</h3>
+              <p>The same leg colors are reused in the 3D scene, the per-leg cards, and the static summary table below.</p>
+            </div>
+            <div className="sim-panel-body">
+              <div className="pose-leg-grid">
+                {legSnapshots.map((snapshot) => (
+                  <div key={snapshot.index} className="pose-leg-card">
+                    <div className="pose-leg-header">
+                      <div className="pose-leg-title">
+                        <span className="pose-leg-badge" style={{ background: snapshot.meta.css }}>{snapshot.meta.badgeText}</span>
+                        <span>{snapshot.meta.name}</span>
+                      </div>
+                    </div>
+                    <div className="pose-leg-meta">
+                      <div className="pose-leg-meta-row">
+                        <span>Underside joint</span>
+                        <span className="mono">{signed(toDisplayLength(snapshot.supportDeltaM, model.unitSystem), 2)} {lengthUnit(model.unitSystem)}</span>
+                      </div>
+                      <div className="pose-leg-meta-row">
+                        <span>Support force</span>
+                        <span className="mono">{formatForce(snapshot.supportForceN, model.unitSystem)}</span>
+                      </div>
+                      <div className="pose-leg-meta-row">
+                        <span>Motor torque</span>
+                        <span className="mono">{formatTorque(snapshot.torqueNm, model.unitSystem)}</span>
+                      </div>
+                      <div className="pose-leg-meta-row">
+                        <span>Crank angle</span>
+                        <span className="mono">{round(snapshot.crankDeg, 2)}°</span>
+                      </div>
+                      <div className="pose-leg-meta-row">
+                        <span>Rod angle</span>
+                        <span className="mono">{round(snapshot.rodAngleDeg, 2)}°</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        </div>
+      );
+    }
+
+    function ThreePlatformView({ model, displaySample, cameraPreset, showNeutralGhost, showForceArrows }) {
+      const hostRef = useRef(null);
+      const sceneRef = useRef(null);
+      const [threeReady, setThreeReady] = useState(Boolean(window.ThreeTiltSim));
+      const [threeError, setThreeError] = useState('');
+      const [sceneReady, setSceneReady] = useState(false);
+
+      useEffect(() => {
+        let cancelled = false;
+        const syncThreeStatus = () => {
+          if (cancelled) {
+            return;
+          }
+          if (window.ThreeTiltSimStatus === 'ready' && window.ThreeTiltSim) {
+            setThreeReady(true);
+            setThreeError('');
+          } else if (window.ThreeTiltSimStatus === 'error') {
+            setThreeError(window.ThreeTiltSimError || 'Failed to load Three.js modules.');
+          }
+        };
+
+        syncThreeStatus();
+        const pollId = window.setInterval(syncThreeStatus, 100);
+        return () => {
+          cancelled = true;
+          window.clearInterval(pollId);
+        };
+      }, []);
+
+      useEffect(() => {
+        if (!threeReady || !hostRef.current || sceneRef.current) {
+          return undefined;
+        }
+
+        const { THREE, OrbitControls } = window.ThreeTiltSim;
+        const host = hostRef.current;
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x101318);
+
+        const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 100);
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false });
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        host.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.08;
+        controls.enablePan = true;
+
+        scene.add(new THREE.AmbientLight(0xcbd8e6, 0.84));
+        scene.add(new THREE.HemisphereLight(0xf0f5ff, 0x202733, 1.4));
+        const key = new THREE.DirectionalLight(0xfff0cb, 1.35);
+        key.position.set(2.5, 4.5, 2.2);
+        scene.add(key);
+        const fill = new THREE.DirectionalLight(0x84b9ff, 0.75);
+        fill.position.set(-3.2, 2.3, -2.8);
+        scene.add(fill);
+        const rim = new THREE.DirectionalLight(0xa4ffd7, 0.35);
+        rim.position.set(0.8, 1.6, -4.4);
+        scene.add(rim);
+
+        let frameId = 0;
+        let isResizing = false;
+
+        const resize = () => {
+          if (!host) return;
+          const width = host.clientWidth;
+          const height = host.clientHeight;
+          if (width === 0 || height === 0) {
+            if (!isResizing) {
+              isResizing = true;
+              frameId = window.requestAnimationFrame(() => {
+                isResizing = false;
+                resize();
+              });
+            }
+            return;
+          }
+          renderer.setSize(width, height, false);
+          camera.aspect = width / height;
+          camera.updateProjectionMatrix();
+        };
+
+        const tick = () => {
+          frameId = window.requestAnimationFrame(tick);
+          controls.update();
+          renderer.render(scene, camera);
+        };
+
+        const resizeObserver = new ResizeObserver(() => {
+          resize();
+        });
+        resizeObserver.observe(host);
+        
+        resize();
+        tick();
+
+        sceneRef.current = {
+          THREE,
+          scene,
+          camera,
+          renderer,
+          controls,
+          dynamicGroup: null,
+          resize
+        };
+        setSceneReady(true);
+
+        return () => {
+          setSceneReady(false);
+          resizeObserver.disconnect();
+          window.cancelAnimationFrame(frameId);
+          if (sceneRef.current?.dynamicGroup) {
+            disposeThreeObject(sceneRef.current.dynamicGroup);
+            scene.remove(sceneRef.current.dynamicGroup);
+          }
+          controls.dispose();
+          renderer.dispose();
+          renderer.domElement.remove();
+          sceneRef.current = null;
+        };
+      }, [threeReady]);
+
+      useEffect(() => {
+        if (!sceneReady) {
+          return;
+        }
+        const state = sceneRef.current;
+        if (!state) {
+          return;
+        }
+
+        const { THREE, scene, camera, controls, renderer } = state;
+        if (!displaySample) {
+          if (state.dynamicGroup) {
+            disposeThreeObject(state.dynamicGroup);
+            scene.remove(state.dynamicGroup);
+            state.dynamicGroup = null;
+          }
+          renderer.render(scene, camera);
+          return;
+        }
+        if (state.dynamicGroup) {
+          disposeThreeObject(state.dynamicGroup);
+          scene.remove(state.dynamicGroup);
+        }
+
+        const group = new THREE.Group();
+        const extent = Math.max(
+          model.widthM * 1.3,
+          model.lengthM * 1.3,
+          model.baseRadiusM * 3.4,
+          model.supportRadiusM * 3.4,
+          Math.max(model.neutralHeightM, model.thicknessM) * 3.2,
+          0.45
+        );
+        const baseThickness = Math.max(model.thicknessM * 0.16, 0.014);
+        const baseWidth = Math.max(model.widthM * 1.12, model.baseRadiusM * 2.8);
+        const baseDepth = Math.max(model.lengthM * 1.12, model.baseRadiusM * 2.8);
+        const motorRadius = Math.max(Math.min(model.widthM, model.lengthM) * 0.022, 0.012);
+        const motorHeight = Math.max(model.thicknessM * 0.28, 0.032);
+        const jointRadius = motorRadius * 0.48;
+        const crankRadius = Math.max(motorRadius * 0.18, 0.0065);
+        const rodRadius = crankRadius * 0.62;
+        const supportArrowMax = Math.max(...displaySample.legs.map((leg) => Math.abs(leg.supportForceN)), 1e-6);
+
+        const grid = new THREE.GridHelper(extent * 1.35, 18, 0x2d3847, 0x1f2834);
+        grid.position.y = model.shaftHeightM - 0.001;
+        group.add(grid);
+
+        const base = new THREE.Mesh(
+          new THREE.BoxGeometry(baseWidth, baseThickness, baseDepth),
+          new THREE.MeshStandardMaterial({ color: 0x1a2028, roughness: 0.88, metalness: 0.06 })
+        );
+        base.position.copy(sceneVectorFromModel(THREE, 0, 0, model.shaftHeightM - baseThickness / 2));
+        group.add(base);
+
+        const baseEdge = new THREE.LineSegments(
+          new THREE.EdgesGeometry(new THREE.BoxGeometry(baseWidth, baseThickness, baseDepth)),
+          new THREE.LineBasicMaterial({ color: 0x3f4b5a, transparent: true, opacity: 0.8 })
+        );
+        baseEdge.position.copy(base.position);
+        group.add(baseEdge);
+
+        const baseTrianglePoints = model.basePoints.map((point) => sceneVectorFromModel(THREE, point.x, point.y, model.shaftHeightM + motorHeight * 0.5));
+        const baseTriangleGeometry = new THREE.BufferGeometry().setFromPoints([...baseTrianglePoints, baseTrianglePoints[0]]);
+        const baseTriangle = new THREE.Line(baseTriangleGeometry, new THREE.LineBasicMaterial({ color: 0x4f6277, transparent: true, opacity: 0.85 }));
+        group.add(baseTriangle);
+
+        const currentNormal = currentTableNormal(THREE, displaySample);
+        const currentCenter = sceneVectorFromModel(THREE, displaySample.pose.comPoint.x, displaySample.pose.comPoint.y, displaySample.pose.comPoint.z);
+        const tableQuat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), currentNormal);
+
+        if (showNeutralGhost) {
+          const neutralTable = new THREE.Mesh(
+            new THREE.BoxGeometry(model.widthM, model.thicknessM, model.lengthM),
+            new THREE.MeshStandardMaterial({
+              color: 0xc7d1dd,
+              roughness: 0.32,
+              metalness: 0.08,
+              transparent: true,
+              opacity: 0.15
+            })
+          );
+          neutralTable.position.copy(sceneVectorFromModel(THREE, 0, 0, model.neutralHeightM));
+          group.add(neutralTable);
+          const neutralEdges = new THREE.LineSegments(
+            new THREE.EdgesGeometry(new THREE.BoxGeometry(model.widthM, model.thicknessM, model.lengthM)),
+            new THREE.LineBasicMaterial({ color: 0xd9e1ea, transparent: true, opacity: 0.25 })
+          );
+          neutralEdges.position.copy(neutralTable.position);
+          group.add(neutralEdges);
+        }
+
+        const tableGroup = new THREE.Group();
+        tableGroup.position.copy(currentCenter);
+        tableGroup.quaternion.copy(tableQuat);
+
+        const table = new THREE.Mesh(
+          new THREE.BoxGeometry(model.widthM, model.thicknessM, model.lengthM),
+          new THREE.MeshStandardMaterial({
+            color: 0x33577b,
+            roughness: 0.48,
+            metalness: 0.16,
+            transparent: true,
+            opacity: 0.9
+          })
+        );
+        tableGroup.add(table);
+
+        const topFace = new THREE.Mesh(
+          new THREE.BoxGeometry(model.widthM * 0.992, Math.max(model.thicknessM * 0.08, 0.004), model.lengthM * 0.992),
+          new THREE.MeshStandardMaterial({
+            color: 0x5f88ac,
+            roughness: 0.32,
+            metalness: 0.14,
+            transparent: true,
+            opacity: 0.84
+          })
+        );
+        topFace.position.y = model.thicknessM * 0.47;
+        tableGroup.add(topFace);
+
+        const tableEdges = new THREE.LineSegments(
+          new THREE.EdgesGeometry(new THREE.BoxGeometry(model.widthM, model.thicknessM, model.lengthM)),
+          new THREE.LineBasicMaterial({ color: 0xe5eef7, transparent: true, opacity: 0.72 })
+        );
+        tableGroup.add(tableEdges);
+
+        group.add(tableGroup);
+
+        const supportTrianglePoints = displaySample.pose.topPoints.map((point) => sceneVectorFromModel(THREE, point.x, point.y, point.z));
+        const supportTriangle = new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints([...supportTrianglePoints, supportTrianglePoints[0]]),
+          new THREE.LineBasicMaterial({ color: 0xbcdfff, transparent: true, opacity: 0.9 })
+        );
+        group.add(supportTriangle);
+
+        const downhillArrowOrigin = currentCenter.clone().add(currentNormal.clone().multiplyScalar(model.thicknessM * 0.58 + 0.01));
+        const downhillArrow = new THREE.ArrowHelper(
+          downhillSceneVector(THREE, model.headingRad, displaySample.thetaRad),
+          downhillArrowOrigin,
+          Math.min(model.widthM, model.lengthM) * 0.22,
+          0xffb35a,
+          Math.max(Math.min(model.widthM, model.lengthM) * 0.05, 0.024),
+          Math.max(Math.min(model.widthM, model.lengthM) * 0.025, 0.012)
+        );
+        group.add(downhillArrow);
+
+        displaySample.legs.forEach((leg, legIndex) => {
+          const legMeta = LEG_META[legIndex];
+          const points = legWorldPoints(THREE, model, displaySample, legIndex);
+          if (!points) {
+            return;
+          }
+
+          const shaftBody = new THREE.Mesh(
+            new THREE.CylinderGeometry(motorRadius, motorRadius, motorHeight, 24),
+            new THREE.MeshStandardMaterial({ color: 0x1f2730, roughness: 0.56, metalness: 0.26 })
+          );
+          shaftBody.position.copy(points.shaft);
+          group.add(shaftBody);
+
+          const shaftCap = new THREE.Mesh(
+            new THREE.CylinderGeometry(motorRadius * 0.55, motorRadius * 0.55, motorHeight * 0.22, 18),
+            new THREE.MeshStandardMaterial({ color: legMeta.color, roughness: 0.32, metalness: 0.18 })
+          );
+          shaftCap.position.copy(points.shaft).add(new THREE.Vector3(0, motorHeight * 0.39, 0));
+          group.add(shaftCap);
+
+          group.add(createCylinderBetweenPoints(THREE, points.shaft, points.crankPin, crankRadius, {
+            color: legMeta.color,
+            roughness: 0.28,
+            metalness: 0.2
+          }));
+
+          group.add(createCylinderBetweenPoints(THREE, points.crankPin, points.support, rodRadius, {
+            color: legMeta.color,
+            roughness: 0.36,
+            metalness: 0.16,
+            opacity: 0.95
+          }));
+
+          const crankJoint = new THREE.Mesh(
+            new THREE.SphereGeometry(jointRadius, 18, 18),
+            new THREE.MeshStandardMaterial({ color: legMeta.color, roughness: 0.22, metalness: 0.38 })
+          );
+          crankJoint.position.copy(points.crankPin);
+          group.add(crankJoint);
+
+          const supportJoint = new THREE.Mesh(
+            new THREE.SphereGeometry(jointRadius * 1.05, 18, 18),
+            new THREE.MeshStandardMaterial({ color: legMeta.color, roughness: 0.22, metalness: 0.42 })
+          );
+          supportJoint.position.copy(points.support);
+          group.add(supportJoint);
+
+          if (showForceArrows) {
+            const forceLength = 0.06 + 0.2 * (Math.abs(leg.supportForceN) / supportArrowMax);
+            const forceDirection = leg.supportForceN >= 0 ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, -1, 0);
+            const origin = points.support.clone().add(new THREE.Vector3(0, leg.supportForceN >= 0 ? 0.006 : -0.006, 0));
+            const arrow = new THREE.ArrowHelper(
+              forceDirection,
+              origin,
+              forceLength,
+              legMeta.color,
+              forceLength * 0.24,
+              forceLength * 0.12
+            );
+            group.add(arrow);
+          }
+        });
+
+        const axesHelper = new THREE.AxesHelper(Math.min(model.widthM, model.lengthM) * 0.14);
+        axesHelper.position.copy(sceneVectorFromModel(THREE, -baseWidth * 0.42, -baseDepth * 0.42, model.shaftHeightM + 0.002));
+        group.add(axesHelper);
+
+        scene.add(group);
+        state.dynamicGroup = group;
+
+        const target = currentCenter.clone();
+        controls.target.copy(target);
+        controls.minDistance = extent * 0.32;
+        controls.maxDistance = extent * 5.8;
+        const shouldResetCamera =
+          state.lastCameraPreset !== cameraPreset ||
+          !Number.isFinite(state.lastCameraExtent) ||
+          Math.abs(state.lastCameraExtent - extent) > 1e-6 ||
+          (cameraPreset === 'downhill' && Math.abs((state.lastCameraHeadingRad ?? Number.NaN) - model.headingRad) > 1e-6);
+
+        if (shouldResetCamera) {
+          const direction = sceneCameraDirection(THREE, cameraPreset, model.headingRad);
+          const distance = extent * (cameraPreset === 'top' ? 1.8 : 1.65);
+          camera.position.copy(target).addScaledVector(direction, distance);
+          camera.lookAt(target);
+          state.lastCameraPreset = cameraPreset;
+          state.lastCameraExtent = extent;
+          state.lastCameraHeadingRad = model.headingRad;
+        }
+        controls.update();
+        renderer.render(scene, camera);
+      }, [sceneReady, model, displaySample, cameraPreset, showNeutralGhost, showForceArrows]);
+
+      if (threeError) {
+        return (
+          <div className="three-loading">
+            Could not load the Three.js scene.<br />
+            {threeError}
+          </div>
+        );
+      }
+
+      if (!threeReady) {
+        return (
+          <div className="three-loading">
+            Loading Three.js scene and building the 3D platform model...
+          </div>
+        );
+      }
+
+      return (
+        <div className="three-wrap">
+          <div ref={hostRef} className="three-canvas-host" />
+          <div className="three-overlay">
+            {displaySample ? (
+              <>
+                <div className="scene-chip">Orange arrow = downhill heading used by the solver, not a force vector.</div>
+                <div className="scene-chip">Colored shafts, cranks, rods, and arrows belong to the same leg.</div>
+                <div className="scene-chip">Drag to orbit. Scroll to zoom. The pale ghost prism is the level reference.</div>
+              </>
+            ) : (
+              <>
+                <div className="scene-chip">Current geometry has no valid 3D pose.</div>
+                <div className="scene-chip">Increase crank length, rod length, or neutral height until the level pose becomes reachable.</div>
+              </>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    function DetailPane({ model, displaySample, detailTab, setDetailTab, sweepView, setSweepView }) {
+      const legSnapshots = displaySample?.legs?.map((leg, index) => ({
+        index,
+        meta: LEG_META[index],
+        supportDeltaM: leg.topZ - model.supportPlaneCenterHeightM,
+        supportForceN: leg.supportForceN,
+        torqueNm: leg.torqueNm,
+        rodAngleDeg: leg.rodAngleDeg,
+        crankDeg: toDegrees(leg.beta)
+      })) ?? [];
+
+      const highestLeg = legSnapshots.length ? [...legSnapshots].sort((a, b) => b.supportDeltaM - a.supportDeltaM)[0] : null;
+      const lowestLeg = legSnapshots.length ? [...legSnapshots].sort((a, b) => a.supportDeltaM - b.supportDeltaM)[0] : null;
+      const currentPeakTorque = legSnapshots.length ? Math.max(...legSnapshots.map((leg) => leg.torqueNm)) : 0;
+      const currentPeakSupport = legSnapshots.length ? Math.max(...legSnapshots.map((leg) => Math.abs(leg.supportForceN))) : 0;
+
+      return (
+        <section className="sim-panel detail-panel">
+          <div className="sim-panel-header detail-panel-header">
+            <div>
+              <h2>Analysis</h2>
+              <p>Secondary detail lives here so the main scene and key sizing metrics can stay visible at all times.</p>
+            </div>
+            <div className="chip-row detail-tabs">
+              <button className={`chip-button ${detailTab === 'overview' ? 'is-active' : ''}`} onClick={() => setDetailTab('overview')}>Overview</button>
+              <button className={`chip-button ${detailTab === 'legs' ? 'is-active' : ''}`} onClick={() => setDetailTab('legs')}>Legs</button>
+              <button className={`chip-button ${detailTab === 'sweeps' ? 'is-active' : ''}`} onClick={() => setDetailTab('sweeps')}>Sweeps</button>
+              <button className={`chip-button ${detailTab === 'notes' ? 'is-active' : ''}`} onClick={() => setDetailTab('notes')}>Notes</button>
+            </div>
+          </div>
+          <div className="sim-panel-body detail-panel-body">
+            {detailTab === 'overview' ? (
+              <div className="detail-tab-content">
+                <div className="status-strip">
+                  <div className={`status-pill ${model.warnings.length ? 'warn' : 'good'}`}>
+                    {model.warnings.length ? `${model.warnings.length} geometry warning${model.warnings.length > 1 ? 's' : ''}` : 'No geometry warnings'}
+                  </div>
+                  <div className={`status-pill ${model.actualReachableTiltDeg + 1e-6 >= model.targetTiltDeg ? 'good' : 'warn'}`}>
+                    Reachable {round(model.actualReachableTiltDeg, 2)}°
+                  </div>
+                  <div className="status-pill">Support stroke {formatLength(model.requiredSupportStrokeM, model.unitSystem)}</div>
+                </div>
+
+                <div className="detail-summary-grid">
+                  <MiniStatCard label="Peak rod axial" value={formatForce(model.peakDynamicAxialForce, model.unitSystem)} />
+                  <MiniStatCard label="Max rod angle" value={`${round(model.maxRodAngleDeg, 1)}°`} />
+                  <MiniStatCard label="Min crank for target" value={model.minimumCrankRadiusM ? formatLength(model.minimumCrankRadiusM, model.unitSystem) : 'No solution'} tone={model.minimumCrankRadiusM ? '' : 'danger'} />
+                  <MiniStatCard label="Level load / leg" value={formatForce(model.staticSupportForceN, model.unitSystem)} />
+                </div>
+
+                <div className="detail-block">
+                  <div className="detail-block-title">Sizing assistant</div>
+                  <div className="results-grid">
+                    <StatCard
+                      label="Selected motor"
+                      value={model.selectedMotor.shortLabel}
+                      tone={model.selectedMotorCanDrive ? 'good' : 'danger'}
+                      note={`Available ${formatTorque(model.selectedMotor.torqueNm, model.unitSystem)}. Current geometry uses ${round(model.selectedMotorUsageRatio * 100, 1)}% of that after the safety factor.`}
+                    />
+                    <StatCard
+                      label="Smallest viable listed motor"
+                      value={model.recommendedMotorOption ? model.recommendedMotorOption.shortLabel : 'No listed fit'}
+                      tone={model.recommendedMotorOption ? 'good' : 'danger'}
+                      note={model.recommendedMotorOption
+                        ? `Current design needs ${formatTorque(model.recommendedTorqueNm, model.unitSystem)} with margin included.`
+                        : `Current design needs ${formatTorque(model.recommendedTorqueNm, model.unitSystem)} and exceeds every listed motor option.`}
+                    />
+                    <StatCard
+                      label="Crank length"
+                      value={model.sizingGuides.crank.valueM != null ? formatLength(model.sizingGuides.crank.valueM, model.unitSystem) : 'No fit'}
+                      tone={model.sizingGuides.crank.tone}
+                      note={model.sizingGuides.crank.note}
+                    />
+                    <StatCard
+                      label="Rod length"
+                      value={model.sizingGuides.rod.valueM != null ? formatLength(model.sizingGuides.rod.valueM, model.unitSystem) : 'No fit'}
+                      tone={model.sizingGuides.rod.tone}
+                      note={model.sizingGuides.rod.note}
+                    />
+                    <StatCard
+                      label="Motor radius"
+                      value={model.sizingGuides.baseRadius.valueM != null ? formatLength(model.sizingGuides.baseRadius.valueM, model.unitSystem) : 'No fit'}
+                      tone={model.sizingGuides.baseRadius.tone}
+                      note={model.sizingGuides.baseRadius.note}
+                    />
+                    <StatCard
+                      label="Mounting radius"
+                      value={model.sizingGuides.supportRadius.valueM != null ? formatLength(model.sizingGuides.supportRadius.valueM, model.unitSystem) : 'No fit'}
+                      tone={model.sizingGuides.supportRadius.tone}
+                      note={model.sizingGuides.supportRadius.note}
+                    />
+                  </div>
+                </div>
+
+                {displaySample ? (
+                  <div className="detail-block">
+                    <div className="detail-block-title">Current pose</div>
+                    <div className="detail-grid-2">
+                      <MiniStatCard label="Current tilt" value={`${round(toDegrees(displaySample.thetaRad), 2)}°`} subtext={`t = ${round(displaySample.t, 2)} s`} />
+                      <MiniStatCard label="Current peak torque" value={formatTorque(currentPeakTorque, model.unitSystem)} />
+                      <MiniStatCard label="Current peak support" value={formatForce(currentPeakSupport, model.unitSystem)} />
+                      <MiniStatCard label="Accel sign" value={`${round(displaySample.alphaRadS2, 3)} rad/s²`} subtext={displaySample.alphaRadS2 >= 0 ? 'tilt is increasing' : 'tilt is braking'} />
+                    </div>
+                  </div>
+                ) : null}
+
+                <div className="detail-block">
+                  <div className="detail-block-title">Motor options</div>
+                  <table className="detail-table compact-table">
+                    <thead>
+                      <tr>
+                        <th>Motor</th>
+                        <th>Available</th>
+                        <th>Usage</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {model.motorOptionRows.map((row) => (
+                        <tr key={row.key}>
+                          <td>{row.label}{row.key === model.selectedMotor.key ? ' (selected)' : ''}</td>
+                          <td className="mono">{formatTorque(row.torqueNm, model.unitSystem)}</td>
+                          <td className="mono">{round(row.usageRatio * 100, 1)}%</td>
+                          <td>{row.fits ? (row.usageRatio <= 0.75 ? 'Good margin' : 'Near limit') : 'Too small'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="detail-block">
+                  <div className="detail-block-title">Warnings</div>
+                  {model.warnings.length ? (
+                    <ul className="warning-list compact-list">
+                      {model.warnings.slice(0, 3).map((warning, index) => (
+                        <li key={index} className={`warning-item ${warning.kind === 'warn' ? 'warn' : ''}`}>{warning.text}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="mini-note good">No first-pass geometry warnings are active for the current design point.</div>
+                  )}
+                </div>
+
+                <div className="detail-block">
+                  <div className="detail-block-title">Validation</div>
+                  <ul className="validation-list compact-list">
+                    {model.validations.map((validation, index) => (
+                      <li key={index} className="validation-item">
+                        <strong>{validation.label}:</strong> {validation.value}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            ) : null}
+
+            {detailTab === 'legs' ? (
+              <div className="detail-tab-content">
+                {displaySample ? (
+                  <>
+                    <div className="detail-block">
+                      <div className="detail-block-title">Current pose leg states</div>
+                      <table className="detail-table compact-table">
+                        <thead>
+                          <tr>
+                            <th>Leg</th>
+                            <th>Underside joint</th>
+                            <th>Support</th>
+                            <th>Torque</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {legSnapshots.map((snapshot) => (
+                            <tr key={snapshot.index}>
+                              <td className="mono">
+                                <span className="leg-row-label">
+                                  <span style={{ background: snapshot.meta.css }} />
+                                  {snapshot.meta.badgeText}
+                                </span>
+                              </td>
+                              <td className="mono">{signed(toDisplayLength(snapshot.supportDeltaM, model.unitSystem), 2)} {lengthUnit(model.unitSystem)}</td>
+                              <td className="mono">{formatForce(snapshot.supportForceN, model.unitSystem)}</td>
+                              <td className="mono">{formatTorque(snapshot.torqueNm, model.unitSystem)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <div className="detail-summary-grid">
+                      <MiniStatCard label="Highest joint" value={highestLeg ? highestLeg.meta.badgeText : '--'} subtext={highestLeg ? `${signed(toDisplayLength(highestLeg.supportDeltaM, model.unitSystem), 2)} ${lengthUnit(model.unitSystem)}` : ''} />
+                      <MiniStatCard label="Lowest joint" value={lowestLeg ? lowestLeg.meta.badgeText : '--'} subtext={lowestLeg ? `${signed(toDisplayLength(lowestLeg.supportDeltaM, model.unitSystem), 2)} ${lengthUnit(model.unitSystem)}` : ''} />
+                    </div>
+                  </>
+                ) : (
+                  <div className="mini-note">Current geometry does not have a valid pose yet, so live leg values are unavailable.</div>
+                )}
+
+                <div className="detail-block">
+                  <div className="detail-block-title">Static hold at max tilt</div>
+                  <table className="detail-table compact-table">
+                    <thead>
+                      <tr>
+                        <th>Leg</th>
+                        <th>Force</th>
+                        <th>Torque</th>
+                        <th>Rod angle</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {model.staticLegRows.map((row) => (
+                        <tr key={row.legIndex}>
+                          <td className="mono">
+                            <span className="leg-row-label">
+                              <span style={{ background: LEG_META[row.legIndex].css }} />
+                              {LEG_META[row.legIndex].badgeText}
+                            </span>
+                          </td>
+                          <td className="mono">{formatForce(row.supportForceN, model.unitSystem)}</td>
+                          <td className="mono">{formatTorque(row.torqueNm, model.unitSystem)}</td>
+                          <td className="mono">{round(row.rodAngleDeg, 1)}°</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : null}
+
+            {detailTab === 'sweeps' ? (
+              <div className="detail-tab-content">
+                <div className="chip-row">
+                  <button className={`chip-button ${sweepView === 'crank' ? 'is-active' : ''}`} onClick={() => setSweepView('crank')}>Crank sweep</button>
+                  <button className={`chip-button ${sweepView === 'rod' ? 'is-active' : ''}`} onClick={() => setSweepView('rod')}>Rod sweep</button>
+                  <button className={`chip-button ${sweepView === 'baseRadius' ? 'is-active' : ''}`} onClick={() => setSweepView('baseRadius')}>Motor radius sweep</button>
+                  <button className={`chip-button ${sweepView === 'support' ? 'is-active' : ''}`} onClick={() => setSweepView('support')}>Mounting sweep</button>
+                </div>
+                {sweepView === 'crank' ? (
+                  <ScaleChart
+                    title="Required Motor Torque vs Crank Length"
+                    subtitle="One-axis sweep with the selected safety factor included."
+                    xLabel={`Crank length (${lengthUnit(model.unitSystem)})`}
+                    yLabel={`Required motor torque (${torqueUnit(model.unitSystem)})`}
+                    data={model.torqueSweep}
+                    xAccessor={(entry) => toDisplayLength(entry.crankRadiusM, model.unitSystem)}
+                    yAccessor={(entry) => entry.feasible ? toDisplayTorque(entry.requiredMotorTorqueNm, model.unitSystem) : NaN}
+                    currentX={toDisplayLength(model.crankRadiusM, model.unitSystem)}
+                    currentY={Number.isFinite(model.recommendedTorqueNm) ? toDisplayTorque(model.recommendedTorqueNm, model.unitSystem) : NaN}
+                    unitSystem={model.unitSystem}
+                    xFormatter={(value) => round(value, 2)}
+                    yFormatter={(value) => round(value, 2)}
+                  />
+                ) : sweepView === 'rod' ? (
+                  <ScaleChart
+                    title="Peak Rod Angle vs Rod Length"
+                    subtitle="Longer rods reduce articulation but take more packaging room."
+                    xLabel={`Rod length (${lengthUnit(model.unitSystem)})`}
+                    yLabel="Peak rod angle (deg)"
+                    data={model.rodSweep}
+                    xAccessor={(entry) => toDisplayLength(entry.rodLengthM, model.unitSystem)}
+                    yAccessor={(entry) => entry.feasible ? entry.maxRodAngleDeg : NaN}
+                    currentX={toDisplayLength(model.rodLengthM, model.unitSystem)}
+                    currentY={model.maxRodAngleDeg}
+                    unitSystem={model.unitSystem}
+                    xFormatter={(value) => round(value, 2)}
+                    yFormatter={(value) => round(value, 1)}
+                  />
+                ) : sweepView === 'baseRadius' ? (
+                  <ScaleChart
+                    title="Required Motor Torque vs Motor Radius"
+                    subtitle="Plan-view motor placement changes the linkage leverage and packaging."
+                    xLabel={`Motor radius (${lengthUnit(model.unitSystem)})`}
+                    yLabel={`Required motor torque (${torqueUnit(model.unitSystem)})`}
+                    data={model.baseRadiusSweep}
+                    xAccessor={(entry) => toDisplayLength(entry.baseRadiusM, model.unitSystem)}
+                    yAccessor={(entry) => entry.feasible ? toDisplayTorque(entry.requiredMotorTorqueNm, model.unitSystem) : NaN}
+                    currentX={toDisplayLength(model.baseRadiusM, model.unitSystem)}
+                    currentY={Number.isFinite(model.recommendedTorqueNm) ? toDisplayTorque(model.recommendedTorqueNm, model.unitSystem) : NaN}
+                    unitSystem={model.unitSystem}
+                    xFormatter={(value) => round(value, 2)}
+                    yFormatter={(value) => round(value, 2)}
+                  />
+                ) : (
+                  <ScaleChart
+                    title="Reachable Tilt vs Mounting Radius"
+                    subtitle="Larger mounting radius gives more leverage on the table, but it costs stroke and torque."
+                    xLabel={`Mounting radius (${lengthUnit(model.unitSystem)})`}
+                    yLabel="Reachable tilt (deg)"
+                    data={model.supportSweep}
+                    xAccessor={(entry) => toDisplayLength(entry.supportRadiusM, model.unitSystem)}
+                    yAccessor={(entry) => entry.reachableTiltDeg}
+                    currentX={toDisplayLength(model.supportRadiusM, model.unitSystem)}
+                    currentY={model.actualReachableTiltDeg}
+                    unitSystem={model.unitSystem}
+                    xFormatter={(value) => round(value, 2)}
+                    yFormatter={(value) => round(value, 2)}
+                  />
+                )}
+              </div>
+            ) : null}
+
+            {detailTab === 'notes' ? (
+              <div className="detail-tab-content">
+                <div className="detail-block">
+                  <div className="detail-block-title">Engineering notes</div>
+                  <ul className="validation-list compact-list">
+                    <li className="validation-item"><strong>Mounting radius</strong> raises stroke demand as it moves the underside joint farther from the tilt axis.</li>
+                    <li className="validation-item"><strong>Crank length</strong> increases support travel, but also changes singularity exposure and torque conversion.</li>
+                    <li className="validation-item"><strong>Rod length</strong> mainly governs articulation angle, linearity, and packaging, not raw tilt authority.</li>
+                    <li className="validation-item"><strong>Motor radius</strong> changes the plan-view separation between the shaft and underside joint, which affects crank angles and available assembly room.</li>
+                    <li className="validation-item"><strong>Rod orientation</strong> should be chosen for modest rod angle, low interference, and comfortable crank posture, not for one “always best” direction.</li>
+                  </ul>
+                </div>
+                <div className="detail-block">
+                  <div className="detail-block-title">Assumptions</div>
+                  <div className="mini-note">
+                    Ball mass is fixed at zero. The table is a uniform rectangular prism. Rods mount to the bottom face. Friction, backlash, joint compliance, structural flex, and motor speed limits are intentionally outside this first-pass sizing model.
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        </section>
+      );
+    }
+
+    function App() {
+      const initialPreset = PRESETS.prototype36;
+      const [unitSystem, setUnitSystem] = useState(initialPreset.unitSystem);
+      const [presetKey, setPresetKey] = useState(initialPreset.key);
+      const [massMode, setMassMode] = useState(initialPreset.massMode);
+      const [widthM, setWidthM] = useState(initialPreset.widthM);
+      const [lengthM, setLengthM] = useState(initialPreset.lengthM);
+      const [thicknessM, setThicknessM] = useState(initialPreset.thicknessM);
+      const [massKg, setMassKg] = useState(initialPreset.massKg);
+      const [densityKgM3, setDensityKgM3] = useState(initialPreset.densityKgM3);
+      const [targetTiltDeg, setTargetTiltDeg] = useState(initialPreset.targetTiltDeg);
+      const [headingDeg, setHeadingDeg] = useState(initialPreset.headingDeg);
+      const [moveTimeS, setMoveTimeS] = useState(initialPreset.moveTimeS);
+      const [motorKey, setMotorKey] = useState(initialPreset.motorKey);
+      const [baseRadiusM, setBaseRadiusM] = useState(initialPreset.baseRadiusM);
+      const [supportRadiusM, setSupportRadiusM] = useState(initialPreset.supportRadiusM);
+      const [crankRadiusM, setCrankRadiusM] = useState(initialPreset.crankRadiusM);
+      const [rodLengthM, setRodLengthM] = useState(initialPreset.rodLengthM);
+      const [neutralHeightM, setNeutralHeightM] = useState(initialPreset.neutralHeightM);
+      const [shaftHeightM, setShaftHeightM] = useState(initialPreset.shaftHeightM);
+      const [safetyFactor, setSafetyFactor] = useState(initialPreset.safetyFactor);
+      const [inspectProgress, setInspectProgress] = useState(1);
+      const [isPlaying, setIsPlaying] = useState(false);
+      const [cameraPreset, setCameraPreset] = useState('isometric');
+      const [showNeutralGhost, setShowNeutralGhost] = useState(true);
+      const [showForceArrows, setShowForceArrows] = useState(true);
+      const [detailTab, setDetailTab] = useState('overview');
+      const [sweepView, setSweepView] = useState('crank');
+
+      useEffect(() => {
+        if (!isPlaying) {
+          return undefined;
+        }
+        const interval = window.setInterval(() => {
+          setInspectProgress((current) => {
+            const next = current + 0.01;
+            return next > 1 ? 0 : next;
+          });
+        }, 40);
+        return () => window.clearInterval(interval);
+      }, [isPlaying]);
+
+      const config = {
+        unitSystem,
+        massMode,
+        widthM: clamp(widthM, 0.08, 5),
+        lengthM: clamp(lengthM, 0.08, 5),
+        thicknessM: clamp(thicknessM, 0.005, 1),
+        massKg: clamp(massKg, 0.01, 500),
+        densityKgM3: clamp(densityKgM3, 1, 5000),
+        targetTiltDeg: clamp(targetTiltDeg, 0.1, 12),
+        headingDeg: ((headingDeg % 360) + 360) % 360,
+        moveTimeS: clamp(moveTimeS, 0.2, 30),
+        motorKey,
+        baseRadiusM: clamp(baseRadiusM, 0.01, 2),
+        supportRadiusM: clamp(supportRadiusM, 0.01, 2),
+        crankRadiusM: clamp(crankRadiusM, 0.001, 0.4),
+        rodLengthM: clamp(rodLengthM, 0.003, 2),
+        neutralHeightM: clamp(neutralHeightM, -0.2, 2),
+        shaftHeightM: clamp(shaftHeightM, -0.2, 1),
+        safetyFactor: clamp(safetyFactor, 1, 5)
+      };
+
+      const model = useMemo(() => evaluateModel(config), [JSON.stringify(config)]);
+
+      const displaySample = useMemo(() => {
+        if (!model.samples.length) {
+          return null;
+        }
+        const index = Math.min(model.samples.length - 1, Math.round(clamp(inspectProgress, 0, 1) * (model.samples.length - 1)));
+        return model.samples[index];
+      }, [model, inspectProgress]);
+
+      const currentPoseTiltDeg = displaySample ? toDegrees(displaySample.thetaRad) : 0;
+      const currentPosePeakTorqueNm = displaySample ? Math.max(...displaySample.legs.map((leg) => leg.torqueNm)) : 0;
+      const currentPosePeakSupportN = displaySample ? Math.max(...displaySample.legs.map((leg) => Math.abs(leg.supportForceN))) : 0;
+
+      const applyPreset = (preset) => {
+        setPresetKey(preset.key);
+        setUnitSystem(preset.unitSystem);
+        setMassMode(preset.massMode);
+        setWidthM(preset.widthM);
+        setLengthM(preset.lengthM);
+        setThicknessM(preset.thicknessM);
+        setMassKg(preset.massKg);
+        setDensityKgM3(preset.densityKgM3);
+        setTargetTiltDeg(preset.targetTiltDeg);
+        setHeadingDeg(preset.headingDeg);
+        setMoveTimeS(preset.moveTimeS);
+        setMotorKey(preset.motorKey);
+        setBaseRadiusM(preset.baseRadiusM);
+        setSupportRadiusM(preset.supportRadiusM);
+        setCrankRadiusM(preset.crankRadiusM);
+        setRodLengthM(preset.rodLengthM);
+        setNeutralHeightM(preset.neutralHeightM);
+        setShaftHeightM(preset.shaftHeightM);
+        setSafetyFactor(preset.safetyFactor);
+        setInspectProgress(1);
+      };
+
+      return (
+        <div className="sim-shell">
+          <section className="sim-header">
+            <div className="header-main">
+              <div className="workspace-tag">Motor catalog • 3 symmetric crank legs</div>
+              <h1>3-Motor Tilt Table Simulator</h1>
+              <p>
+                Single-screen sizing bench for an underside-mounted 120° tilt platform. Compare your listed motors and sweep crank length, rod length, motor radius, and mounting radius without losing the 3D scene.
+              </p>
+              <div className="sim-summary">
+                <div className="summary-chip"><strong>Motion target</strong>{round(model.targetTiltDeg, 2)}° in {round(model.moveTimeS, 2)} s</div>
+                <div className="summary-chip"><strong>Reachable tilt</strong>{round(model.actualReachableTiltDeg, 2)}° with current geometry</div>
+                <div className="summary-chip"><strong>Selected motor</strong>{model.selectedMotor.shortLabel} ({formatTorque(model.selectedMotor.torqueNm, model.unitSystem)})</div>
+                <div className="summary-chip"><strong>Required with margin</strong>{formatTorque(model.recommendedTorqueNm, model.unitSystem)}{model.selectedMotorCanDrive ? ` • ${round(model.selectedMotorUsageRatio * 100, 1)}% used` : ` • over by ${formatTorque(model.recommendedTorqueNm - model.selectedMotor.torqueNm, model.unitSystem)}`}</div>
+              </div>
+            </div>
+            <div className="toggle-row">
+              <button className={`chip-button ${unitSystem === 'imperial' ? 'is-active' : ''}`} onClick={() => setUnitSystem('imperial')}>Imperial</button>
+              <button className={`chip-button ${unitSystem === 'metric' ? 'is-active' : ''}`} onClick={() => setUnitSystem('metric')}>Metric</button>
+            </div>
+          </section>
+
+          <div className="sim-grid">
+            <aside className="sim-sidebar">
+              <section className="sim-panel control-panel">
+                <div className="sim-panel-header">
+                  <h2>Inputs</h2>
+                  <p>Compact controls grouped by intent so the geometry model never loses space.</p>
+                </div>
+                <div className="sim-panel-body">
+                  <div className="control-sections">
+                    <div className="control-section">
+                      <div className="control-section-header">
+                        <h3>Table</h3>
+                        <p>Footprint, thickness, preset, and mass definition.</p>
+                      </div>
+                      <div className="control-grid compact-grid">
+                        <SelectField
+                          compact
+                          label="Preset"
+                          value={presetKey}
+                          onChange={(value) => applyPreset(PRESETS[value])}
+                          options={Object.values(PRESETS).map((preset) => ({ value: preset.key, label: preset.label }))}
+                        />
+                        <SelectField
+                          compact
+                          label="Mass model"
+                          value={massMode}
+                          onChange={setMassMode}
+                          options={[
+                            { value: 'direct', label: 'Direct mass' },
+                            { value: 'density', label: 'Density × volume' }
+                          ]}
+                        />
+                      </div>
+                      <div className="control-grid compact-grid">
+                        <NumericField compact label="Width" value={round(toDisplayLength(widthM, unitSystem), 3)} unit={lengthUnit(unitSystem)} min="1" step="0.1" onChange={(value) => setWidthM(fromDisplayLength(value, unitSystem))} />
+                        <NumericField compact label="Length" value={round(toDisplayLength(lengthM, unitSystem), 3)} unit={lengthUnit(unitSystem)} min="1" step="0.1" onChange={(value) => setLengthM(fromDisplayLength(value, unitSystem))} />
+                        <NumericField compact label="Thickness" value={round(toDisplayLength(thicknessM, unitSystem), 3)} unit={lengthUnit(unitSystem)} min="0.1" step="0.1" onChange={(value) => setThicknessM(fromDisplayLength(value, unitSystem))} />
+                        {massMode === 'direct' ? (
+                          <NumericField compact label="Mass" value={round(toDisplayMass(massKg, unitSystem), 3)} unit={massUnit(unitSystem)} min="0.1" step="0.1" onChange={(value) => setMassKg(fromDisplayMass(value, unitSystem))} />
+                        ) : (
+                          <NumericField compact label="Density" value={round(toDisplayDensity(densityKgM3, unitSystem), 3)} unit={densityUnit(unitSystem)} min="1" step="1" onChange={(value) => setDensityKgM3(fromDisplayDensity(value, unitSystem))} />
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="control-section">
+                      <div className="control-section-header">
+                        <h3>Motion</h3>
+                        <p>Operating tilt target and move timing.</p>
+                      </div>
+                      <div className="control-grid compact-grid">
+                        <NumericField compact label="Max tilt" value={round(targetTiltDeg, 3)} unit="deg" min="0.1" max="12" step="0.1" onChange={setTargetTiltDeg} />
+                        <NumericField compact label="Downhill heading" value={round(headingDeg, 3)} unit="deg" min="0" max="360" step="1" onChange={setHeadingDeg} />
+                        <NumericField compact label="Time to max tilt" value={round(moveTimeS, 3)} unit="s" min="0.2" step="0.1" onChange={setMoveTimeS} />
+                      </div>
+                    </div>
+
+                    <div className="control-section">
+                      <div className="control-section-header">
+                        <h3>Drive</h3>
+                        <p>Motor selection and torque margin.</p>
+                      </div>
+                      <div className="control-grid compact-grid">
+                        <SelectField
+                          compact
+                          label="Motor option"
+                          value={motorKey}
+                          onChange={setMotorKey}
+                          options={MOTOR_OPTION_LIST.map((option) => ({ value: option.key, label: option.label }))}
+                        />
+                        <NumericField compact label="Safety factor" value={round(safetyFactor, 2)} unit="x" min="1" step="0.1" onChange={setSafetyFactor} />
+                      </div>
+                      <div className="hint">
+                        Current design requires {formatTorque(model.recommendedTorqueNm, unitSystem)} with margin included. The selected motor is {model.selectedMotorCanDrive ? 'inside' : 'outside'} that limit.
+                      </div>
+                    </div>
+
+                    <div className="control-section">
+                      <div className="control-section-header">
+                        <h3>Geometry</h3>
+                        <p>Motor radius, crank length, rod length, and underside mounting geometry.</p>
+                      </div>
+                      <div className="control-grid compact-grid">
+                        <NumericField compact label="Motor radius" value={round(toDisplayLength(baseRadiusM, unitSystem), 3)} unit={lengthUnit(unitSystem)} min="0.1" step="0.1" onChange={(value) => setBaseRadiusM(fromDisplayLength(value, unitSystem))} />
+                        <NumericField compact label="Mounting radius" value={round(toDisplayLength(supportRadiusM, unitSystem), 3)} unit={lengthUnit(unitSystem)} min="0.1" step="0.1" onChange={(value) => setSupportRadiusM(fromDisplayLength(value, unitSystem))} />
+                        <NumericField compact label="Crank length" value={round(toDisplayLength(crankRadiusM, unitSystem), 3)} unit={lengthUnit(unitSystem)} min="0.01" step="0.05" onChange={(value) => setCrankRadiusM(fromDisplayLength(value, unitSystem))} />
+                        <NumericField compact label="Rod length" value={round(toDisplayLength(rodLengthM, unitSystem), 3)} unit={lengthUnit(unitSystem)} min="0.05" step="0.1" onChange={(value) => setRodLengthM(fromDisplayLength(value, unitSystem))} />
+                        <NumericField compact label="Neutral center height" value={round(toDisplayLength(neutralHeightM, unitSystem), 3)} unit={lengthUnit(unitSystem)} min="-10" step="0.1" onChange={(value) => setNeutralHeightM(fromDisplayLength(value, unitSystem))} />
+                        <NumericField compact label="Motor shaft height" value={round(toDisplayLength(shaftHeightM, unitSystem), 3)} unit={lengthUnit(unitSystem)} min="-10" step="0.1" onChange={(value) => setShaftHeightM(fromDisplayLength(value, unitSystem))} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </aside>
+
+            <main className="sim-main">
+              <section className="sim-panel hero-panel">
+                <div className="sim-panel-header">
+                  <h2>3D mechanism view</h2>
+                  <p>The scene and its motion strip stay fixed while the side rails hold compact controls and segmented detail.</p>
+                </div>
+                <div className="hero-toolbar">
+                  <div className="progress-strip">
+                    <div className="progress-caption">Motion progress: 0% is level, 100% is the commanded max tilt.</div>
+                    <div className="slider-wrap">
+                      <input type="range" min="0" max="1" step="0.01" value={inspectProgress} onChange={(event) => setInspectProgress(Number(event.target.value))} />
+                      <div className="slider-value">{round(inspectProgress * 100, 0)}%</div>
+                    </div>
+                  </div>
+                  <div className="hero-toolbar-group">
+                    <span className="hero-toolbar-label">Playback</span>
+                    <button className={`chip-button ${isPlaying ? 'is-active' : ''}`} onClick={() => setIsPlaying((current) => !current)}>
+                      {isPlaying ? 'Pause' : 'Play'}
+                    </button>
+                    <button className="chip-button" onClick={() => setInspectProgress(0)}>Level</button>
+                    <button className="chip-button" onClick={() => setInspectProgress(1)}>Max tilt</button>
+                  </div>
+                  <div className="hero-toolbar-group">
+                    <span className="hero-toolbar-label">Camera</span>
+                    <button className={`chip-button ${cameraPreset === 'isometric' ? 'is-active' : ''}`} onClick={() => setCameraPreset('isometric')}>Iso</button>
+                    <button className={`chip-button ${cameraPreset === 'downhill' ? 'is-active' : ''}`} onClick={() => setCameraPreset('downhill')}>Downhill</button>
+                    <button className={`chip-button ${cameraPreset === 'top' ? 'is-active' : ''}`} onClick={() => setCameraPreset('top')}>Top</button>
+                  </div>
+                  <div className="hero-toolbar-group">
+                    <span className="hero-toolbar-label">Overlays</span>
+                    <button className={`chip-button ${showNeutralGhost ? 'is-active' : ''}`} onClick={() => setShowNeutralGhost((current) => !current)}>{showNeutralGhost ? 'Ghost on' : 'Ghost off'}</button>
+                    <button className={`chip-button ${showForceArrows ? 'is-active' : ''}`} onClick={() => setShowForceArrows((current) => !current)}>{showForceArrows ? 'Forces on' : 'Forces off'}</button>
+                  </div>
+                </div>
+                <div className="hero-kpi-grid">
+                  <MiniStatCard label="Current tilt" value={`${round(currentPoseTiltDeg, 2)}°`} subtext={displaySample ? `t = ${round(displaySample.t, 2)} s` : 'No valid pose'} />
+                  <MiniStatCard label="Current peak torque" value={formatTorque(currentPosePeakTorqueNm, model.unitSystem)} tone="info" />
+                  <MiniStatCard label="Current peak support" value={formatForce(currentPosePeakSupportN, model.unitSystem)} />
+                  <MiniStatCard label="Signed accel" value={displaySample ? `${round(displaySample.alphaRadS2, 3)} rad/s²` : '--'} subtext={displaySample ? (displaySample.alphaRadS2 >= 0 ? 'tilt still increasing' : 'tilt is braking') : ''} tone={displaySample && displaySample.alphaRadS2 < 0 ? 'warn' : ''} />
+                </div>
+                <div className="hero-scene-shell">
+                  <ThreePlatformView
+                    model={model}
+                    displaySample={displaySample}
+                    cameraPreset={cameraPreset}
+                    showNeutralGhost={showNeutralGhost}
+                    showForceArrows={showForceArrows}
+                  />
+                </div>
+              </section>
+            </main>
+
+            <aside className="sim-detail">
+              <DetailPane
+                model={model}
+                displaySample={displaySample}
+                detailTab={detailTab}
+                setDetailTab={setDetailTab}
+                sweepView={sweepView}
+                setSweepView={setSweepView}
+              />
+            </aside>
+          </div>
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>

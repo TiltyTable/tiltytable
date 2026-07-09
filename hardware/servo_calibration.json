@@ -1,0 +1,58 @@
+{
+  "baudrate": 115200,
+  "servo_count": 4,
+  "channels": [
+    {
+      "name": "servo0",
+      "channel": 0,
+      "min_us": 500,
+      "max_us": 2083,
+      "home_deg": 90.0,
+      "invert": false,
+      "states_us": {
+        "wall": null,
+        "floor": null,
+        "hole": null
+      }
+    },
+    {
+      "name": "servo1",
+      "channel": 1,
+      "min_us": 500,
+      "max_us": 2400,
+      "home_deg": 90.0,
+      "invert": false,
+      "states_us": {
+        "wall": null,
+        "floor": null,
+        "hole": null
+      }
+    },
+    {
+      "name": "servo2",
+      "channel": 2,
+      "min_us": 500,
+      "max_us": 2400,
+      "home_deg": 90.0,
+      "invert": false,
+      "states_us": {
+        "wall": null,
+        "floor": null,
+        "hole": null
+      }
+    },
+    {
+      "name": "servo3",
+      "channel": 3,
+      "min_us": 500,
+      "max_us": 2400,
+      "home_deg": 90.0,
+      "invert": false,
+      "states_us": {
+        "wall": null,
+        "floor": null,
+        "hole": null
+      }
+    }
+  ]
+}

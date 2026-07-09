@@ -7,7 +7,7 @@ import termios
 import time
 
 
-LED_COUNT = 16
+LED_COUNT = 47
 
 BAUD_RATES = {
     9600: termios.B9600,

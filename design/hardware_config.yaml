@@ -1,0 +1,56 @@
+# Marble Maze - 3-Motor Tilt Table Source of Truth
+# Motors: UIROBOT NEMA 23 Integrated Smart Stepper (UIM5756CM) + StepperOnline MGL23-G5-D8 Planetary Gearbox
+# Mounting: TBD (Optimized for minimum Z-height, crank floor clearance no longer required)
+
+table:
+  width_in: 36.0
+  length_in: 36.0
+  thickness_in: 6.0
+  mass_lbs: 25.0  # Estimated, uniformly distributed
+  com_location: "center of bounding box"
+  rod_mount_surface: "bottom face"
+
+motors:
+  type: "UIROBOT UIM5756CM NEMA 23 Integrated Stepper"
+  holding_torque_nm: 1.26
+  max_speed_rpm: 2000
+  voltage_vdc: 24-48
+  current_a: 1.0-2.8
+  encoder: "Incremental, closed-loop"
+
+gearbox:
+  type: "StepperOnline MGL23-G5-D8 Planetary"
+  ratio: 5.0
+  efficiency_percent: 90.0
+  backlash_arcmin: 30
+  max_permissible_torque_nm: 10.0
+  moment_permissible_torque_nm: 20.0
+  shaft_diameter_mm: 14.0
+  shaft_length_mm: 34.0
+  gearbox_length_mm: 66.3
+
+system_performance:
+  theoretical_stall_torque_nm: 6.3    # 1.26 Nm * 5 ratio (ignoring efficiency drop at stall)
+  rated_output_torque_nm: 5.67        # 1.26 Nm * 5 ratio * 0.9 efficiency
+  max_output_speed_rpm: 400           # 2000 rpm / 5
+  backlash_deg: 0.5                   # 30 arc-min = 0.5 degrees at the crank
+
+mounting:
+  mounting_style: "flat to base plate"
+  shaft_height_from_base_in: 1.12     # Standard NEMA 23 (57mm) center height = 28.5mm ~ 1.12"
+
+geometry:
+  motor_radius_in: 4.5      # Distance from center to motor shaft
+  support_radius_in: 5.0    # Distance from center to table underside joint
+  crank_radius_in: 0.92     # Sized for 10 deg tilt at 5.0" support radius with 70 deg safe swing
+  rod_length_in: 3.70       # 4x crank radius for good articulation
+  joint_type: "Spherical rod ends (Heim joints) on both ends"
+  rod_orientation: "Slight outward lean (4.5in base -> 5.0in support)"
+
+kinematics:
+  neutral_crank_angle_deg: 0.0  # Horizontal
+  max_crank_angle_deg: 70.0     # Limited to prevent over-center singularity
+  min_crank_angle_deg: -70.0    # Limited to prevent over-center singularity
+  max_vertical_stroke_in: 0.86  # 0.92" * sin(70 deg)
+  max_mechanical_tilt_deg: 10.0 # Resulting tilt at max safe stroke
+  neutral_z_height_in: 3.67     # Distance from motor shaft to underside joint at level

@@ -1,0 +1,86 @@
+{
+  "frequency_hz": 50,
+  "i2c_address": "0x44",
+  "servos": {
+    "0": {
+      "extended": 2330,
+      "neutral": 1620,
+      "recessed": 1280
+    },
+    "1": {
+      "extended": 2130,
+      "neutral": 1280,
+      "recessed": 950
+    },
+    "2": {
+      "extended": 2360,
+      "neutral": 1510,
+      "recessed": 1130
+    },
+    "3": {
+      "extended": 1960,
+      "neutral": 1060,
+      "recessed": 750
+    },
+    "4": {
+      "extended": 2180,
+      "neutral": 1430,
+      "recessed": 1080
+    },
+    "5": {
+      "extended": 1950,
+      "neutral": 1300,
+      "recessed": 950
+    },
+    "6": {
+      "extended": 2230,
+      "neutral": 1330,
+      "recessed": 950
+    },
+    "7": {
+      "extended": 2570,
+      "neutral": 1770,
+      "recessed": 1390
+    },
+    "8": {
+      "extended": 2080,
+      "neutral": 1230,
+      "recessed": 910
+    },
+    "9": {
+      "extended": 2170,
+      "neutral": 1170,
+      "recessed": 800
+    },
+    "10": {
+      "extended": 2300,
+      "neutral": 1400,
+      "recessed": 1050
+    },
+    "11": {
+      "extended": 1840,
+      "neutral": 940,
+      "recessed": 610
+    },
+    "12": {
+      "extended": 2400,
+      "neutral": 1650,
+      "recessed": 1280
+    },
+    "13": {
+      "extended": 2530,
+      "neutral": 1780,
+      "recessed": 1450
+    },
+    "14": {
+      "extended": 1990,
+      "neutral": 1090,
+      "recessed": 740
+    },
+    "15": {
+      "extended": 2440,
+      "neutral": 1890,
+      "recessed": 1440
+    }
+  }
+}

@@ -3,18 +3,29 @@
 #include <stdlib.h>
 #include <string.h>
 
-// Wiring:
-// - WS2811 data input -> Arduino D11
-// - LED strip 5 V / 12 V power -> matching external supply
-// - LED supply ground -> Arduino GND
-constexpr uint8_t LED_PIN = 11;
-constexpr uint16_t LED_COUNT = 16;
+// Wiring (WS2812 / WS2812B / WS2811 strip):
+// - LED data input  -> Arduino D4
+// - LED 5 V power    -> external 5 V supply (do not power 50 LEDs from the Arduino)
+// - LED supply GND   -> Arduino GND (must share ground with the Arduino)
+// A 300-470 ohm resistor on the data line and a large cap across the supply are recommended.
+constexpr uint8_t LED_PIN = 4;
+constexpr uint16_t LED_COUNT = 47;
 constexpr uint8_t BRIGHTNESS = 255;
 constexpr uint32_t SERIAL_BAUD = 115200;
 
+// This strip is RGB-ordered (WS2811-style): sending "red" showed as green with
+// NEO_GRB, so we use NEO_RGB. Flip back to NEO_GRB if colors look swapped.
 Adafruit_NeoPixel strip(LED_COUNT, LED_PIN, NEO_RGB + NEO_KHZ800);
 
-String line;
+// A full "frame" line is "frame " + LED_COUNT * "255 255 255 ", so reserve
+// enough room to hold every value for the whole strip without truncating.
+constexpr uint16_t LINE_MAX = (uint16_t)(LED_COUNT) * 12 + 16;
+constexpr int MAX_TOKENS = (int)LED_COUNT * 3 + 2;
+
+// Fixed buffers (no String/heap) keep RAM use predictable on an Uno.
+char lineBuffer[LINE_MAX];
+uint16_t lineLength = 0;
+char *tokens[MAX_TOKENS];
 
 bool parseByte(const char *text, uint8_t &value) {
   if (text == NULL || *text == '\0') {
@@ -46,12 +57,12 @@ bool parseLedIndex(const char *text, uint16_t &value) {
   return true;
 }
 
-int splitTokens(char *input, char *tokens[], int maxTokens) {
+int splitTokens(char *input, char *out[], int maxTokens) {
   int count = 0;
   char *token = strtok(input, " \t,\r\n");
 
   while (token != NULL && count < maxTokens) {
-    tokens[count++] = token;
+    out[count++] = token;
     token = strtok(NULL, " \t,\r\n");
   }
 
@@ -59,15 +70,23 @@ int splitTokens(char *input, char *tokens[], int maxTokens) {
 }
 
 void printHelp() {
-  Serial.println(F("WS2811/NeoPixel serial LED controller"));
+  Serial.println(F("WS2812/WS2811 NeoPixel serial LED controller"));
+  Serial.print(F("LEDs: "));
+  Serial.print(LED_COUNT);
+  Serial.print(F("  pin: D"));
+  Serial.println(LED_PIN);
   Serial.println(F("Commands:"));
-  Serial.println(F("  set <led> <r> <g> <b>"));
-  Serial.println(F("  frame <r0> <g0> <b0> ... <r15> <g15> <b15>"));
-  Serial.println(F("  clear"));
+  Serial.print(F("  set <led 0-"));
+  Serial.print(LED_COUNT - 1);
+  Serial.println(F("> <r> <g> <b>"));
+  Serial.print(F("  frame <r0> <g0> <b0> ... ("));
+  Serial.print(LED_COUNT * 3);
+  Serial.println(F(" numbers)"));
+  Serial.println(F("  clear | off"));
   Serial.println(F("  help"));
 }
 
-void handleSet(char *tokens[], int count) {
+void handleSet(char *args[], int count) {
   if (count != 5) {
     Serial.println(F("ERR usage: set <led> <r> <g> <b>"));
     return;
@@ -78,11 +97,12 @@ void handleSet(char *tokens[], int count) {
   uint8_t g = 0;
   uint8_t b = 0;
 
-  if (!parseLedIndex(tokens[1], led)) {
-    Serial.println(F("ERR led index must be 0-15"));
+  if (!parseLedIndex(args[1], led)) {
+    Serial.print(F("ERR led index must be 0-"));
+    Serial.println(LED_COUNT - 1);
     return;
   }
-  if (!parseByte(tokens[2], r) || !parseByte(tokens[3], g) || !parseByte(tokens[4], b)) {
+  if (!parseByte(args[2], r) || !parseByte(args[3], g) || !parseByte(args[4], b)) {
     Serial.println(F("ERR colors must be 0-255"));
     return;
   }
@@ -94,8 +114,8 @@ void handleSet(char *tokens[], int count) {
   Serial.println(led);
 }
 
-void handleFrame(char *tokens[], int count) {
-  const int expectedCount = 1 + LED_COUNT * 3;
+void handleFrame(char *args[], int count) {
+  const int expectedCount = 1 + (int)LED_COUNT * 3;
   if (count != expectedCount) {
     Serial.print(F("ERR frame needs "));
     Serial.print(LED_COUNT * 3);
@@ -109,7 +129,7 @@ void handleFrame(char *tokens[], int count) {
     uint8_t b = 0;
     const int offset = 1 + led * 3;
 
-    if (!parseByte(tokens[offset], r) || !parseByte(tokens[offset + 1], g) || !parseByte(tokens[offset + 2], b)) {
+    if (!parseByte(args[offset], r) || !parseByte(args[offset + 1], g) || !parseByte(args[offset + 2], b)) {
       Serial.println(F("ERR colors must be 0-255"));
       return;
     }
@@ -121,17 +141,13 @@ void handleFrame(char *tokens[], int count) {
   Serial.println(F("OK frame"));
 }
 
-void handleLine(String input) {
-  input.trim();
-  if (input.length() == 0) {
+void processLine() {
+  if (lineLength == 0) {
     return;
   }
+  lineBuffer[lineLength] = '\0';
 
-  char buffer[260];
-  input.toCharArray(buffer, sizeof(buffer));
-
-  char *tokens[50];
-  int count = splitTokens(buffer, tokens, 50);
+  int count = splitTokens(lineBuffer, tokens, MAX_TOKENS);
   if (count == 0) {
     return;
   }
@@ -163,7 +179,7 @@ void setup() {
   strip.clear();
   strip.show();
 
-  Serial.println(F("READY WS2811 LED controller"));
+  Serial.println(F("READY WS2812 LED controller"));
   printHelp();
 }
 
@@ -171,10 +187,12 @@ void loop() {
   while (Serial.available() > 0) {
     char c = Serial.read();
     if (c == '\n') {
-      handleLine(line);
-      line = "";
-    } else if (c != '\r' && line.length() < 255) {
-      line += c;
+      processLine();
+      lineLength = 0;
+    } else if (c != '\r') {
+      if (lineLength < LINE_MAX - 1) {
+        lineBuffer[lineLength++] = c;
+      }
     }
   }
 }

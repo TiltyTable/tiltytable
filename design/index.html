@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Electromechanical tilt-table marble maze with servo-actuated traps, LED feedback, browser simulation, and hardware control tooling.">
+<title>Tilt Table Marble Maze</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./styles/site.css">
+</head>
+<body>
+<header class="site-header">
+  <a class="brand" href="#top" aria-label="Tilt Table Marble Maze home">
+    <span class="brand-mark"></span>
+    <span>Tilt Table</span>
+  </a>
+  <nav class="site-nav" aria-label="Project navigation">
+    <a href="#system">System</a>
+    <a href="#prototype">Prototype</a>
+    <a href="#tools">Tools</a>
+    <a href="./architecture-explorer.html">Explorer</a>
+  </nav>
+</header>
+
+<main id="top">
+  <section class="hero section">
+    <div class="hero-copy">
+      <p class="eyebrow">Electromechanical game table</p>
+      <h1>A physical marble maze that tilts, reacts, and fights back.</h1>
+      <p class="hero-lede">
+        A large-format tilt-table platform for a steel marble, combining stepper-driven motion,
+        SG90 pop-up traps, rack-and-pinion elevator modules, hall sensing, LEDs, and a browser
+        workspace for mechanical trade studies.
+      </p>
+      <div class="hero-actions">
+        <a class="button primary" href="./architecture-explorer.html">Open Architecture Explorer</a>
+        <a class="button secondary" href="./PRD.md">Read PRD</a>
+      </div>
+    </div>
+
+    <div class="hero-card" aria-label="Project status summary">
+      <div class="orbital">
+        <span></span>
+        <span></span>
+        <span></span>
+      </div>
+      <div class="status-grid">
+        <div>
+          <strong>36 in</strong>
+          <span>prototype table</span>
+        </div>
+        <div>
+          <strong>3-axis</strong>
+          <span>tilt simulator</span>
+        </div>
+        <div>
+          <strong>16 ch</strong>
+          <span>servo control</span>
+        </div>
+        <div>
+          <strong>D11</strong>
+          <span>WS2811 LEDs</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section intro-grid" id="system">
+    <div class="section-copy">
+      <p class="eyebrow">What it is</p>
+      <h2>A playable machine, not just a maze.</h2>
+      <p>
+        The project explores a modular marble-maze platform where the player controls tilt while
+        the table changes underneath the marble. The current repo contains mechanical calculators,
+        browser visualizers, servo control software, Arduino firmware, and planning docs for the
+        full electromechanical system.
+      </p>
+    </div>
+    <div class="feature-list">
+      <article>
+        <span>01</span>
+        <h3>Tilt platform</h3>
+        <p>Closed-loop NEMA stepper concept for a 36 inch table with +/-10 degree operating range.</p>
+      </article>
+      <article>
+        <span>02</span>
+        <h3>Dynamic traps</h3>
+        <p>SG90-driven wall/floor/hole modules plus electromagnet and hall-sensor concepts.</p>
+      </article>
+      <article>
+        <span>03</span>
+        <h3>Interactive software</h3>
+        <p>Static browser tools for actuator layouts, force diagrams, wall travel, and tilt geometry.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="section gallery-section" id="prototype">
+    <div class="section-heading">
+      <p class="eyebrow">Current prototype</p>
+      <h2>FDM elevator modules for moving maze cells.</h2>
+      <p>
+        The latest CAD direction uses a printed servo elevator: a rack-and-pinion lift driven by
+        an SG90, with a lightweight frame and guide structure for selectable wall, floor, and hole states.
+      </p>
+    </div>
+    <div class="gallery">
+      <figure class="gallery-large">
+        <img src="./assets/site/elevator-mechanism-front.png" alt="CAD view of the FDM elevator mechanism with trussed rail and servo gear train">
+      </figure>
+      <figure>
+        <img src="./assets/site/elevator-mechanism-iso.png" alt="Isometric CAD view of the elevator mechanism inside the maze cell frame">
+      </figure>
+      <figure>
+        <img src="./assets/site/elevator-mechanism-side.png" alt="Side CAD view of the elevator mechanism and rack">
+      </figure>
+    </div>
+  </section>
+
+  <section class="section system-map">
+    <div class="section-heading">
+      <p class="eyebrow">System architecture</p>
+      <h2>Hardware and software are being prototyped together.</h2>
+    </div>
+    <div class="map-grid">
+      <article class="map-card">
+        <h3>Mechanism</h3>
+        <p>3-motor tilt-table studies, actuator architecture comparison, wall elevator geometry, and free-body diagrams.</p>
+      </article>
+      <article class="map-card">
+        <h3>Controls</h3>
+        <p>Arduino PCA9685 servo bridge, Python CLI, browser control center, and saved per-servo calibration.</p>
+      </article>
+      <article class="map-card">
+        <h3>Feedback</h3>
+        <p>WS2811 LED strip experiments on an Arduino UNO R4 WiFi, plus planned hall sensors and camera tracking.</p>
+      </article>
+      <article class="map-card">
+        <h3>Gameplay</h3>
+        <p>Planned solo, trap-master, AI-runner, speedrun, and puzzle modes with scoring and stateful traps.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="section tools-section" id="tools">
+    <div class="section-heading">
+      <p class="eyebrow">Project tools</p>
+      <h2>Open the working engineering artifacts.</h2>
+    </div>
+    <div class="tool-grid">
+      <a class="tool-card featured" href="./architecture-explorer.html">
+        <span>Browser app</span>
+        <strong>Actuator Architecture Explorer</strong>
+        <p>Compare vertical integrated cells against horizontal actuator bays with live 2D and 3D views.</p>
+      </a>
+      <a class="tool-card" href="./tilt-table-simulator.html">
+        <span>Simulator</span>
+        <strong>3-Motor Tilt Table</strong>
+        <p>Explore geometry, motion, and mechanical clearances for the tilt-table drive.</p>
+      </a>
+      <a class="tool-card" href="./wall-actuator-calc.html">
+        <span>Calculator</span>
+        <strong>Wall Actuator</strong>
+        <p>Calculate servo-driven wall travel and test the three-position mechanism concept.</p>
+      </a>
+      <a class="tool-card" href="./fbd-visualization.html">
+        <span>Analysis</span>
+        <strong>Free Body Diagram</strong>
+        <p>Visualize loading assumptions for tilt-table mechanism options.</p>
+      </a>
+      <a class="tool-card" href="./hardware/README.md">
+        <span>Hardware</span>
+        <strong>Control Center Docs</strong>
+        <p>Run the Raspberry Pi control center, servo CLI, camera preview, and calibration flow.</p>
+      </a>
+      <a class="tool-card" href="./hardware/arduino/tilt_table_leds/tilt_table_leds.ino">
+        <span>Firmware</span>
+        <strong>LED Sketch</strong>
+        <p>Arduino UNO R4 sketch for the 16 LED WS2811 cube array on pin D11.</p>
+      </a>
+    </div>
+  </section>
+
+  <section class="section build-log">
+    <div>
+      <p class="eyebrow">Build status</p>
+      <h2>Prototype-first roadmap.</h2>
+    </div>
+    <ol class="timeline">
+      <li>
+        <span>Now</span>
+        <strong>Validate trap cell mechanics</strong>
+        <p>Iterate SG90 elevator stiffness, rack geometry, and FDM print settings.</p>
+      </li>
+      <li>
+        <span>Next</span>
+        <strong>Integrate control electronics</strong>
+        <p>Run the PCA9685 servo bridge and control center on the bench with multiple modules.</p>
+      </li>
+      <li>
+        <span>Then</span>
+        <strong>Assemble playable table</strong>
+        <p>Combine tilt platform, maze plate, lighting, sensing, and game software into a demo rig.</p>
+      </li>
+    </ol>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <span>Tilt Table Marble Maze</span>
+  <a href="./README.md">README</a>
+  <a href="./PRD.md">Project requirements</a>
+</footer>
+</body>
+</html>

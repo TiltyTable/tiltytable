@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Marble Maze FBD Visualization</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body { background-color: #0f172a; color: #f8fafc; font-family: system-ui, -apple-system, sans-serif; }
+        .slider { -webkit-appearance: none; width: 100%; height: 6px; border-radius: 3px; background: #334155; outline: none; }
+        .slider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #3b82f6; cursor: pointer; }
+        .slider:disabled::-webkit-slider-thumb { background: #64748b; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        const MOTORS = {
+            'nema17': { name: 'NEMA 17', torqueNm: 0.4, color: 'text-blue-400' },
+            'nema23': { name: 'NEMA 23', torqueNm: 2.0, color: 'text-green-400' },
+            'nema34': { name: 'NEMA 34', torqueNm: 6.0, color: 'text-purple-400' }
+        };
+
+        const App = () => {
+            const [mode, setMode] = useState('2motor'); // '2motor' or '3motor'
+            const [weightLbs, setWeightLbs] = useState(25);
+            const [motorDistIn, setMotorDistIn] = useState(6);
+            const [tiltDeg, setTiltDeg] = useState(15);
+            const [accelTime, setAccelTime] = useState(0.5);
+            const [comOffsetIn, setComOffsetIn] = useState(0); // Vertical offset from pivot
+            const [motorType, setMotorType] = useState('nema17');
+
+            // Constants
+            const L_in = 24; // Table width in inches
+            const L_m = L_in * 0.0254;
+            const M_kg = weightLbs / 2.2046;
+            const r_m = motorDistIn * 0.0254;
+            const theta_rad = tiltDeg * Math.PI / 180;
+            const com_offset_m = comOffsetIn * 0.0254;
+            
+            // Dynamics
+            // Parallel axis theorem: I = I_cm + M*d^2
+            const I_cm = (1/12) * M_kg * Math.pow(L_m, 2);
+            const I_total = I_cm + M_kg * Math.pow(com_offset_m, 2);
+            const alpha = (2 * theta_rad) / Math.pow(accelTime, 2);
+            
+            const tau_inertia = I_total * alpha;
+            // Gravity torque: if CoM is above pivot (positive offset), gravity pulls it further down when tilted
+            const tau_gravity = M_kg * 9.81 * com_offset_m * Math.sin(theta_rad);
+            
+            // Total torque required at the pivot
+            const tau_total_Nm = Math.abs(tau_inertia + tau_gravity);
+
+            // 2-Motor Calculations
+            const force_2m_N = r_m > 0 ? tau_total_Nm / r_m : 0;
+            const force_2m_lbs = (force_2m_N / 9.81) * 2.2046;
+
+            // 3-Motor Calculations (Assuming CoM offset shifts static load slightly, but keeping it simple for visualization)
+            // In 3-motor, there is no central pivot, so CoM offset mostly affects inertia, not a gravity pendulum effect 
+            // because the motors support the plane directly.
+            const static_force_3m_lbs = weightLbs / 3;
+            const force_tilt_3m_N = r_m > 0 ? tau_inertia / (1.5 * r_m) : 0; // Gravity doesn't create a pendulum here
+            const force_tilt_3m_lbs = (force_tilt_3m_N / 9.81) * 2.2046;
+            const max_force_3m_lbs = static_force_3m_lbs + force_tilt_3m_lbs;
+
+            const selectedMotor = MOTORS[motorType];
+            const isDirectDriveViable = tau_total_Nm <= selectedMotor.torqueNm;
+            const requiredGearRatio = Math.ceil((tau_total_Nm / selectedMotor.torqueNm) * 1.5); // 1.5 safety factor
+
+            const renderArrow = (x, y, dx, dy, label, color, val) => {
+                const len = Math.sqrt(dx*dx + dy*dy);
+                if (len === 0) return null;
+                const nx = dx/len;
+                const ny = dy/len;
+                return (
+                    <g>
+                        <line x1={x} y1={y} x2={x+dx} y2={y+dy} stroke={color} strokeWidth="3" markerEnd={`url(#arrowhead-${color.replace('#', '')})`} />
+                        <text x={x+dx + nx*15} y={y+dy + ny*15 + 5} fill={color} fontSize="14" textAnchor="middle" fontWeight="bold">
+                            {label}
+                        </text>
+                        {val && <text x={x+dx + nx*15} y={y+dy + ny*15 + 22} fill={color} fontSize="12" textAnchor="middle">{val}</text>}
+                    </g>
+                );
+            };
+
+            return (
+                <div className="max-w-7xl mx-auto p-6">
+                    <h1 className="text-3xl font-bold mb-2">Marble Maze Free Body Diagram</h1>
+                    <p className="text-slate-400 mb-8">Interactive loading visualization with adjustable CoM and Motor specs.</p>
+                    
+                    <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                        {/* Controls */}
+                        <div className="lg:col-span-4 bg-slate-800 p-6 rounded-xl shadow-lg border border-slate-700 h-fit space-y-6">
+                            <div className="flex gap-2 bg-slate-900 p-1 rounded-lg">
+                                <button 
+                                    className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${mode === '2motor' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                                    onClick={() => setMode('2motor')}
+                                >
+                                    2-Motor Gimbal
+                                </button>
+                                <button 
+                                    className={`flex-1 py-2 rounded-md text-sm font-medium transition-colors ${mode === '3motor' ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}
+                                    onClick={() => setMode('3motor')}
+                                >
+                                    3-Motor Stewart
+                                </button>
+                            </div>
+
+                            <div className="space-y-5">
+                                <div>
+                                    <div className="flex justify-between mb-1">
+                                        <label className="text-sm font-medium text-slate-300">Table Weight</label>
+                                        <span className="text-sm text-blue-400">{weightLbs} lbs</span>
+                                    </div>
+                                    <input type="range" min="2" max="60" value={weightLbs} onChange={e => setWeightLbs(Number(e.target.value))} className="slider" />
+                                </div>
+                                
+                                <div>
+                                    <div className="flex justify-between mb-1">
+                                        <label className="text-sm font-medium text-slate-300">Tilt Angle</label>
+                                        <span className="text-sm text-blue-400">{tiltDeg}°</span>
+                                    </div>
+                                    <input type="range" min="5" max="45" value={tiltDeg} onChange={e => setTiltDeg(Number(e.target.value))} className="slider" />
+                                </div>
+
+                                <div>
+                                    <div className="flex justify-between mb-1">
+                                        <label className="text-sm font-medium text-slate-300">Tilt Time (Responsiveness)</label>
+                                        <span className="text-sm text-blue-400">{accelTime} s</span>
+                                    </div>
+                                    <input type="range" min="0.1" max="2.0" step="0.1" value={accelTime} onChange={e => setAccelTime(Number(e.target.value))} className="slider" />
+                                </div>
+
+                                <div className="pt-4 border-t border-slate-700">
+                                    <div className="flex justify-between mb-1">
+                                        <label className="text-sm font-medium text-slate-300">Motor Dist from Center</label>
+                                        <span className="text-sm text-blue-400">{motorDistIn} in</span>
+                                    </div>
+                                    <input type="range" min="1" max="12" value={motorDistIn} onChange={e => setMotorDistIn(Number(e.target.value))} className="slider" />
+                                </div>
+
+                                <div className={mode === '3motor' ? 'opacity-50' : ''}>
+                                    <div className="flex justify-between mb-1">
+                                        <label className="text-sm font-medium text-slate-300">CoM Vertical Offset from Pivot</label>
+                                        <span className="text-sm text-amber-400">{comOffsetIn > 0 ? '+' : ''}{comOffsetIn} in</span>
+                                    </div>
+                                    <input type="range" min="-6" max="6" step="0.5" value={comOffsetIn} onChange={e => setComOffsetIn(Number(e.target.value))} disabled={mode === '3motor'} className="slider" />
+                                    <div className="text-xs text-slate-500 mt-1">
+                                        {comOffsetIn > 0 ? 'Top-heavy (unstable, gravity fights you)' : comOffsetIn < 0 ? 'Bottom-heavy (pendulum, gravity helps center)' : 'Perfectly balanced'}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="pt-4 border-t border-slate-700">
+                                <label className="text-sm font-medium text-slate-300 block mb-2">Select Motor</label>
+                                <div className="grid grid-cols-3 gap-2">
+                                    {Object.entries(MOTORS).map(([key, motor]) => (
+                                        <button
+                                            key={key}
+                                            onClick={() => setMotorType(key)}
+                                            className={`py-2 px-1 rounded border text-xs font-bold transition-all ${motorType === key ? 'bg-slate-700 border-blue-500 text-white' : 'bg-slate-800 border-slate-600 text-slate-400 hover:border-slate-500'}`}
+                                        >
+                                            {motor.name}<br/>
+                                            <span className="font-normal text-[10px]">{motor.torqueNm} N·m</span>
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Visualization & Results */}
+                        <div className="lg:col-span-8 flex flex-col gap-6">
+                            
+                            {/* Visualizer */}
+                            <div className="bg-slate-800 rounded-xl shadow-lg border border-slate-700 overflow-hidden flex flex-col h-[450px]">
+                                <div className="p-4 bg-slate-900/50 border-b border-slate-700 flex justify-between items-center">
+                                    <h2 className="font-semibold text-lg">{mode === '2motor' ? 'Center Pivot (Gimbal) FBD' : 'No Pivot (Stewart) FBD'}</h2>
+                                    <div className="text-sm px-3 py-1 bg-blue-500/20 text-blue-300 rounded-full border border-blue-500/30">Side View</div>
+                                </div>
+                                
+                                <div className="flex-1 relative flex items-center justify-center p-8">
+                                    <svg width="100%" height="100%" viewBox="0 0 600 400" className="overflow-visible">
+                                        <defs>
+                                            <marker id="arrowhead-ef4444" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#ef4444" /></marker>
+                                            <marker id="arrowhead-3b82f6" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#3b82f6" /></marker>
+                                            <marker id="arrowhead-22c55e" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#22c55e" /></marker>
+                                            <marker id="arrowhead-f59e0b" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#f59e0b" /></marker>
+                                        </defs>
+
+                                        {/* Base Coordinate System */}
+                                        <g transform="translate(300, 200)">
+                                            
+                                            {/* Table Rotation */}
+                                            <g transform={`rotate(${tiltDeg})`}>
+                                                
+                                                {/* Table Body */}
+                                                <rect x="-200" y="-10" width="400" height="20" rx="4" fill="#475569" stroke="#94a3b8" strokeWidth="2" />
+                                                
+                                                {mode === '2motor' && (
+                                                    <>
+                                                        {/* CoM Indicator */}
+                                                        <g transform={`translate(0, ${-comOffsetIn * 10})`}>
+                                                            <circle cx="0" cy="0" r="6" fill="#f59e0b" />
+                                                            <text x="15" y="4" fill="#f59e0b" fontSize="12" fontWeight="bold">CoM</text>
+                                                            
+                                                            {/* Gravity Vector from CoM */}
+                                                            <g transform={`rotate(${-tiltDeg})`}>
+                                                                {renderArrow(0, 0, 0, 80, "Gravity (Mg)", "#ef4444", `${weightLbs} lbs`)}
+                                                            </g>
+                                                        </g>
+
+                                                        {/* Pivot Point (World frame) */}
+                                                        <g transform={`rotate(${-tiltDeg})`}>
+                                                            <path d="M -15 0 L 15 0 L 0 20 Z" fill="#64748b" />
+                                                            <rect x="-5" y="20" width="10" height="40" fill="#64748b" />
+                                                            {renderArrow(0, 0, 0, -60, "Pivot Reaction", "#22c55e", `${weightLbs} lbs`)}
+                                                        </g>
+
+                                                        {/* Motor attachment point */}
+                                                        <circle cx={-(motorDistIn/12)*200} cy="10" r="5" fill="#3b82f6" />
+                                                        {renderArrow(-(motorDistIn/12)*200, 10, 0, 60, "Motor Force", "#3b82f6", `${force_2m_lbs.toFixed(1)} lbs`)}
+                                                        
+                                                        <line x1="0" y1="30" x2={-(motorDistIn/12)*200} y2="30" stroke="#94a3b8" strokeDasharray="4" />
+                                                        <text x={-(motorDistIn/24)*200} y="45" fill="#94a3b8" fontSize="12" textAnchor="middle">r = {motorDistIn}"</text>
+                                                    </>
+                                                )}
+
+                                                {mode === '3motor' && (
+                                                    <>
+                                                        <circle cx="0" cy="0" r="6" fill="#f59e0b" />
+                                                        <text x="15" y="4" fill="#f59e0b" fontSize="12" fontWeight="bold">CoM</text>
+                                                        <g transform={`rotate(${-tiltDeg})`}>
+                                                            {renderArrow(0, 0, 0, 80, "Gravity (Mg)", "#ef4444", `${weightLbs} lbs`)}
+                                                        </g>
+
+                                                        <circle cx={-(motorDistIn/12)*200} cy="10" r="5" fill="#3b82f6" />
+                                                        {renderArrow(-(motorDistIn/12)*200, 10, 0, -80, "Motor 1 (Up)", "#3b82f6", `${max_force_3m_lbs.toFixed(1)} lbs`)}
+                                                        
+                                                        <circle cx={(motorDistIn/12)*200} cy="10" r="5" fill="#3b82f6" />
+                                                        {renderArrow((motorDistIn/12)*200, 10, 0, -40, "Motors 2+3 (Down)", "#3b82f6", `${(static_force_3m_lbs - force_tilt_3m_lbs/2).toFixed(1)} lbs ea`)}
+
+                                                        <line x1="0" y1="30" x2={-(motorDistIn/12)*200} y2="30" stroke="#94a3b8" strokeDasharray="4" />
+                                                        <line x1="0" y1="30" x2={(motorDistIn/12)*200} y2="30" stroke="#94a3b8" strokeDasharray="4" />
+                                                    </>
+                                                )}
+                                            </g>
+                                        </g>
+                                    </svg>
+                                </div>
+                            </div>
+
+                            {/* Results Panel */}
+                            <div className="bg-slate-900 p-6 border border-slate-700 rounded-xl shadow-lg">
+                                <h3 className="text-xl font-bold mb-4 text-white flex items-center justify-between">
+                                    <span>Torque & Motor Analysis</span>
+                                    <span className={`text-sm px-3 py-1 rounded-full bg-slate-800 border ${isDirectDriveViable ? 'border-green-500 text-green-400' : 'border-amber-500 text-amber-400'}`}>
+                                        Target: {selectedMotor.name} ({selectedMotor.torqueNm} N·m)
+                                    </span>
+                                </h3>
+                                
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                                    <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
+                                        <div className="text-sm text-slate-400 mb-1">Total Torque Required</div>
+                                        <div className="text-2xl font-bold text-white">{tau_total_Nm.toFixed(2)} N·m</div>
+                                        <div className="text-xs text-slate-500 mt-1">Inertia ({tau_inertia.toFixed(2)}) + Gravity ({tau_gravity.toFixed(2)})</div>
+                                    </div>
+                                    
+                                    {mode === '2motor' ? (
+                                        <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
+                                            <div className="text-sm text-slate-400 mb-1">Linear Force Required</div>
+                                            <div className="text-2xl font-bold text-blue-400">{force_2m_lbs.toFixed(1)} lbs</div>
+                                            <div className="text-xs text-slate-500 mt-1">At distance r = {motorDistIn}"</div>
+                                        </div>
+                                    ) : (
+                                        <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
+                                            <div className="text-sm text-slate-400 mb-1">Peak Linear Force</div>
+                                            <div className="text-2xl font-bold text-red-400">{max_force_3m_lbs.toFixed(1)} lbs</div>
+                                            <div className="text-xs text-slate-500 mt-1">Static ({static_force_3m_lbs.toFixed(1)}) + Dynamic ({force_tilt_3m_lbs.toFixed(1)})</div>
+                                        </div>
+                                    )}
+
+                                    <div className="bg-slate-800 p-4 rounded-lg border border-slate-700">
+                                        <div className="text-sm text-slate-400 mb-1">Direct Drive Status</div>
+                                        <div className={`text-xl font-bold ${isDirectDriveViable ? 'text-green-400' : 'text-amber-400'}`}>
+                                            {isDirectDriveViable ? 'Viable' : 'Needs Gearing'}
+                                        </div>
+                                        <div className="text-xs text-slate-500 mt-1">
+                                            {isDirectDriveViable ? 'Motor has enough torque' : `Min gear ratio: ${requiredGearRatio}:1`}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className={`p-4 rounded-lg border ${isDirectDriveViable ? 'bg-green-900/20 border-green-800/50' : 'bg-amber-900/20 border-amber-800/50'}`}>
+                                    <h4 className={`font-bold mb-1 ${isDirectDriveViable ? 'text-green-400' : 'text-amber-400'}`}>
+                                        {isDirectDriveViable ? '✅ Direct Drive is Possible' : '⚠️ Mechanical Advantage Required'}
+                                    </h4>
+                                    <p className="text-sm text-slate-300">
+                                        {isDirectDriveViable 
+                                            ? `The ${selectedMotor.name} provides ${selectedMotor.torqueNm} N·m of torque, which exceeds the required ${tau_total_Nm.toFixed(2)} N·m. You can mount the table directly to the motor shaft (if using a gimbal) or use direct linkages.`
+                                            : `The ${selectedMotor.name} (${selectedMotor.torqueNm} N·m) is not strong enough to drive this directly (${tau_total_Nm.toFixed(2)} N·m required). You must use a leadscrew, linear actuator, or a belt/gear reduction of at least ${requiredGearRatio}:1.`
+                                        }
+                                    </p>
+                                    {mode === '3motor' && (
+                                        <p className="text-sm text-slate-300 mt-2 border-t border-slate-700/50 pt-2">
+                                            <strong>Note for 3-Motor:</strong> Because standard stepper motors cannot hold strong static axial loads, you <em>must</em> use leadscrews (linear actuators) to hold the {static_force_3m_lbs.toFixed(1)} lbs static weight per motor, regardless of torque ratings.
+                                        </p>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
