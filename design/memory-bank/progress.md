@@ -13,15 +13,13 @@
 - [x] Scaffolded `camera/mindvision_capture.py` + README for HT-SUA134GM.
 
 ## In Progress
-- [ ] Install MindVision ARM64 SDK and grab first frame from HT-SUA134GM.
+- [ ] Wire ball tracking / table vision to MindVision frames.
 
 ## Next Steps
 - [ ] Safe-motion Stewart bring-up (enable one axis, verify direction, then pose).
 - [ ] Module-grid calibration session with `calibration/tilt_table_cli.py` (human visual confirm).
-- [ ] Wire ball tracking to MindVision frames (Kinect path later).
 - [ ] Prevent Mac→Jetson rsync from overwriting Jetson `.git/config` remotes.
 
 ## Known Issues
-- MindVision camera on USB but no `/dev/video*` and no ARM64 `libMVSDK.so` yet.
 - Mac cannot `git push` (DoorDash DLP hook); push from Jetson only.
-- Root README previously claimed Stewart flashed to R4 — fixed.
+- MindVision SDK prints harmless CoaXPress (`fg_cxp.cti`) warnings on USB cameras.
