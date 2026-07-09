@@ -1,0 +1,31 @@
+---
+description: Hardware safety — no motor/servo motion without explicit human OK
+alwaysApply: true
+---
+
+# Hardware Safety
+
+This project drives real motors (Stewart steppers + ~144 module servos).
+
+## Never do without explicit user approval
+
+- `enable` / `pose` / `vel` / `jog` / `steps` on the Stewart board
+- Servo `P` / calibrate / drive / demo that moves actuators
+- Anything that energizes motors against mechanical limits
+
+## Always OK without asking
+
+- Serial open + `help` / `status` / `?`
+- LED-only commands (`L` / `LX` / `LN` / `LP`) when user asked for LED work
+- Servo `X` / `O` / `LX` (release / all-off)
+- Read-only probes (`lsusb`, port list, firmware identity)
+
+## Camera notes
+
+- MindVision HT-SUA134GM is **not** V4L2/`cv2.VideoCapture(0)`.
+- Needs ARM64 MindVision `libMVSDK.so` — see `camera/README.md`.
+- Kinect scripts are separate; do not assume Kinect is connected.
+
+## When unsure
+
+Default to **non-motion** smoke tests and ask before enabling drives.

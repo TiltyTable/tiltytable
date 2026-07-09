@@ -1,0 +1,32 @@
+---
+description: Jetson is the push/runtime host; protect remotes and authorship
+alwaysApply: true
+---
+
+# Jetson Git & Runtime Ops
+
+## Source of truth
+
+- **Runtime + `git push`:** Jetson (`zipline@10.0.0.15`, `~/tiltytable`)
+- **Mac:** fine for editing/fetch; **cannot push** (DoorDash DLP blocks non-approved remotes)
+
+## Remotes (Jetson)
+
+```text
+origin  git@github.com:TiltyTable/tiltytable.git
+jerry   git@github.com:lijerryli/tiltytable.git   # leave alone; do not delete
+```
+
+- Authorship on Jetson: `TiltyTable <tiltytable@users.noreply.github.com>`
+- Never commit as a personal name/email for this project.
+
+## rsync / sync pitfalls
+
+- When syncing Mac → Jetson, **exclude `.git/`** (or only sync specific paths).
+- Copying Mac `.git` overwrites Jetson remotes with `github-personal:` (broken on Jetson).
+- After any full-tree sync, verify: `git remote -v` and `ssh -T git@github.com`.
+
+## Before pushing
+
+1. Confirm on Jetson: `git remote get-url origin` is `git@github.com:TiltyTable/tiltytable.git`
+2. `git push origin main` from the Jetson, not the Mac

@@ -1,0 +1,30 @@
+---
+description: Correct Arduino board roles, serial aliases, and Stewart pinout
+alwaysApply: true
+---
+
+# Hardware Board Roles
+
+Do **not** guess which Arduino does what. Use this map:
+
+| Board | Alias | Port (typical) | Firmware | Role |
+| --- | --- | --- | --- | --- |
+| Uno R3 | `/dev/arduino-stewart` | `ttyACM0` | `arduino/uim5756pm_stewart/` | 3-DOF Stewart tilt (UIM5756PM) |
+| Uno R4 Minima | `/dev/arduino-modules` | `ttyACM1` | `arduino/servo_calib/` | Module-grid **servos AND LEDs** |
+
+## Hard rules
+
+- R4 is **not** LED-only and **not** the Stewart board.
+- R3 is **not** the module PCA9685/servo board.
+- Prefer `/dev/arduino-stewart` and `/dev/arduino-modules` over raw `ttyACM*`.
+- Before flashing or smoke-testing, confirm with `ls -l /dev/arduino-*` and `arduino-cli board list`.
+
+## Stewart pinout (Uno R3) — source of truth
+
+| Axis | PLS | DIR | ENA |
+| --- | ---: | ---: | ---: |
+| 0 | D2 | D3 | D4 |
+| 1 | D5 | D6 | D7 |
+| 2 | D10 | D11 | D12 |
+
+If firmware, README, or udev names disagree with this table, **fix the docs/code** — do not "correct" the hardware to match old docs.

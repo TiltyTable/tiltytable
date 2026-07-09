@@ -1,30 +1,31 @@
 ---
-description: Memory Bank protocol for the marble-maze workspace
+description: Memory bank protocol for the tiltytable / design workspace
 alwaysApply: true
 ---
 
 # Memory Bank Protocol
 
-At the start of every new marble-maze session, read all files in `memory-bank/` in this order:
+At the start of every new tiltytable session, read all files in `design/memory-bank/` in this order:
 
-1. `projectbrief.md` - workspace mission, scope, and success criteria
-2. `productContext.md` - what the workspace models and how it is used
-3. `systemPatterns.md` - architecture layout, modeling rules, and workflow conventions
-4. `techContext.md` - local environment, file paths, and serving instructions
-5. `activeContext.md` - current focus, recent decisions, and open questions
-6. `progress.md` - completed work, in-progress work, next steps, and known issues
+1. `projectbrief.md`
+2. `productContext.md`
+3. `systemPatterns.md`
+4. `techContext.md`
+5. `activeContext.md`
+6. `progress.md`
 
 ## When To Update
 
 After substantive work, update:
-- `activeContext.md` with the current focus and recent decisions or changes
-- `progress.md` with newly completed work and fresh next steps
+
+- `activeContext.md` — current focus and recent decisions
+- `progress.md` — completed work and next steps
 - Other files only when project fundamentals change
 
 ## Rules
 
-- Always read the memory bank before starting substantive work in this workspace.
 - Keep entries concise and factual.
 - Do not add extra memory-bank files beyond the six canonical files.
-- Treat `marble-maze/` as the project root for app files, docs, and memory-bank updates.
-- Preserve the distinction between Vertical Actuator dense-grid rules and Horizontal Actuator sim-driven grid rules.
+- Project root for app/docs/memory-bank is the **tiltytable repo**; design site lives under `design/`.
+- Preserve Vertical Actuator dense-grid rules vs Horizontal Actuator sim-driven grid rules.
+- Hardware/runtime truth lives in `.cursor/rules/hardware-*.mdc` and Jetson bring-up notes in `activeContext.md` — do not let design-only memory bank contradict those.
