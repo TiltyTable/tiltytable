@@ -140,7 +140,11 @@ class StewartController:
         self.send("disable")
 
     def zero(self) -> None:
-        self.send("zero")
+        # Alias for firmware `calibrate` (cranks straight up = max heave).
+        self.send("calibrate")
+
+    def calibrate(self) -> None:
+        self.send("calibrate")
 
     def pose(self, roll_deg: float, pitch_deg: float) -> None:
         self.send(f"pose {roll_deg:.3f} {pitch_deg:.3f} {self.heave_mm:.3f}")
@@ -456,8 +460,20 @@ def main() -> int:
     parser.add_argument("--port", default=None, help="Arduino serial port, for example /dev/ttyACM0")
     parser.add_argument("--baud", type=int, default=115200, choices=sorted(BAUD_RATES), help="Arduino baud rate")
     parser.add_argument("--dry-run", action="store_true", help="Print Stewart commands without opening serial")
-    parser.add_argument("--zero", action="store_true", help="Send 'zero' to the Stewart controller and exit")
-    parser.add_argument("--zero-on-start", action="store_true", help="Send 'zero' before starting mouse control")
+    parser.add_argument(
+        "--zero",
+        "--calibrate",
+        action="store_true",
+        dest="zero",
+        help="Send 'calibrate' (cranks-up = max heave) and exit",
+    )
+    parser.add_argument(
+        "--zero-on-start",
+        "--calibrate-on-start",
+        action="store_true",
+        dest="zero_on_start",
+        help="Send 'calibrate' before starting mouse control (cranks must already be straight up)",
+    )
     parser.add_argument("--enable", action="store_true", help="Send 'enable' to the Stewart controller on startup")
     parser.add_argument(
         "--disable-on-exit",

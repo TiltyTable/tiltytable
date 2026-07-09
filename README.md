@@ -31,8 +31,11 @@ https://tiltytable.github.io/tiltytable/
 arduino-cli compile --fqbn arduino:avr:uno arduino/uim5756pm_stewart
 arduino-cli upload -p /dev/arduino-stewart --fqbn arduino:avr:uno arduino/uim5756pm_stewart
 
-# Roller-ball control (non-motion dry-run first if unsure)
-sudo python3 capture_usb_mouse.py --port /dev/arduino-stewart --enable --zero-on-start --disable-on-exit --center --pitch-sign=1 --roll-sign=1
+# Calibrate: manually point ALL cranks STRAIGHT UP (max heave), then:
+python3 stewart_calibrate.py --port /dev/arduino-stewart
+
+# Roller-ball control (only after calibrate; motors will move)
+sudo python3 capture_usb_mouse.py --port /dev/arduino-stewart --enable --disable-on-exit --center --pitch-sign=1 --roll-sign=1
 ```
 
 ### Module grid servos + LEDs (Uno R4 Minima)

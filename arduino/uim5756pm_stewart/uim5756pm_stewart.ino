@@ -8,13 +8,20 @@
 
   Serial monitor: 115200 baud, newline enabled.
 
+  CALIBRATION (required before motion):
+    Manually move all three cranks so they point STRAIGHT UP (max heave),
+    motors disabled / free to turn. Then send:
+      calibrate
+    That pose becomes the step + heave reference. Until calibrated, enable /
+    pose / vel / angle / steps / jog are rejected.
+
   Main commands:
+    calibrate              (alias: zero)  — cranks-up = max heave reference
     pose <roll_deg> <pitch_deg> <heave_mm>
     vel <roll_deg_s> <pitch_deg_s> <heave_mm_s>
     angle <a0_deg> <a1_deg> <a2_deg>
     steps <s0> <s1> <s2>
     jog <axis> <pulses>
-    zero
     enable [axis]
     disable [axis]
     status
@@ -62,14 +69,23 @@ const float NEUTRAL_TOP_Z_MM = 110.0;
 const float LEG_AZIMUTH_DEG[AXES] = {0.0, 120.0, 240.0};
 const float ROD_END_LIMIT_DEG = 14.0;
 const float SUPPORT_STROKE_MM = 20.66;
+// Neutral operating pose: crank horizontal (sin=0), arm vertical.
 const float NEUTRAL_CRANK_DEG = 180.0;
-const float ZERO_CRANK_DEG = 102.37;
-const float ZERO_CRANK_DELTA_DEG = ZERO_CRANK_DEG - NEUTRAL_CRANK_DEG;
+// Calibration pose: crank STRAIGHT UP (sin=+1) = max heave. Human places
+// all three cranks here with motors free, then sends `calibrate`.
+const float CALIBRATE_CRANK_DEG = 90.0;
+// Platform heave (roll=0,pitch=0) when every crank is at CALIBRATE_CRANK_DEG.
+// Closed-form with arm vertical-plane reach:
+//   radial gap = BASE_MOTOR_RADIUS - TABLE_ROD_RADIUS = CRANK_RADIUS
+//   H = CRANK_RADIUS*sin(90) - NEUTRAL_TOP_Z + sqrt(ARM^2 - radial_gap^2)
+//     = 30 - 110 + sqrt(110^2 - 30^2) ≈ 25.831
+const float CALIBRATE_HEAVE_MM = 25.830;
 
 const float MAX_ROLL_DEG = 5.0;
 const float MAX_PITCH_DEG = 5.0;
 const float MIN_HEAVE_MM = -8.0;
-const float MAX_HEAVE_MM = 8.0;
+// Allow commanding up to the calibrated max-heave pose.
+const float MAX_HEAVE_MM = CALIBRATE_HEAVE_MM;
 const unsigned long VELOCITY_UPDATE_MS = 25;
 const float VELOCITY_EPSILON = 0.001;
 
@@ -85,6 +101,7 @@ Vec3 motorShaft[AXES];
 Vec3 topRodNeutral[AXES];
 bool axisEnabled[AXES] = {false, false, false};
 long desiredTarget[AXES] = {0, 0, 0};
+bool calibrated = false;
 
 String line;
 float currentRollDeg = 0.0;
@@ -311,14 +328,38 @@ void stopVelocityMode() {
 }
 
 void zeroPosition() {
+  // Deprecated name — same as calibratePosition().
+  calibratePosition();
+}
+
+void calibratePosition() {
+  // Human has manually placed all cranks STRAIGHT UP (CALIBRATE_CRANK_DEG).
+  // That physical pose is max heave at roll=pitch=0. Record step counters so
+  // IK targets (relative to NEUTRAL_CRANK_DEG) match reality.
   stopVelocityMode();
+  setEnable(false);
+  long calibSteps = crankDeltaToSteps(0, normalizeDeg(CALIBRATE_CRANK_DEG - NEUTRAL_CRANK_DEG));
   for (uint8_t i = 0; i < AXES; i++) {
-    long topSteps = crankDeltaToSteps(i, ZERO_CRANK_DELTA_DEG);
-    stepper[i].setCurrentPosition(topSteps);
-    desiredTarget[i] = topSteps;
+    long s = crankDeltaToSteps(i, normalizeDeg(CALIBRATE_CRANK_DEG - NEUTRAL_CRANK_DEG));
+    stepper[i].setCurrentPosition(s);
+    desiredTarget[i] = s;
   }
-  currentRollDeg = currentPitchDeg = currentHeaveMm = 0.0;
-  Serial.println(F("OK zero"));
+  currentRollDeg = 0.0;
+  currentPitchDeg = 0.0;
+  currentHeaveMm = CALIBRATE_HEAVE_MM;
+  calibrated = true;
+  Serial.print(F("OK calibrate heave "));
+  Serial.print(CALIBRATE_HEAVE_MM, 3);
+  Serial.print(F(" crank_deg "));
+  Serial.print(CALIBRATE_CRANK_DEG, 1);
+  Serial.print(F(" steps "));
+  Serial.println(calibSteps);
+}
+
+bool requireCalibrated() {
+  if (calibrated) return true;
+  Serial.println(F("ERR not calibrated — move cranks straight up, then send: calibrate"));
+  return false;
 }
 
 void updateVelocityMotion() {
@@ -350,7 +391,8 @@ void updateVelocityMotion() {
 // ----------------------- Status / help -----------------------
 
 void printStatus() {
-  Serial.print(F("OK enabled ")); Serial.print(anyAxisEnabled() ? F("1") : F("0"));
+  Serial.print(F("OK calibrated ")); Serial.print(calibrated ? F("1") : F("0"));
+  Serial.print(F(" enabled ")); Serial.print(anyAxisEnabled() ? F("1") : F("0"));
   Serial.print(F(" moving "));   Serial.print(moving() ? F("1") : F("0"));
   for (uint8_t i = 0; i < AXES; i++) {
     Serial.print(F(" axis")); Serial.print(i); Serial.print(F("_enabled ")); Serial.print(axisEnabled[i] ? F("1") : F("0"));
@@ -369,13 +411,14 @@ void printStatus() {
 
 void printHelp() {
   Serial.println(F("UIM5756PM 3-axis Stewart controller"));
-  Serial.println(F("Commands:"));
+  Serial.println(F("Calibration: manually point ALL cranks STRAIGHT UP (max heave), then:"));
+  Serial.println(F("  calibrate   (alias: zero)"));
+  Serial.println(F("Commands (require calibrate first, except disable/status/help):"));
   Serial.println(F("  pose <roll_deg> <pitch_deg> <heave_mm>"));
   Serial.println(F("  vel <roll_deg_s> <pitch_deg_s> <heave_mm_s>"));
   Serial.println(F("  angle <a0_deg> <a1_deg> <a2_deg>"));
   Serial.println(F("  steps <s0> <s1> <s2>"));
   Serial.println(F("  jog <axis> <pulses>"));
-  Serial.println(F("  zero"));
   Serial.println(F("  enable [axis] | disable [axis]"));
   Serial.println(F("  status"));
   Serial.println(F("  help"));
@@ -391,6 +434,7 @@ int splitTokens(char *input, char *tokens[], int maxTokens) {
 }
 
 bool parsePose(char *tokens[], int count) {
+  if (!requireCalibrated()) return false;
   if (count != 4) { Serial.println(F("ERR pose needs roll pitch heave")); return false; }
   stopVelocityMode();
   if (!moveToPose(atof(tokens[1]), atof(tokens[2]), atof(tokens[3]))) return false;
@@ -404,6 +448,7 @@ bool parsePose(char *tokens[], int count) {
 }
 
 bool parseVelocity(char *tokens[], int count) {
+  if (!requireCalibrated()) return false;
   if (count != 4) { Serial.println(F("ERR vel needs roll_deg_s pitch_deg_s heave_mm_s")); return false; }
   rollVelocityDegS  = atof(tokens[1]);
   pitchVelocityDegS = atof(tokens[2]);
@@ -419,6 +464,7 @@ bool parseVelocity(char *tokens[], int count) {
 }
 
 bool parseAngles(char *tokens[], int count) {
+  if (!requireCalibrated()) return false;
   if (count != 4) { Serial.println(F("ERR angle needs three crank deltas in deg")); return false; }
   stopVelocityMode();
   long target[AXES];
@@ -434,6 +480,7 @@ bool parseAngles(char *tokens[], int count) {
 }
 
 bool parseSteps(char *tokens[], int count) {
+  if (!requireCalibrated()) return false;
   if (count != 4) { Serial.println(F("ERR steps needs three step targets")); return false; }
   stopVelocityMode();
   setTargets(atol(tokens[1]), atol(tokens[2]), atol(tokens[3]));
@@ -446,6 +493,7 @@ bool parseSteps(char *tokens[], int count) {
 }
 
 bool parseJog(char *tokens[], int count) {
+  if (!requireCalibrated()) return false;
   if (count != 3) { Serial.println(F("ERR jog needs axis pulses")); return false; }
   long axisIndex = atol(tokens[1]);
   if (axisIndex < 0 || axisIndex >= AXES) { Serial.println(F("ERR jog axis must be 0, 1, or 2")); return false; }
@@ -468,6 +516,7 @@ bool parseAxisIndex(char *token, uint8_t *out) {
 }
 
 bool parseEnableCommand(char *tokens[], int count, bool on) {
+  if (on && !requireCalibrated()) return false;
   if (count == 1) {
     setEnable(on);
     if (!on) stopVelocityMode();
@@ -495,12 +544,12 @@ void handleCommand(String command) {
   if (count == 0) return;
 
   String cmd = tokens[0]; cmd.toLowerCase();
-  if      (cmd == "pose"  || cmd == "p") parsePose(tokens, count);
+  if      (cmd == "calibrate" || cmd == "calib" || cmd == "zero") calibratePosition();
+  else if (cmd == "pose"  || cmd == "p") parsePose(tokens, count);
   else if (cmd == "vel"   || cmd == "v") parseVelocity(tokens, count);
   else if (cmd == "angle" || cmd == "a") parseAngles(tokens, count);
   else if (cmd == "steps" || cmd == "s") parseSteps(tokens, count);
   else if (cmd == "jog"   || cmd == "j") parseJog(tokens, count);
-  else if (cmd == "zero")                zeroPosition();
   else if (cmd == "enable"  || cmd == "on")  parseEnableCommand(tokens, count, true);
   else if (cmd == "disable" || cmd == "off") parseEnableCommand(tokens, count, false);
   else if (cmd == "status")              printStatus();
@@ -531,17 +580,20 @@ void setup() {
     stepper[i].setMaxSpeed(fullSpeedStepsPerSec(i));
     stepper[i].setAcceleration(fullAccelStepsPerSec2(i));
 
-    long topSteps = crankDeltaToSteps(i, ZERO_CRANK_DELTA_DEG);
-    stepper[i].setCurrentPosition(topSteps);
-    desiredTarget[i] = topSteps;
+    // Unknown physical pose until the human runs `calibrate`.
+    // Leave step counters at 0; do not pretend we are at a known crank angle.
+    stepper[i].setCurrentPosition(0);
+    desiredTarget[i] = 0;
 
     pinMode(ENA_PIN[i], OUTPUT);
     if (USE_LIMITS) pinMode(LIMIT_PIN[i], LIMIT_ACTIVE_LOW ? INPUT_PULLUP : INPUT);
   }
 
   setEnable(false);
+  calibrated = false;
   buildGeometry();
-  Serial.println(F("UIM5756PM Stewart controller ready. Send 'help'."));
+  Serial.println(F("UIM5756PM Stewart ready. Move cranks STRAIGHT UP, then send: calibrate"));
+  Serial.println(F("Send 'help' for commands."));
 }
 
 void loop() {
