@@ -12,12 +12,14 @@
 - [x] Flashed and smoke-tested R3 Stewart firmware (`help`, `status`; motors not enabled).
 - [x] Scaffolded `camera/mindvision_capture.py` + README for HT-SUA134GM.
 
+- [x] Stewart `calibrate`: cranks straight up = max heave; gate motion until calibrated; flashed + smoke-tested.
+
 ## In Progress
-- [ ] Wire ball tracking / table vision to MindVision frames.
+- [ ] First safe post-calibrate motion test (human at table).
 
 ## Next Steps
-- [ ] Safe-motion Stewart bring-up (enable one axis, verify direction, then pose).
 - [ ] Module-grid calibration session with `calibration/tilt_table_cli.py` (human visual confirm).
+- [ ] Wire ball tracking / table vision to camera frames.
 - [ ] Prevent Mac→Jetson rsync from overwriting Jetson `.git/config` remotes.
 
 ## Known Issues

@@ -11,9 +11,9 @@ module-grid servos+LEDs (Uno R4 Minima), and MindVision camera capture.
 - 2026-07-08 | Updated Stewart pinout to PLS 2/5/10, DIR 3/6/11, ENA 4/7/12; flashed R3; both boards pass non-motion serial smoke tests.
 - 2026-07-08 | Renamed udev aliases to `/dev/arduino-stewart` and `/dev/arduino-modules`.
 - 2026-07-08 | Installed Jetson venv deps (`pyserial`, `flask`, `opencv-headless`, …).
-- 2026-07-08 | Installed MindVision linuxSDK ARM64 `libMVSDK.so`; first frame grab works (1280×1024 mono via `camera/mindvision_capture.py`).
+- 2026-07-08 | Stewart calibrate: cranks straight up = max heave; motion gated until `calibrate`.
 
 ## Open Questions
 - When Kinect arrives, keep dual camera paths or standardize on one.
-- Agree safe-motion test plan before enabling Stewart motors or jogging module servos.
-- Wire ball tracking to MindVision frames.
+- Agree safe-motion test plan for first post-calibrate pose / jog.
+- Wire ball tracking to MindVision/Arducam frames later.
