@@ -1,34 +1,28 @@
 #!/usr/bin/env python3
 """MindVision HT-SUA134GM capture helper for the Jetson.
 
-This camera does not appear as /dev/video*. It needs MindVision's libMVSDK.so
-(ARM64 linuxSDK). Until that library is installed, --probe reports USB
-presence and explains what is missing.
-
-Once libMVSDK.so is on the system library path, --save grabs one frame to a
-PNG via a minimal ctypes binding of CameraInit / CameraGetImageBuffer.
+Uses the official MindVision Python binding (`camera/mvsdk.py`) from linuxSDK.
+Requires ARM64 `libMVSDK.so` installed system-wide (see camera/README.md).
 """
 
 from __future__ import annotations
 
 import argparse
-import ctypes
-import ctypes.util
-import os
+import platform
 import subprocess
 import sys
 from pathlib import Path
 
+# Allow `python3 camera/mindvision_capture.py` from repo root.
+_CAMERA_DIR = Path(__file__).resolve().parent
+if str(_CAMERA_DIR) not in sys.path:
+    sys.path.insert(0, str(_CAMERA_DIR))
+
+import mvsdk  # noqa: E402
+
 
 VENDOR_ID = "f622"
 PRODUCT_HINT = "SUA134GM"
-LIB_CANDIDATES = (
-    "MVSDK",
-    "libMVSDK.so",
-    "/usr/lib/libMVSDK.so",
-    "/lib/libMVSDK.so",
-    "/usr/local/lib/libMVSDK.so",
-)
 
 
 def usb_present() -> bool:
@@ -36,119 +30,118 @@ def usb_present() -> bool:
         out = subprocess.check_output(["lsusb"], text=True, stderr=subprocess.DEVNULL)
     except (OSError, subprocess.CalledProcessError):
         return False
-    return VENDOR_ID in out.lower() or PRODUCT_HINT.lower() in out.lower()
-
-
-def find_mvsdk() -> str | None:
-    for name in LIB_CANDIDATES:
-        if name.startswith("/"):
-            if Path(name).is_file():
-                return name
-            continue
-        path = ctypes.util.find_library(name.replace("lib", "").replace(".so", ""))
-        if path:
-            return path
-        # find_library is picky; try dlopen paths directly
-        for prefix in ("/usr/lib", "/lib", "/usr/local/lib"):
-            candidate = Path(prefix) / (name if name.endswith(".so") else f"lib{name}.so")
-            if candidate.is_file():
-                return str(candidate)
-    return None
+    low = out.lower()
+    return VENDOR_ID in low or PRODUCT_HINT.lower() in low
 
 
 def probe() -> int:
     usb = usb_present()
-    lib = find_mvsdk()
-    video_nodes = sorted(Path("/dev").glob("video*"))
     print(f"USB MindVision present: {usb}")
-    print(f"libMVSDK.so found:      {lib or 'NO'}")
-    print(f"/dev/video* nodes:      {video_nodes or 'none'}")
-    if not usb:
-        print("\nCamera not on USB. Check the cable / USB3 port.")
-        return 1
-    if not lib:
-        print(
-            "\nCamera is on USB but MindVision's ARM64 SDK is not installed.\n"
-            "Download linuxSDK from:\n"
-            "  https://www.mindvision.ltd/Service-Support/Software-Download.html\n"
-            "Then follow camera/README.md (copy aarch64 libMVSDK.so + headers)."
-        )
+    try:
+        devices = mvsdk.CameraEnumerateDevice()
+    except mvsdk.CameraException as exc:
+        print(f"CameraEnumerateDevice failed: {exc.error_code} {exc.message}")
         return 2
-    print("\nSDK library present — try: python3 camera/mindvision_capture.py --save /tmp/sua134.png")
+    print(f"SDK enumerated cameras: {len(devices)}")
+    for i, info in enumerate(devices):
+        print(f"  [{i}] {info.GetFriendlyName()}  port={info.GetPortType()}")
+    if not usb:
+        print("Camera not on USB. Check cable / USB3 port.")
+        return 1
+    if not devices:
+        print("USB present but SDK found 0 cameras — check udev rules / reboot / permissions.")
+        return 3
+    print("OK — try: python3 camera/mindvision_capture.py --save /tmp/sua134.png")
     return 0
 
 
-# Minimal ctypes surface for a single-frame grab. Constants match MindVision
-# CameraApi.h (status OK = 0). Kept small on purpose until the full SDK is in.
-CAMERA_STATUS_SUCCESS = 0
-
-
-class CameraSdkStatus(ctypes.c_int):
-    pass
-
-
-def grab_one_png(out_path: Path) -> int:
-    lib_path = find_mvsdk()
-    if not lib_path:
-        print("libMVSDK.so not found; run with --probe for details.", file=sys.stderr)
-        return 2
-    if not usb_present():
-        print("MindVision camera not present on USB.", file=sys.stderr)
-        return 1
-
+def grab_one_png(out_path: Path, exposure_ms: float = 30.0) -> int:
     try:
-        import numpy as np
         import cv2
+        import numpy as np
     except ImportError as exc:
         print(f"Need numpy+opencv in the venv: {exc}", file=sys.stderr)
-        return 3
+        return 4
 
-    sdk = ctypes.CDLL(lib_path)
-    # Signatures are approximate; official headers define richer structs.
-    # If init fails, print the status and exit — do not invent frames.
-    h_camera = ctypes.c_int()
-    # CameraSdkInit(iLanguageSel) — 0 English / -1 auto on many builds
-    if hasattr(sdk, "CameraSdkInit"):
-        st = sdk.CameraSdkInit(-1)
-        if st != CAMERA_STATUS_SUCCESS:
-            print(f"CameraSdkInit failed: status={st}", file=sys.stderr)
-            return 4
+    devices = mvsdk.CameraEnumerateDevice()
+    if not devices:
+        print("No camera found via SDK.", file=sys.stderr)
+        return 1
 
-    # Prefer enumerating then initializing by index 0.
-    if not hasattr(sdk, "CameraEnumerateDevice") or not hasattr(sdk, "CameraInit"):
-        print(
-            "libMVSDK loaded but expected CameraEnumerateDevice/CameraInit symbols "
-            "are missing. Check that you installed the matching ARM64 SDK version.",
-            file=sys.stderr,
+    info = devices[0]
+    print(f"Opening: {info.GetFriendlyName()} ({info.GetPortType()})")
+    try:
+        h_camera = mvsdk.CameraInit(info, -1, -1)
+    except mvsdk.CameraException as exc:
+        print(f"CameraInit failed ({exc.error_code}): {exc.message}", file=sys.stderr)
+        return 2
+
+    try:
+        cap = mvsdk.CameraGetCapability(h_camera)
+        mono = cap.sIspCapacity.bMonoSensor != 0
+        if mono:
+            mvsdk.CameraSetIspOutFormat(h_camera, mvsdk.CAMERA_MEDIA_TYPE_MONO8)
+        else:
+            mvsdk.CameraSetIspOutFormat(h_camera, mvsdk.CAMERA_MEDIA_TYPE_BGR8)
+
+        mvsdk.CameraSetTriggerMode(h_camera, 0)
+        mvsdk.CameraSetAeState(h_camera, 0)
+        mvsdk.CameraSetExposureTime(h_camera, int(exposure_ms * 1000))
+        mvsdk.CameraPlay(h_camera)
+
+        frame_bytes = (
+            cap.sResolutionRange.iWidthMax
+            * cap.sResolutionRange.iHeightMax
+            * (1 if mono else 3)
         )
-        return 5
+        p_frame = mvsdk.CameraAlignMalloc(frame_bytes, 16)
 
-    print(
-        "libMVSDK is present, but a full typed binding (CameraDevInfo / FrameHead "
-        "structs) is still needed for a reliable grab.\n"
-        f"Installed library: {lib_path}\n"
-        "Next step after SDK install: extend this script with the official "
-        "Python kit from MindVision's download page "
-        "('Industrial Camera Python Programming Development Kit').",
-        file=sys.stderr,
-    )
-    # Placeholder so callers know we intentionally stop short of unsafe guesses.
-    _ = (np, cv2, h_camera, out_path)
-    return 6
+        try:
+            p_raw, head = mvsdk.CameraGetImageBuffer(h_camera, 2000)
+            mvsdk.CameraImageProcess(h_camera, p_raw, p_frame, head)
+            mvsdk.CameraReleaseImageBuffer(h_camera, p_raw)
+
+            if platform.system() == "Windows":
+                mvsdk.CameraFlipFrameBuffer(p_frame, head, 1)
+
+            buf = (mvsdk.c_ubyte * head.uBytes).from_address(p_frame)
+            frame = np.frombuffer(buf, dtype=np.uint8)
+            channels = 1 if head.uiMediaType == mvsdk.CAMERA_MEDIA_TYPE_MONO8 else 3
+            frame = frame.reshape((head.iHeight, head.iWidth, channels))
+
+            out_path = out_path.expanduser().resolve()
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            ok = cv2.imwrite(str(out_path), frame)
+            if not ok:
+                print(f"cv2.imwrite failed for {out_path}", file=sys.stderr)
+                return 5
+            print(f"Saved {out_path}  shape={frame.shape}  exposure_ms={exposure_ms}")
+            return 0
+        except mvsdk.CameraException as exc:
+            print(f"Grab failed ({exc.error_code}): {exc.message}", file=sys.stderr)
+            return 3
+        finally:
+            mvsdk.CameraAlignFree(p_frame)
+    finally:
+        mvsdk.CameraUnInit(h_camera)
+
+    return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--probe", action="store_true", help="report USB + SDK status")
+    parser.add_argument("--probe", action="store_true", help="list USB + SDK cameras")
     parser.add_argument("--save", type=Path, help="grab one frame to this PNG path")
+    parser.add_argument("--exposure-ms", type=float, default=30.0, help="manual exposure (ms)")
     args = parser.parse_args()
+
     if args.probe or not args.save:
         code = probe()
-        if args.save and code != 0:
-            return code
         if not args.save:
             return code
-    return grab_one_png(args.save)
+        if code != 0:
+            return code
+    return grab_one_png(args.save, exposure_ms=args.exposure_ms)
 
 
 if __name__ == "__main__":
