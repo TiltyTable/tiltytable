@@ -54,6 +54,17 @@ Then open `http://<jetson-ip>:8090/` on the LAN (e.g. `http://10.0.0.15:8090/`).
 Use the exposure chips / form while turning the lens focus ring. Green crosshair
 marks frame center.
 
+## UVC / Arducam live focus preview
+
+```bash
+cd ~/tiltytable && . .venv/bin/activate
+python3 camera/uvc_focus_stream.py --port 8091 --device 0
+```
+
+Open `http://<jetson-ip>:8091/` (e.g. `http://10.0.0.15:8091/`).
+Works with any V4L2 webcam (`/dev/video0`). Can run alongside the MindVision
+stream on `:8090`.
+
 ## Kinect
 
 When the Azure Kinect is connected, use the existing root scripts
