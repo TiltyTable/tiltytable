@@ -8,6 +8,6 @@
 
 pyserial>=3.5
 numpy>=1.23
-opencv-python-headless>=4.8
+opencv-python>=4.8
 flask>=3.0
 waitress>=2.1

@@ -1,0 +1,4 @@
+# Arcade roller ball (USB HID trackball) — enumerates as "Barcode Reader".
+# Vendor 13ba / product 0018. Grant plugdev RW so zipline can read without sudo.
+SUBSYSTEM=="input", ATTRS{idVendor}=="13ba", ATTRS{idProduct}=="0018", MODE="0660", GROUP="plugdev"
+KERNEL=="event*", ATTRS{idVendor}=="13ba", ATTRS{idProduct}=="0018", MODE="0660", GROUP="plugdev"

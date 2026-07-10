@@ -20,6 +20,8 @@ import time
 
 import serial
 
+from stewart_serial import open_stewart_serial
+
 
 def read_lines(ser: serial.Serial, seconds: float = 1.0) -> list[str]:
     end = time.time() + seconds
@@ -56,15 +58,14 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    print(f"Opening {args.port} …")
+    print(f"Opening {args.port} (no DTR reset) …")
     try:
-        ser = serial.Serial(args.port, args.baud, timeout=0.3)
+        ser = open_stewart_serial(args.port, args.baud, timeout=0.3)
     except serial.SerialException as exc:
         print(f"Cannot open port: {exc}", file=sys.stderr)
         return 1
 
-    time.sleep(2.2)  # USB reset
-    boot = read_lines(ser, 1.0)
+    boot = read_lines(ser, 0.5)
     for line in boot:
         print(f"  < {line}")
 

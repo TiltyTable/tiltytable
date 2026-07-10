@@ -27,57 +27,68 @@ That pose is recorded as heave ≈ `+25.831 mm` at roll=pitch=0, with crank
 angle `90°` relative to the IK model (`NEUTRAL_CRANK_DEG = 180°` is
 horizontal).
 
-Host helper:
+Host helpers:
 
 ```bash
+python3 stewart_cli.py
+# or one-shot:
 python3 stewart_calibrate.py --port /dev/arduino-stewart
-# or non-interactive once cranks are already up:
-python3 stewart_calibrate.py --port /dev/arduino-stewart --yes
 ```
 
 ## Wiring
 
-Your diagram shows two cables:
+Two cables per motor (Amazon / UIM344 Fig 0-6 harness — **no purple**):
 
 - Power cable: red and black, 22 AWG.
-- Signal cable: white/green/blue/brown/yellow plus purple/gray config serial.
+- Signal cable: brown / gray / yellow / blue / black / white / green, 26 AWG.
 
-Wire each motor like this:
-
-| Motor wire | Driver pin | Diagram label | Connect to |
+| Motor wire | Driver pin | Label | Connect to |
 | --- | ---: | --- | --- |
 | Red | 1 | `+24-48 VDC` | Motor power supply positive |
 | Black | 2 | `0 VDC` | Motor power supply negative |
-| White | 3 | `COM` | Arduino `5V` |
-| Green | 4 | `DIR` | Arduino DIR pin for that axis |
-| Blue | 5 | `PLS` | Arduino PLS pin for that axis |
-| Brown | 6 | `ENA` | Arduino ENA pin for that axis |
-| Yellow | 7 | `GND` | Arduino `GND` and power supply negative |
-| Purple | 8 | `TX` | Leave unconnected, config only |
-| Gray | 9 | `RX` | Leave unconnected, config only |
+| **Brown** | 3 | `COM` | Arduino `5V` |
+| **Gray** | 4 | `DIR` | Arduino DIR pin for that axis |
+| **Yellow** | 5 | `PLS` | Arduino PLS pin for that axis |
+| **Blue** | 6 | `ENA` | Arduino ENA pin for that axis |
+| Black (signal) | 7 | `GND` | Arduino `GND` (+ supply negative) |
+| White | 8 | `TX` | Leave unconnected (config only) |
+| Green | 9 | `RX` | Leave unconnected (config only) |
 
-Default Arduino control pins (Uno R3):
+Arduino control pins (Uno R3, 2026-07-09 harness):
 
-| Axis | `PLS` | `DIR` | `ENA` |
+| Axis | `PLS` (Yellow) | `DIR` (Gray) | `ENA` (Blue) |
 | --- | ---: | ---: | ---: |
 | 0 | D2 | D3 | D4 |
-| 1 | D5 | D6 | D7 |
-| 2 | D10 | D11 | D12 |
+| 1 | D7 | D8 | D9 |
+| 2 | D11 | D12 | D13 |
 
-With white `COM` connected to Arduino `5V`, the Arduino output pins sink current
-through the driver's opto-isolated inputs. The sketch is configured for this:
-`ENA` is active-low (`ENA_ACTIVE_LOW = true`). If you wire `COM` differently,
-update that constant in the sketch.
+With Brown `COM` connected to Arduino `5V`, the Arduino output pins sink
+current through the driver's opto-isolated inputs. The sketch uses
+`ENA_ACTIVE_LOW = true`.
 
-Keep the grounds common: Arduino `GND`, each yellow `GND` wire, and the motor
-power supply negative/black side should be connected together. Do not power the
-motors from the Arduino.
+### Serial open resets the Uno (by design for this stack)
+
+Opening `/dev/arduino-stewart` (`ttyACM*`) **resets the Uno R3** on the Jetson:
+CDC-ACM pulses DTR → RESET. That clears firmware `calibrated` / enable.
+We are **not** disabling autoreset in hardware.
+
+**Workflow:** after every serial open that needs motion, re-send `calibrate`
+with the cranks still in the physical reference pose (straight up), then
+`enable`. Roller ball: always use `--calibrate-on-start`.
+
+UIM344 / UIM5756PM require step pulse width **> 4 µs** (manual). The sketch
+sets AccelStepper `setMinPulseWidth(20)`. These motors are configured for
+**~32000 pulses / crank revolution** (do not retune MCS on the motor to match
+firmware — keep `STEPS_PER_CRANK_REV` aligned with the motors).
+
+Keep grounds common: Arduino `GND`, each signal-black `GND`, and the motor
+power supply negative. Do not power the motors from the Arduino.
 
 ## Configure Before Use
 
 Edit these constants near the top of `uim5756pm_stewart.ino`:
 
-- `STEPS_PER_CRANK_REV`: motor pulses per crank revolution.
+- `STEPS_PER_CRANK_REV`: motor pulses per crank revolution (6400 at MCS=32).
 - Platform geometry (`TABLE_ROD_RADIUS_MM`, `CRANK_RADIUS_MM`, `ARM_LENGTH_MM`, …).
 - `CALIBRATE_CRANK_DEG` / `CALIBRATE_HEAVE_MM` (must stay consistent with geometry).
 - `MAX_ROLL_DEG`, `MAX_PITCH_DEG`, and heave limits.

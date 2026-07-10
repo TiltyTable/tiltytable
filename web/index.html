@@ -14,7 +14,7 @@
     <div>
       <p class="eyebrow">Azure Kinect + PCA9685</p>
       <h1>TiltyTable Command Center</h1>
-      <p class="lede">Watch the color feed and depth map, drag boxes on the depth map, and tune target depth for channels 0-3.</p>
+      <p class="lede">Watch the color and IR feeds, drag boxes on the depth map, and tune target depth for channels 0-3.</p>
     </div>
     <div class="status-card">
       <span class="status-dot" id="cameraDot"></span>
@@ -27,70 +27,15 @@
 
   <main class="layout">
     <section class="feeds">
-      <div class="feed-col">
-        <article class="panel feed-panel">
-          <div class="panel-head">
-            <h2>Color Video</h2>
-            <span class="pill">live</span>
-          </div>
-          <div class="color-stage" id="colorStage">
-            <img class="feed-img" id="colorFeed" src="/stream/color.mjpg" alt="Azure Kinect color stream">
-            <canvas id="colorOverlay" aria-hidden="true"></canvas>
-          </div>
-        </article>
-
-        <article class="panel ball-panel" id="ballSection" hidden>
-          <div class="panel-head">
-            <h2>Ball Position</h2>
-            <span class="pill" id="ballPill">searching</span>
-          </div>
-          <dl class="readout ball-readout">
-            <div><dt>X</dt><dd id="ballX">--</dd></div>
-            <div><dt>Y</dt><dd id="ballY">--</dd></div>
-            <div><dt>Z (depth)</dt><dd id="ballZ">--</dd></div>
-            <div><dt>Radius</dt><dd id="ballR">--</dd></div>
-          </dl>
-        </article>
-
-        <article class="panel calib-panel" id="calibSection" hidden>
-          <div class="panel-head">
-            <h2>Ball HSV Calibration</h2>
-            <button class="action calib-save" id="saveCalib" type="button">Save</button>
-          </div>
-          <div class="calib-stage" id="calibStage">
-            <img id="calibFeed" alt="Calibration stream">
-            <canvas id="calibCanvas"></canvas>
-          </div>
-          <p class="hint">Drag on the color pane (left half) to auto-sample the ball&rsquo;s HSV range.</p>
-          <div class="calib-sliders">
-            <div class="slider-row">
-              <div class="slider-label">H low <span id="lblHlo">100</span></div>
-              <input type="range" id="sHlo" min="0" max="179" value="100">
-            </div>
-            <div class="slider-row">
-              <div class="slider-label">H high <span id="lblHhi">130</span></div>
-              <input type="range" id="sHhi" min="0" max="179" value="130">
-            </div>
-            <div class="slider-row">
-              <div class="slider-label">S low <span id="lblSlo">60</span></div>
-              <input type="range" id="sSlo" min="0" max="255" value="60">
-            </div>
-            <div class="slider-row">
-              <div class="slider-label">S high <span id="lblShi">255</span></div>
-              <input type="range" id="sShi" min="0" max="255" value="255">
-            </div>
-            <div class="slider-row">
-              <div class="slider-label">V low <span id="lblVlo">30</span></div>
-              <input type="range" id="sVlo" min="0" max="255" value="30">
-            </div>
-            <div class="slider-row">
-              <div class="slider-label">V high <span id="lblVhi">255</span></div>
-              <input type="range" id="sVhi" min="0" max="255" value="255">
-            </div>
-          </div>
-          <div class="calib-status" id="calibStatus"></div>
-        </article>
-      </div>
+      <article class="panel feed-panel">
+        <div class="panel-head">
+          <h2>Color Video</h2>
+          <span class="pill">live</span>
+        </div>
+        <div class="color-stage" id="colorStage">
+          <img class="feed-img" id="colorFeed" src="/stream/color.mjpg" alt="Azure Kinect color stream">
+        </div>
+      </article>
 
       <article class="panel feed-panel depth-panel">
         <div class="panel-head">
@@ -103,6 +48,49 @@
         </div>
         <p class="hint" id="clickHint">Selected channel: <strong>0</strong>. Drag on the depth map to set its depth box.</p>
       </article>
+
+      <div class="ball-pair" id="ballPair" hidden>
+        <article class="panel ball-panel" id="irSection">
+          <div class="panel-head">
+            <h2>Active Brightness</h2>
+            <span class="pill" id="ballPill">searching</span>
+          </div>
+          <div class="ir-stage" id="irStage">
+            <img class="feed-img" id="irFeed" src="/stream/ir.mjpg" alt="Azure Kinect IR stream">
+            <canvas id="irOverlay" aria-hidden="true"></canvas>
+          </div>
+          <dl class="readout ball-readout">
+            <div><dt>X</dt><dd id="ballX">--</dd></div>
+            <div><dt>Y</dt><dd id="ballY">--</dd></div>
+            <div><dt>Z (depth)</dt><dd id="ballZ">--</dd></div>
+            <div><dt>Radius</dt><dd id="ballR">--</dd></div>
+          </dl>
+          <div class="ir-controls">
+            <div class="slider-row">
+              <div class="slider-label">Brightness <span id="lblIrBrightness">1000</span></div>
+              <input type="range" id="irBrightnessSlider" min="100" max="5000" step="100" value="1000">
+            </div>
+          </div>
+        </article>
+
+        <article class="panel feed-panel" id="trackerSection">
+          <div class="panel-head">
+            <h2>Tracker View</h2>
+            <span class="pill">detection pipeline</span>
+          </div>
+          <div class="ir-stage">
+            <img class="feed-img" id="trackerFeed" src="/stream/tracker.mjpg" alt="Tracker debug stream">
+          </div>
+          <p class="hint">
+            <span style="color:#3cc850">&#9644;</span> accepted &nbsp;
+            <span style="color:#c8c830">&#9644;</span> wrong size &nbsp;
+            <span style="color:#ff6020">&#9644;</span> no depth &nbsp;
+            <span style="color:#3050c8">&#9644;</span> not circular &nbsp;
+            <span style="color:#c800c8">&#9644;</span> not filled &nbsp;
+            <span style="color:#808080">&#9644;</span> table edge
+          </p>
+        </article>
+      </div>
     </section>
 
     <div class="right-col">

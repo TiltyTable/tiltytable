@@ -12,7 +12,6 @@ import os
 import select
 import struct
 import sys
-import termios
 import time
 from pathlib import Path
 
@@ -59,13 +58,7 @@ EVENT_TYPES = {
 # Native layout handles 64-bit Jetson kernels and other Linux ABIs correctly.
 INPUT_EVENT = struct.Struct("llHHI")
 
-BAUD_RATES = {
-    9600: termios.B9600,
-    19200: termios.B19200,
-    38400: termios.B38400,
-    57600: termios.B57600,
-    115200: termios.B115200,
-}
+BAUD_RATES = (9600, 19200, 38400, 57600, 115200)
 
 
 class StewartController:
@@ -84,6 +77,7 @@ class StewartController:
         self.dry_run = dry_run
         self.response_wait_s = response_wait_s
         self.verbose = verbose
+        self.ser = None
         self.fd: int | None = None
 
     def open(self) -> None:
@@ -93,30 +87,58 @@ class StewartController:
         if not self.port:
             return
 
-        self.fd = os.open(self.port, os.O_RDWR | os.O_NOCTTY | os.O_SYNC)
-        configure_serial(self.fd, self.baud)
-        startup = read_available(self.fd, 1.0).strip()
+        # Import here so --list / HID-only use still works without cwd issues.
+        # Under `sudo python3` the system interpreter often lacks pyserial —
+        # use: sudo /path/to/.venv/bin/python3 capture_usb_mouse.py ...
+        try:
+            from stewart_serial import open_stewart_serial
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "pyserial not found in this Python. "
+                "Don't use bare `sudo python3` (system Python). "
+                "Run: sudo ~/tiltytable/.venv/bin/python3 capture_usb_mouse.py ..."
+            ) from exc
+
+        self.ser = open_stewart_serial(self.port, self.baud, timeout=self.response_wait_s)
+        self.fd = self.ser.fileno()
+        from stewart_serial import wait_if_reset
+
+        # ACM open almost always resets the Uno — always allow boot time.
+        reset = wait_if_reset(self.ser, wait_s=2.2)
+        if not reset:
+            # Boot banner missed (already drained) — still give the board time.
+            time.sleep(2.2)
+        if self.verbose:
+            print("arduino: serial open complete (Uno may have reset; will recalibrate if requested)")
+        startup = read_available(self.fd, 0.2).strip()
         if startup and self.verbose:
             print_prefixed("arduino: ", startup)
 
     def close(self) -> None:
-        if self.fd is not None:
-            os.close(self.fd)
+        if self.ser is not None:
+            try:
+                self.ser.close()
+            except Exception:
+                pass
+            self.ser = None
             self.fd = None
 
     def can_send(self) -> bool:
-        return self.dry_run or self.fd is not None
+        return self.dry_run or self.ser is not None
 
-    def send(self, command: str) -> str:
+    def send(self, command: str, response_wait_s: float | None = None) -> str:
         line = command.rstrip() + "\n"
         if self.dry_run or not self.port:
             print(f"arduino <= {line.strip()}")
             return ""
-        if self.fd is None:
+        if self.ser is None:
             raise RuntimeError("serial port is not open")
 
-        os.write(self.fd, line.encode("ascii"))
-        response = read_available(self.fd, self.response_wait_s).strip()
+        wait = self.response_wait_s if response_wait_s is None else response_wait_s
+        self.ser.reset_input_buffer()
+        self.ser.write(line.encode("ascii"))
+        self.ser.flush()
+        response = read_available(self.fd, wait).strip()
         if response and self.verbose:
             print_prefixed("arduino: ", response)
         if "ERR" in response:
@@ -129,42 +151,53 @@ class StewartController:
         if self.dry_run or not self.port:
             print(f"arduino <= {line.strip()}")
             return
-        if self.fd is None:
+        if self.ser is None:
             raise RuntimeError("serial port is not open")
-        os.write(self.fd, line.encode("ascii"))
+        self.ser.write(line.encode("ascii"))
+        self.ser.flush()
 
     def enable(self) -> None:
-        self.send("enable")
+        self.send("enable", response_wait_s=0.8)
 
     def disable(self) -> None:
-        self.send("disable")
+        self.send("disable", response_wait_s=0.5)
 
     def zero(self) -> None:
         # Alias for firmware `calibrate` (cranks straight up = max heave).
-        self.send("calibrate")
+        reply = self.send("calibrate", response_wait_s=1.0)
+        if not self.dry_run and "OK calibrate" not in reply and "calibrated 1" not in reply:
+            # Empty reply usually means we talked during ACM reboot — retry once.
+            time.sleep(0.5)
+            reply = self.send("calibrate", response_wait_s=1.0)
+        if not self.dry_run and "OK calibrate" not in reply:
+            status = self.send("status", response_wait_s=0.8)
+            if "calibrated 1" not in status:
+                raise RuntimeError(
+                    "calibrate did not stick after serial open/reset. "
+                    "Point cranks straight up, then retry. "
+                    f"Last reply: {reply!r} status: {status!r}"
+                )
 
     def calibrate(self) -> None:
-        self.send("calibrate")
+        self.zero()
 
     def pose(self, roll_deg: float, pitch_deg: float) -> None:
-        self.send(f"pose {roll_deg:.3f} {pitch_deg:.3f} {self.heave_mm:.3f}")
+        self.send(
+            f"pose {roll_deg:.3f} {pitch_deg:.3f} {self.heave_mm:.3f}",
+            response_wait_s=0.8,
+        )
 
     def velocity(self, roll_deg_s: float, pitch_deg_s: float, heave_mm_s: float = 0.0) -> None:
         self.send(f"vel {roll_deg_s:.3f} {pitch_deg_s:.3f} {heave_mm_s:.3f}")
 
-
-def configure_serial(fd: int, baud: int) -> None:
-    attrs = termios.tcgetattr(fd)
-    attrs[0] = 0
-    attrs[1] = 0
-    attrs[2] = termios.CLOCAL | termios.CREAD | termios.CS8
-    attrs[3] = 0
-    attrs[4] = BAUD_RATES[baud]
-    attrs[5] = BAUD_RATES[baud]
-    attrs[6][termios.VMIN] = 0
-    attrs[6][termios.VTIME] = 5
-    termios.tcsetattr(fd, termios.TCSANOW, attrs)
-    termios.tcflush(fd, termios.TCIOFLUSH)
+    def require_calibrated(self) -> None:
+        status = self.send("status", response_wait_s=0.8)
+        if "calibrated 1" not in status:
+            raise RuntimeError(
+                "Stewart board is not calibrated after open. "
+                "ACM serial open resets the Uno — calibrate must succeed first. "
+                f"status: {status!r}"
+            )
 
 
 def read_available(fd: int, seconds: float) -> str:
@@ -302,13 +335,21 @@ def read_events(device_path: str, args: argparse.Namespace) -> None:
 
     try:
         controller.open()
+        # ACM open resets the Uno → always recalibrate before enable/pose/vel
+        # when driving motors (cranks must already be straight up).
+        need_motion = bool(args.port) and (args.enable or args.center or args.zero_on_start)
+        if args.zero_on_start or (args.enable and not args.dry_run):
+            print("arduino: calibrating (cranks must be straight up) …")
+            controller.zero()
+            controller.require_calibrated()
         if args.enable:
             controller.enable()
-        if args.zero_on_start:
-            controller.zero()
         if args.center:
             controller.pose(args.initial_roll, args.initial_pitch)
             last_velocity_sent = time.monotonic()
+        if need_motion and not args.dry_run:
+            controller.require_calibrated()
+            print("arduino: ready for roller-ball control\n")
 
         serial_fd = controller.fd
         while True:
@@ -470,9 +511,10 @@ def main() -> int:
     parser.add_argument(
         "--zero-on-start",
         "--calibrate-on-start",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=True,
         dest="zero_on_start",
-        help="Send 'calibrate' before starting mouse control (cranks must already be straight up)",
+        help="Send 'calibrate' after open (default: on). Required because ACM open resets the Uno. Cranks must already be straight up. Use --no-calibrate-on-start only for dry HID tests.",
     )
     parser.add_argument("--enable", action="store_true", help="Send 'enable' to the Stewart controller on startup")
     parser.add_argument(
@@ -484,7 +526,12 @@ def main() -> int:
     parser.add_argument("--center", action="store_true", help="Send the initial pose before reading mouse movement")
     parser.add_argument("--initial-roll", type=float, default=0.0, help="Starting roll target in degrees")
     parser.add_argument("--initial-pitch", type=float, default=0.0, help="Starting pitch target in degrees")
-    parser.add_argument("--heave", type=float, default=0.0, help="Fixed heave target in millimeters")
+    parser.add_argument(
+        "--heave",
+        type=float,
+        default=20.0,
+        help="Fixed heave target in millimeters (keep within legal band ~12–30 with BASE=119)",
+    )
     parser.add_argument("--velocity-scale", type=float, default=0.5, help="Degrees/second per mouse count")
     parser.add_argument("--velocity-rate-hz", type=float, default=20.0, help="Maximum velocity command rate")
     parser.add_argument("--stop-timeout-ms", type=float, default=50.0, help="Send zero velocity after this much input silence")

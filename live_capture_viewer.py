@@ -45,11 +45,16 @@ TOOLTIP_OFFSET = (12, 18)
 TOOLTIP_PADDING = (8, 6)
 TOOLTIP_FONT_SCALE = 0.55
 TOOLTIP_FONT_THICKNESS = 1
+DEFAULT_MAX_BRIGHTNESS = 1000
+CV2_ERROR = getattr(cv2, "error", RuntimeError)
 
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Azure Kinect viewer. Press Space to grab and display one fresh color/depth frame."
+        description=(
+            "Live Azure Kinect color/active-brightness/depth viewer. "
+            "Press Space to pause or resume."
+        )
     )
     parser.add_argument(
         "--device-id",
@@ -82,6 +87,12 @@ def parse_args():
         help="Depth display range in millimeters",
     )
     parser.add_argument(
+        "--max-brightness",
+        type=int,
+        default=DEFAULT_MAX_BRIGHTNESS,
+        help="Active-brightness value displayed as white",
+    )
+    parser.add_argument(
         "--resize-width",
         type=int,
         default=640,
@@ -101,6 +112,8 @@ def parse_args():
     args = parser.parse_args()
     if args.max_depth <= 0:
         parser.error("--max-depth must be greater than 0")
+    if args.max_brightness <= 0:
+        parser.error("--max-brightness must be greater than 0")
     return args
 
 
@@ -138,6 +151,15 @@ def depth_to_display(depth_mm, max_depth_mm):
     display = cv2.applyColorMap(scaled, colormap)
     display[invalid] = (0, 0, 0)
     return display
+
+
+def brightness_to_display(brightness, max_brightness):
+    """Convert the Kinect's 16-bit active-IR brightness image to grayscale BGR."""
+    values = brightness.astype(np.float32, copy=False)
+    invalid = ~np.isfinite(values) | (values < 0)
+    scaled = np.clip(values, 0, max_brightness) * (255.0 / max_brightness)
+    scaled[invalid] = 0
+    return cv2.cvtColor(scaled.astype(np.uint8), cv2.COLOR_GRAY2BGR)
 
 
 def resize_to_width(img, width, interpolation):
@@ -183,13 +205,27 @@ def labeled(img, label):
     return out
 
 
-def make_view(color_bgr, depth_mm, max_depth_mm, resize_width, aligned_depth):
+def make_view(
+    color_bgr,
+    brightness,
+    depth_mm,
+    max_brightness,
+    max_depth_mm,
+    resize_width,
+    aligned_depth,
+):
     color_display = resize_to_width(color_bgr, resize_width, cv2.INTER_AREA)
+    brightness_display = brightness_to_display(brightness, max_brightness)
+    brightness_display = resize_to_width(
+        brightness_display,
+        resize_width,
+        cv2.INTER_AREA,
+    )
     depth_display = depth_to_display(depth_mm, max_depth_mm)
     depth_display = resize_to_width(depth_display, resize_width, cv2.INTER_NEAREST)
     depth_display_height, depth_display_width = depth_display.shape[:2]
     depth_lookup = {
-        "x": color_display.shape[1],
+        "x": color_display.shape[1] + brightness_display.shape[1],
         "y": 0,
         "width": depth_display_width,
         "height": depth_display_height,
@@ -197,14 +233,20 @@ def make_view(color_bgr, depth_mm, max_depth_mm, resize_width, aligned_depth):
         "source_height": depth_mm.shape[0],
     }
 
-    height = max(color_display.shape[0], depth_display.shape[0])
+    height = max(
+        color_display.shape[0],
+        brightness_display.shape[0],
+        depth_display.shape[0],
+    )
     color_display = pad_to_height(color_display, height)
+    brightness_display = pad_to_height(brightness_display, height)
     depth_display = pad_to_height(depth_display, height)
 
     depth_label = "Depth aligned to color" if aligned_depth else "Depth"
     color_display = labeled(color_display, "Color")
+    brightness_display = labeled(brightness_display, "Active brightness")
     depth_display = labeled(depth_display, depth_label)
-    return np.hstack((color_display, depth_display)), depth_lookup
+    return np.hstack((color_display, brightness_display, depth_display)), depth_lookup
 
 
 def set_mouse_position(event, x, y, flags, hover):
@@ -313,11 +355,11 @@ def get_latest_capture(k4a, timeout_ms):
             return latest
 
 
-def make_placeholder(width=1280, height=480):
+def make_placeholder(width=1920, height=480):
     img = np.zeros((height, width, 3), dtype=np.uint8)
     cv2.putText(
         img,
-        "Press Space to capture a frame",
+        "Waiting for the first live frame",
         (32, height // 2 - 8),
         cv2.FONT_HERSHEY_SIMPLEX,
         1.0,
@@ -327,7 +369,7 @@ def make_placeholder(width=1280, height=480):
     )
     cv2.putText(
         img,
-        "q or Esc quits",
+        "Space pauses, q or Esc quits",
         (32, height // 2 + 36),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.8,
@@ -340,10 +382,28 @@ def make_placeholder(width=1280, height=480):
 
 def main():
     args = parse_args()
+    if not hasattr(cv2, "namedWindow"):
+        print(
+            "The installed cv2 module is incomplete or headless: namedWindow is "
+            "unavailable. Remove every OpenCV wheel and force-reinstall "
+            "opencv-python.",
+            file=sys.stderr,
+        )
+        return 1
+
     viewer_display = os.environ.get("DISPLAY", "")
+    if not viewer_display:
+        print(
+            "No viewer DISPLAY is set. Reconnect with SSH X11 forwarding "
+            "(for example, ssh -Y user@host) and verify that echo $DISPLAY "
+            "prints a forwarded display such as localhost:10.0.",
+            file=sys.stderr,
+        )
+        return 1
+
     print(
         f"Using depth engine display {DEPTH_ENGINE_DISPLAY} and "
-        f"viewer display {viewer_display or '<unset>'}."
+        f"viewer display {viewer_display}."
     )
     set_display(DEPTH_ENGINE_DISPLAY, "depth engine")
 
@@ -364,26 +424,60 @@ def main():
     )
 
     k4a = PyK4A(config=config, device_id=args.device_id)
-    window_name = "Azure Kinect Viewer - Space captures, q/Esc quits"
+    window_name = "Azure Kinect Live Viewer - Space pauses, q/Esc quits"
 
     print("Starting Azure Kinect viewer...")
     print(
-        "Controls: Space = capture and display latest color/depth, "
+        "Streaming color/active-brightness/depth live. Space = pause/resume, "
         "hover depth pane = show mm value, q or Esc = quit"
     )
 
+    window_created = False
     try:
         k4a.start()
         set_display(viewer_display, "viewer")
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        window_created = True
         hover = {"position": None}
         cv2.setMouseCallback(window_name, set_mouse_position, hover)
         base_view = make_placeholder()
         current_depth_mm = None
         depth_lookup = None
+        paused = False
         cv2.imshow(window_name, base_view)
 
         while True:
+            if not paused:
+                capture = None
+                set_display(DEPTH_ENGINE_DISPLAY, "depth engine", quiet=True)
+                try:
+                    capture = get_latest_capture(k4a, args.timeout_ms)
+                    color_bgr = color_to_bgr(capture.color)
+                    brightness = capture.ir
+                    depth_mm = get_depth(capture, args.aligned_depth)
+                except K4ATimeoutException:
+                    print("Timed out waiting for a camera frame.")
+                finally:
+                    set_display(viewer_display, "viewer", quiet=True)
+
+                if capture is not None:
+                    if color_bgr is None or brightness is None or depth_mm is None:
+                        print(
+                            "Captured frame did not include color, active brightness, "
+                            "and depth."
+                        )
+                    else:
+                        current_depth_mm = depth_mm.copy()
+                        base_view, depth_lookup = make_view(
+                            color_bgr,
+                            brightness,
+                            current_depth_mm,
+                            args.max_brightness,
+                            args.max_depth,
+                            args.resize_width,
+                            args.aligned_depth,
+                        )
+
             view = render_view(
                 base_view,
                 current_depth_mm,
@@ -392,45 +486,31 @@ def main():
             )
             cv2.imshow(window_name, view)
 
-            key = cv2.waitKey(50) & 0xFF
+            key = cv2.waitKey(1) & 0xFF
             if key in (27, ord("q")):
                 break
             if key == 32:
-                set_display(DEPTH_ENGINE_DISPLAY, "depth engine", quiet=True)
-                try:
-                    capture = get_latest_capture(k4a, args.timeout_ms)
-                    color_bgr = color_to_bgr(capture.color)
-                    depth_mm = get_depth(capture, args.aligned_depth)
-                except K4ATimeoutException:
-                    print("Timed out waiting for a camera frame.")
-                    continue
-                finally:
-                    set_display(viewer_display, "viewer", quiet=True)
-
-                if color_bgr is None or depth_mm is None:
-                    print("Captured frame did not include both color and depth.")
-                    continue
-
-                current_depth_mm = depth_mm.copy()
-                base_view, depth_lookup = make_view(
-                    color_bgr,
-                    current_depth_mm,
-                    args.max_depth,
-                    args.resize_width,
-                    args.aligned_depth,
-                )
-                print("Displayed latest color/depth frame.")
+                paused = not paused
+                print("Paused." if paused else "Resumed live view.")
 
             if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
                 break
 
     except KeyboardInterrupt:
         print("\nInterrupted.")
-    except (K4AException, RuntimeError, ValueError, cv2.error) as exc:
+    except (K4AException, RuntimeError, ValueError, CV2_ERROR) as exc:
         print(f"Error: {exc}", file=sys.stderr)
+        if isinstance(exc, CV2_ERROR) and "function is not implemented" in str(exc):
+            print(
+                "Install the GUI-enabled OpenCV package: "
+                "python3 -m pip uninstall -y opencv-python-headless && "
+                "python3 -m pip install 'opencv-python>=4.8'",
+                file=sys.stderr,
+            )
         return 1
     finally:
-        cv2.destroyAllWindows()
+        if window_created:
+            cv2.destroyAllWindows()
         if k4a.is_running:
             set_display(DEPTH_ENGINE_DISPLAY, "depth engine", quiet=True)
             k4a.stop()

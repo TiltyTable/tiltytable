@@ -1,4 +1,4 @@
 flask
-opencv-python-headless
+opencv-python>=4.8
 pyserial
 waitress

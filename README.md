@@ -34,8 +34,19 @@ arduino-cli upload -p /dev/arduino-stewart --fqbn arduino:avr:uno arduino/uim575
 # Calibrate: manually point ALL cranks STRAIGHT UP (max heave), then:
 python3 stewart_calibrate.py --port /dev/arduino-stewart
 
-# Roller-ball control (only after calibrate; motors will move)
-sudo python3 capture_usb_mouse.py --port /dev/arduino-stewart --enable --disable-on-exit --center --pitch-sign=1 --roll-sign=1
+# Roller-ball → Stewart tilt (primary workflow)
+# 1. Manually set ALL cranks STRAIGHT UP (max heave)
+# 2. Run (use sudo only if HID permission denied):
+.venv/bin/python3 roller_ball.py
+# or:  sudo .venv/bin/python3 roller_ball.py
+#
+# Optional once: install udev so HID works without sudo
+#   sudo cp udev/99-tiltytable-rollerball.rules /etc/udev/rules.d/
+#   sudo udevadm control --reload-rules && sudo udevadm trigger
+
+# Low-level HID / debug (legacy)
+# sudo .venv/bin/python3 capture_usb_mouse.py --list
+
 ```
 
 ### Module grid servos + LEDs (Uno R4 Minima)

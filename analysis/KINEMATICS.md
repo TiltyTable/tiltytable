@@ -23,7 +23,7 @@ The crank sweeps in the leg's radial–vertical plane.
 | Platform rod **radius** | **119 mm** | Firmware `TABLE_ROD_RADIUS_MM`. **= 238 mm diameter** — see discrepancy below. |
 | Crank radius | 30 mm | Dominant tilt driver. |
 | Arm (coupler) length | 110 mm | Center-to-center. |
-| Base motor radius | 149 mm | **Derived**, not free: `= R_platform + crank` so the arm is vertical at neutral. |
+| Base motor radius | **119 mm** (2026-07-09) | Motors moved inward. At max heave, crank+arm vertical ⇒ `BASE = R_platform`. Old value was 149 mm (`R_platform + crank`) for arm-vertical at *neutral*. |
 | Neutral platform height | 110 mm | **Derived**, not free: `= arm length` so the crank is horizontal at neutral. |
 | Rod-end (GE8C) limit | 14° | Firmware value; GE8C datasheet allows 15°. |
 | Neutral pose | crank horizontal, arm vertical | These two invariants couple the derived rows above. |

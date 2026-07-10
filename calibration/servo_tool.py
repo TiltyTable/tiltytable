@@ -34,8 +34,10 @@ EXAMPLES
 
 GLOBAL CALIBRATE MODE: for `calibrate` specifically, omitting BOTH
 --i2c-address and --config loads every board's servo_config_0x4X.json at
-once and lets you step through the ENTIRE table in one session, in ONE
-continuous Tab/Shift-Tab sequence: every channel that has a
+once and lets you calibrate the ENTIRE table in one session. Arrow keys
+select a mapped global grid cell and automatically switch to that cell's
+PCA9685 board; Tab/Shift-Tab remains a continuous sequence through every
+channel: every channel that has a
 servo_grid_config.json tag first, in row-major global (row,col) order
 (so you can just walk the physical grid), then any channel with NO grid
 tag yet (the flaky/unmapped ones) grouped by board at the end — so
@@ -693,11 +695,11 @@ def run_calibrate(link, cfg, config_path, led_refs=None, strip_led_counts=None):
 
 # ============= GLOBAL CALIBRATE (all 9 boards, whole 12x12) ==============
 #
-# Same controls and per-channel workflow as CalTUI, but Tab/Shift-Tab step
-# through EVERY physical channel across all 9 boards in one continuous
-# sequence (see build_global_sequence()) instead of just one board's 16.
-# Arrow keys still jog the current channel's position — no conflict, since
-# grid navigation happens on Tab/Shift-Tab, not the arrows.
+# Same per-channel workflow as CalTUI, but one global 12x12 selector.
+# Arrow keys choose the physical grid cell, which immediately selects its
+# board/channel. Tab/Shift-Tab can still walk EVERY channel in one continuous
+# sequence (see build_global_sequence()). Jogging is on A/D and Z/X (plus
+# comma/period fine adjustment), leaving arrows exclusively for cell selection.
 
 class GlobalCalTUI:
     def __init__(self, link, configs, config_paths, sequence, led_cfg, strip_led_counts):
@@ -707,7 +709,7 @@ class GlobalCalTUI:
         self.sequence = sequence               # [(addr, ch, row_or_None, col_or_None), ...]
         self.pos_i = 0
         self.dirty = {addr: False for addr in configs}
-        self.msg = "Hold arrow keys to jog. Tab/Shift-Tab steps across the WHOLE table."
+        self.msg = "Arrow keys select a cell; A/D and Z/X jog its servo."
         self._active_hw_addr = None
 
         self.led_cfg = led_cfg
@@ -815,6 +817,42 @@ class GlobalCalTUI:
 
     def jog(self, delta):
         self.move(self.count + delta)
+
+    def move_cell(self, dr, dc):
+        """Select a neighboring *physical* grid cell.
+
+        A grid cell is the source of truth here: use its entry in
+        servo_grid_config.json to resolve both PCA9685 address and channel,
+        then select that board before any subsequent jog. Cells intentionally
+        left unmapped (missing/failed servo) cannot be calibrated, so leave
+        the current channel selected and say why rather than accidentally
+        jogging the previous cell's servo under a new cursor.
+        """
+        _, _, row, col = self._cur()
+        # Tab can visit an unmapped channel at the end of the global sequence.
+        # In that case, resume arrow navigation from the nearest useful anchor.
+        if row is None:
+            row, col = 0, 0
+        target = (max(0, min(GRID_ROWS - 1, row + dr)),
+                  max(0, min(GRID_COLS - 1, col + dc)))
+        mapped = self._cell_lookup.get(target)
+        if mapped is None:
+            self.msg = (f"global ({target[0]},{target[1]}) has no servo-grid mapping — "
+                        "current servo remains selected")
+            return
+
+        addr, ch = mapped
+        if (addr, ch) == (self.addr, self.ch):
+            return
+        self.link.send(f"O {self.ch}")
+        # Keep pos_i in sync so saving/status/testing all operate on the
+        # newly selected cell rather than merely changing a visual cursor.
+        for i, item in enumerate(self.sequence):
+            if item[:2] == (addr, ch):
+                self.pos_i = i
+                break
+        self._ensure_board_and_led()
+        self.msg = f"selected global ({target[0]},{target[1]}) -> {addr} ch {ch} — jog to energize it"
 
     def step(self, delta):
         old_addr, old_ch = self.addr, self.ch
@@ -975,8 +1013,8 @@ class GlobalCalTUI:
             put(8 + r, 4, " ".join(row_chars), cur_a if any(x == "@" for x in row_chars) else 0)
 
         put(h - 5, 1, self.msg[: w - 2], warn_a if self.msg.startswith("!") else ok_a)
-        put(h - 3, 1, "Left/Right +/-10us  Up/Down +/-50us  , . +/-2us  r n e: tag  1 2 3: goto  f: toggle faulty", 0)
-        put(h - 2, 1, "Tab: step forward   Shift-Tab/u: step back   space: release   t: test   s: save all   q: quit", 0)
+        put(h - 3, 1, "arrows: select mapped cell  A/D +/-10us  Z/X +/-50us  , . +/-2us  r n e: tag  1 2 3: goto", 0)
+        put(h - 2, 1, "Tab: next channel   Shift-Tab/u: previous   space: release   t: test   f: faulty   s: save all   q: quit", 0)
         put(h - 1, 1, "LED: white = current   green = fully captured   red = flagged faulty   off = not calibrated / no LED mapped", 0)
         stdscr.refresh()
 
@@ -993,10 +1031,18 @@ def _global_cal_main(stdscr, link, configs, config_paths, sequence, led_cfg, str
     tui = GlobalCalTUI(link, configs, config_paths, sequence, led_cfg, strip_led_counts)
 
     actions = {
-        curses.KEY_RIGHT: lambda: tui.jog(+10),
-        curses.KEY_LEFT:  lambda: tui.jog(-10),
-        curses.KEY_UP:    lambda: tui.jog(+50),
-        curses.KEY_DOWN:  lambda: tui.jog(-50),
+        curses.KEY_RIGHT: lambda: tui.move_cell(0, +1),
+        curses.KEY_LEFT:  lambda: tui.move_cell(0, -1),
+        curses.KEY_UP:    lambda: tui.move_cell(-1, 0),
+        curses.KEY_DOWN:  lambda: tui.move_cell(+1, 0),
+        ord('a'): lambda: tui.jog(-10),
+        ord('A'): lambda: tui.jog(-10),
+        ord('d'): lambda: tui.jog(+10),
+        ord('D'): lambda: tui.jog(+10),
+        ord('z'): lambda: tui.jog(-50),
+        ord('Z'): lambda: tui.jog(-50),
+        ord('x'): lambda: tui.jog(+50),
+        ord('X'): lambda: tui.jog(+50),
         ord('.'): lambda: tui.jog(+2),
         ord(','): lambda: tui.jog(-2),
         ord('r'): lambda: tui.tag("recessed"),

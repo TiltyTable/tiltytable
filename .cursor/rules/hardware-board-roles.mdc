@@ -21,10 +21,21 @@ Do **not** guess which Arduino does what. Use this map:
 
 ## Stewart pinout (Uno R3) — source of truth
 
-| Axis | PLS | DIR | ENA |
+Amazon / UIM344 Fig 0-6 cable colors (these motors have **no purple**):
+
+| Wire | Function | Connect to |
+| --- | --- | --- |
+| Brown | COM | Arduino 5V |
+| Gray | DIR | DIR pin |
+| Yellow | PLS | PLS pin |
+| Blue | ENA | ENA pin |
+| Black (signal) | GND | Arduino GND |
+| White / Green | TX / RX | leave unconnected |
+
+| Axis | PLS (Yellow) | DIR (Gray) | ENA (Blue) |
 | --- | ---: | ---: | ---: |
 | 0 | D2 | D3 | D4 |
-| 1 | D5 | D6 | D7 |
-| 2 | D10 | D11 | D12 |
+| 1 | D7 | D8 | D9 |
+| 2 | D11 | D12 | D13 |
 
 If firmware, README, or udev names disagree with this table, **fix the docs/code** — do not "correct" the hardware to match old docs.

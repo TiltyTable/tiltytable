@@ -488,6 +488,11 @@ class ServoGridCalTUI:
         addr, ch = self._addr(), self.channel[self._addr()]
         row, col = self.guess_row, self.guess_col
         key = f"{row},{col}"
+        # A confirmed physical mapping supersedes an earlier "not on grid"
+        # decision.  Keep the status mutually consistent so this channel is
+        # not both selectable by cell and still reported as skipped later.
+        if ch in self.cfg["skipped"].get(addr, []):
+            self.cfg["skipped"][addr].remove(ch)
         old_faulty_key = self._faulty_key_for(addr, ch)
         if old_faulty_key:
             del self.cfg["faulty_cells"][old_faulty_key]

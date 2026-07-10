@@ -162,20 +162,18 @@ class BallBalancer:
                 except Exception:
                     continue
 
-                # Build color (BGR) and depth-aligned-to-color arrays.
-                color_bgra = cap.color
-                depth_mm   = cap.transformed_depth  # aligned to color camera
+                # IR and depth are natively co-registered on the depth sensor.
+                ir       = cap.ir
+                depth_mm = cap.depth
 
-                if color_bgra is None or depth_mm is None:
+                if ir is None or depth_mm is None:
                     continue
-
-                color_bgr = color_bgra[:, :, :3]
 
                 now = time.monotonic()
                 dt  = max(now - last_t, 1e-3)
                 last_t = now
 
-                pos, _det = self.tracker.update(color_bgr, depth_mm)
+                pos, _det = self.tracker.update(ir, depth_mm)
 
                 if pos is None:
                     # No ball detected.
@@ -236,17 +234,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
                     help="Arduino serial port")
     ap.add_argument("--device-id", type=int, default=0,
                     help="Kinect device index")
-    ap.add_argument("--color-resolution", default="720p",
-                    choices=["720p", "1080p", "1440p", "1536p", "2160p", "3072p"])
     ap.add_argument("--depth-mode", default="nfov_unbinned",
                     choices=["nfov_unbinned", "nfov_2x2binned", "wfov_unbinned",
                              "wfov_2x2binned", "passive_ir"])
     ap.add_argument("--fps", default="30", choices=["5", "15", "30"])
-    ap.add_argument("--calibration", default="ball_hsv_calibration.json",
-                    help="HSV calibration JSON from ball_calibrate.py")
-    ap.add_argument("--ball-radius-min", type=float, default=22.5, metavar="MM")
-    ap.add_argument("--ball-radius-max", type=float, default=27.5, metavar="MM")
-
+    ap.add_argument("--ball-radius-min", type=float, default=20.0, metavar="MM")
+    ap.add_argument("--ball-radius-max", type=float, default=40.0, metavar="MM")
+    ap.add_argument("--ir-thresh", type=float, default=0.5, metavar="FRAC",
+                    help="Dark if below FRAC × local background (0–1)")
     # Setpoint — camera-space mm of the physical table centre.
     # Run with a stationary ball at the desired centre, read its position,
     # then pass those values here.
@@ -294,22 +289,12 @@ def main() -> None:
     # ── Camera ────────────────────────────────────────────────────────────────
     from pyk4a import (
         CameraFPS,
-        ColorResolution,
         Config,
         DepthMode,
-        ImageFormat,
         PyK4A,
         connected_device_count,
     )
 
-    _COLOR_RES = {
-        "720p":  ColorResolution.RES_720P,
-        "1080p": ColorResolution.RES_1080P,
-        "1440p": ColorResolution.RES_1440P,
-        "1536p": ColorResolution.RES_1536P,
-        "2160p": ColorResolution.RES_2160P,
-        "3072p": ColorResolution.RES_3072P,
-    }
     _DEPTH_MODE = {
         "nfov_unbinned":    DepthMode.NFOV_UNBINNED,
         "nfov_2x2binned":   DepthMode.NFOV_2X2BINNED,
@@ -324,21 +309,18 @@ def main() -> None:
         raise SystemExit(f"No Kinect at index {args.device_id} ({n_devices} found).")
 
     config = Config(
-        color_resolution=_COLOR_RES[args.color_resolution],
-        color_format=ImageFormat.COLOR_BGRA32,
         depth_mode=_DEPTH_MODE[args.depth_mode],
         camera_fps=_FPS[args.fps],
-        synchronized_images_only=True,
     )
     k4a = PyK4A(config=config, device_id=args.device_id)
     k4a.start()
 
     # ── Tracker ───────────────────────────────────────────────────────────────
-    tracker = BallTracker.from_calibration_file(
-        args.calibration,
-        k4a_calibration=k4a.calibration,
+    tracker = BallTracker.from_k4a_calibration(
+        k4a.calibration,
         ball_radius_min_mm=args.ball_radius_min,
         ball_radius_max_mm=args.ball_radius_max,
+        ir_thresh_fraction=args.ir_thresh,
     )
 
     # ── Controllers ───────────────────────────────────────────────────────────

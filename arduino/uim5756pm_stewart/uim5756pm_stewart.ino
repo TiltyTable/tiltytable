@@ -37,53 +37,64 @@
 const uint8_t AXES = 3;
 
 // ------------------------- Wiring -------------------------
-// Per-axis pin groups on the Uno R3:
+// Per-axis pin groups on the Uno R3 (2026-07-09 harness):
 //   Axis 0: PLS=D2  DIR=D3  ENA=D4
-//   Axis 1: PLS=D5  DIR=D6  ENA=D7
-//   Axis 2: PLS=D10 DIR=D11 ENA=D12
-const uint8_t PLS_PIN[AXES] = {2, 5, 10};
-const uint8_t DIR_PIN[AXES] = {3, 6, 11};
-const uint8_t ENA_PIN[AXES] = {4, 7, 12};
+//   Axis 1: PLS=D7  DIR=D8  ENA=D9
+//   Axis 2: PLS=D11 DIR=D12 ENA=D13
+// Amazon / UIM344 Fig 0-6 cable colors (no purple on these motors):
+//   Brown=COM→5V, Gray=DIR, Yellow=PLS, Blue=ENA, Black(signal)=GND
+//   White=TX / Green=RX leave unconnected (config only).
+const uint8_t PLS_PIN[AXES] = {2, 7, 11};
+const uint8_t DIR_PIN[AXES] = {3, 8, 12};
+const uint8_t ENA_PIN[AXES] = {4, 9, 13};
 const bool ENA_ACTIVE_LOW = true;
 
 const bool DIR_INVERT[AXES] = {false, false, false};
 
 const bool USE_LIMITS = false;
-const uint8_t LIMIT_PIN[AXES] = {8, 9, 13};  // unused while USE_LIMITS is false
+const uint8_t LIMIT_PIN[AXES] = {5, 6, 10};  // unused while USE_LIMITS is false
 const bool LIMIT_ACTIVE_LOW = true;
 
 // --------------------- Motion calibration ---------------------
+// Pulses per crank revolution as configured on these motors (do not change
+// motor MCS to match firmware — match firmware to the motors).
+// Empirically: 1600 pulses ≈ 15–18° ⇒ ~32000 pulses/rev (e.g. MCS≈160).
 const float STEPS_PER_CRANK_REV[AXES] = {32000.0, 32000.0, 32000.0};
 
 // Maximum crank speed in deg/s and acceleration in deg/s².
-// At 180 deg/s² the platform takes ~0.5 s to reach full speed.
-const float MAX_CRANK_SPEED_DEG_S = 90.0;
-const float MAX_CRANK_ACCEL_DEG_S2 = 180.0;
+// Quieter profile (was 90 / 180): lower peak + softer ramp reduces
+// gearbox/table noise with high microstepping (~32000 pulses/rev).
+const float MAX_CRANK_SPEED_DEG_S = 25.0;
+const float MAX_CRANK_ACCEL_DEG_S2 = 40.0;
 
 // ----------------------- Platform geometry -----------------------
+// 2026-07-09: motors moved inward. At max heave the cranks AND arms are
+// vertical ⇒ motor shaft radius == platform rod radius (119 mm).
 const float TABLE_ROD_RADIUS_MM = 119.0;
 const float CRANK_RADIUS_MM = 30.0;
 const float ARM_LENGTH_MM = 110.0;
-const float BASE_MOTOR_RADIUS_MM = 149.0;
+const float BASE_MOTOR_RADIUS_MM = 119.0;
 const float NEUTRAL_TOP_Z_MM = 110.0;
 const float LEG_AZIMUTH_DEG[AXES] = {0.0, 120.0, 240.0};
 const float ROD_END_LIMIT_DEG = 14.0;
 const float SUPPORT_STROKE_MM = 20.66;
-// Neutral operating pose: crank horizontal (sin=0), arm vertical.
+// Angle reference for step counters: 180° = crank horizontal-inward.
+// With BASE==TABLE this is no longer a closed "arm vertical" pose; it is
+// only the zero for crankDeltaToSteps / status axisN_deg reporting.
 const float NEUTRAL_CRANK_DEG = 180.0;
 // Calibration pose: crank STRAIGHT UP (sin=+1) = max heave. Human places
 // all three cranks here with motors free, then sends `calibrate`.
 const float CALIBRATE_CRANK_DEG = 90.0;
-// Platform heave (roll=0,pitch=0) when every crank is at CALIBRATE_CRANK_DEG.
-// Closed-form with arm vertical-plane reach:
-//   radial gap = BASE_MOTOR_RADIUS - TABLE_ROD_RADIUS = CRANK_RADIUS
-//   H = CRANK_RADIUS*sin(90) - NEUTRAL_TOP_Z + sqrt(ARM^2 - radial_gap^2)
-//     = 30 - 110 + sqrt(110^2 - 30^2) ≈ 25.831
-const float CALIBRATE_HEAVE_MM = 25.830;
+// Max-heave closed form with BASE==TABLE (radial gap 0, arm vertical):
+//   platform_z = CRANK_RADIUS + ARM_LENGTH = 30 + 110 = 140
+//   heave = platform_z - NEUTRAL_TOP_Z = 140 - 110 = 30
+const float CALIBRATE_HEAVE_MM = 30.0;
 
 const float MAX_ROLL_DEG = 5.0;
 const float MAX_PITCH_DEG = 5.0;
-const float MIN_HEAVE_MM = -8.0;
+// With BASE==TABLE, rod-end misalignment exceeds 14° below ~12 mm heave
+// (level pose). Keep a small margin above that floor.
+const float MIN_HEAVE_MM = 12.0;
 // Allow commanding up to the calibrated max-heave pose.
 const float MAX_HEAVE_MM = CALIBRATE_HEAVE_MM;
 const unsigned long VELOCITY_UPDATE_MS = 25;
@@ -577,6 +588,10 @@ void setup() {
     // Active-low wiring: COM→5V, Arduino pins sink current.
     // Invert STEP so idle is HIGH (inactive). DIR_INVERT[i] flips direction per axis.
     stepper[i].setPinsInverted(DIR_INVERT[i], true, false);
+    // UIM344 / UIM5756PM opto inputs need pulse width > 4 µs (manual).
+    // AccelStepper default is 1 µs — too short; driver stays enabled but never steps.
+    // Use 20 µs for margin (opto + cable).
+    stepper[i].setMinPulseWidth(20);
     stepper[i].setMaxSpeed(fullSpeedStepsPerSec(i));
     stepper[i].setAcceleration(fullAccelStepsPerSec2(i));
 
