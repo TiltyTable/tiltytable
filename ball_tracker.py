@@ -21,10 +21,15 @@ Usage:
     # detection: BallDetection with raw pixel info, or None
 """
 
+import threading
+import time
+
 import cv2
 import numpy as np
 from dataclasses import dataclass
 from typing import Optional
+
+import camera_geometry
 
 # ---------------------------------------------------------------------------
 # IR normalisation parameters
@@ -48,7 +53,7 @@ _BG_CLOSE_KERNEL_PX = 75
 # Table-mask parameters.  The tabletop is the large bright region (IR-lit
 # tiles); dark-blob search is confined to its convex hull so the floor and
 # surroundings can never produce candidates.
-_TABLE_BRIGHT_FRACTION   = 0.5   # bright-tile threshold for the table mask
+_TABLE_BRIGHT_FRACTION   = 0.4   # bright-tile threshold for the table mask
 _TABLE_CLOSE_KERNEL_PX   = 9     # merges tiles across grid gaps before CC labelling
 _MIN_TABLE_AREA_FRACTION = 0.05  # of valid FOV; below this, fall back to full FOV
 
@@ -81,11 +86,15 @@ _IR_BLUR_SIGMA = 2.0
 # position are rejected as false positives.
 _GATE_DISTANCE_MM = 150.0
 
-# EKF assumes 30 fps; updated via reset_dt() if the pipeline knows better.
-_DEFAULT_DT = 1.0 / 30.0
+# EKF predict thread rate.  Measurements still arrive at camera frame rate.
+_PREDICT_HZ = 60.0
 
 # After this many consecutive frames without a detection the filter is reset.
 _MAX_MISS_FRAMES = 15
+
+# After losing the ball, only re-acquire within _GATE_DISTANCE_MM of the last
+# known position for this many frames before opening up to the full FOV.
+_REACQUIRE_FRAMES = 30
 
 
 @dataclass
@@ -131,57 +140,56 @@ class _EKF:
         self.R = R.astype(np.float64)
         self.x = np.zeros((6, 1), dtype=np.float64)
         self.P = np.eye(6, dtype=np.float64) * 500.0
+        self._lock = threading.Lock()
 
     def init(self, X: float, Y: float, Z: float) -> None:
-        self.x[:] = 0.0
-        self.x[0, 0] = X
-        self.x[1, 0] = Y
-        self.x[2, 0] = Z
-        self.P = np.eye(6, dtype=np.float64) * 500.0
+        with self._lock:
+            self.x[:] = 0.0
+            self.x[0, 0] = X
+            self.x[1, 0] = Y
+            self.x[2, 0] = Z
+            self.P = np.eye(6, dtype=np.float64) * 500.0
 
-    def predict(self) -> np.ndarray:
-        """Advance state one step; returns the predicted state vector."""
-        self.x = self.F @ self.x
-        self.P = self.F @ self.P @ self.F.T + self.Q
-        return self.x
+    def predict(self) -> None:
+        """Advance state one step (called by the predict thread)."""
+        with self._lock:
+            self.x = self.F @ self.x
+            self.P = self.F @ self.P @ self.F.T + self.Q
 
     def correct(self, u_px: float, v_px: float, z_mm: float) -> None:
         """Incorporate a pixel + depth measurement."""
-        X, Y, Z = float(self.x[0]), float(self.x[1]), float(self.x[2])
-        if abs(Z) < 1.0:
-            return
+        with self._lock:
+            X, Y, Z = float(self.x[0]), float(self.x[1]), float(self.x[2])
+            if abs(Z) < 1.0:
+                return
 
-        # Predicted measurement h(x̂⁻)
-        h = np.array([
-            [self.fx * X / Z + self.ppx],
-            [self.fy * Y / Z + self.ppy],
-            [Z],
-        ], dtype=np.float64)
+            h = np.array([
+                [self.fx * X / Z + self.ppx],
+                [self.fy * Y / Z + self.ppy],
+                [Z],
+            ], dtype=np.float64)
 
-        # Analytical Jacobian  H = ∂h/∂x  evaluated at current estimate
-        H = np.zeros((3, 6), dtype=np.float64)
-        H[0, 0] =  self.fx / Z
-        H[0, 2] = -self.fx * X / (Z * Z)
-        H[1, 1] =  self.fy / Z
-        H[1, 2] = -self.fy * Y / (Z * Z)
-        H[2, 2] =  1.0
+            H = np.zeros((3, 6), dtype=np.float64)
+            H[0, 0] =  self.fx / Z
+            H[0, 2] = -self.fx * X / (Z * Z)
+            H[1, 1] =  self.fy / Z
+            H[1, 2] = -self.fy * Y / (Z * Z)
+            H[2, 2] =  1.0
 
-        # Innovation
-        z = np.array([[u_px], [v_px], [z_mm]], dtype=np.float64)
-        y = z - h
+            z = np.array([[u_px], [v_px], [z_mm]], dtype=np.float64)
+            y = z - h
 
-        # Kalman gain
-        S = H @ self.P @ H.T + self.R
-        K = self.P @ H.T @ np.linalg.inv(S)
+            S = H @ self.P @ H.T + self.R
+            K = self.P @ H.T @ np.linalg.inv(S)
 
-        # State and covariance update  (Joseph form for numerical stability)
-        I_KH = np.eye(6) - K @ H
-        self.x = self.x + K @ y
-        self.P = I_KH @ self.P @ I_KH.T + K @ self.R @ K.T
+            I_KH = np.eye(6) - K @ H
+            self.x = self.x + K @ y
+            self.P = I_KH @ self.P @ I_KH.T + K @ self.R @ K.T
 
     @property
     def position(self) -> tuple[float, float, float]:
-        return (float(self.x[0]), float(self.x[1]), float(self.x[2]))
+        with self._lock:
+            return (float(self.x[0]), float(self.x[1]), float(self.x[2]))
 
 
 # ---------------------------------------------------------------------------
@@ -219,7 +227,6 @@ class BallTracker:
         ball_radius_min_mm: float = 20.0,
         ball_radius_max_mm: float = 40.0,
         ir_thresh_fraction: float = _IR_THRESH_FRACTION,
-        dt: float = _DEFAULT_DT,
     ):
         self.fx = fx
         self.fy = fy
@@ -228,11 +235,15 @@ class BallTracker:
         self.ball_radius_min_mm = ball_radius_min_mm
         self.ball_radius_max_mm = ball_radius_max_mm
         self.ir_thresh_fraction = ir_thresh_fraction
-        self.dt = dt
 
         self._tracking = False
         self._miss_count = 0
-        self._ekf = self._make_ekf(dt)
+        self._lost_pos: Optional[tuple[float, float]] = None  # XY at tracking loss
+        self._lost_frames = 0                                  # frames since loss
+        self._ekf = self._make_ekf(1.0 / _PREDICT_HZ)
+        self._stop_predict = threading.Event()
+        _pt = threading.Thread(target=self._predict_loop, daemon=True, name="ekf-predict")
+        _pt.start()
         # Rect kernels: box morphology runs in O(1) per pixel (van Herk),
         # and these two only bridge gaps / estimate background, so the
         # kernel shape is irrelevant.
@@ -283,12 +294,20 @@ class BallTracker:
             **kwargs,
         )
 
-    def reset_dt(self, dt: float) -> None:
-        """Call if the measured frame interval differs significantly from 1/30 s."""
-        self.dt = dt
-        self._ekf = self._make_ekf(dt)
-        self._tracking = False
-        self._miss_count = 0
+    def close(self) -> None:
+        """Stop the background prediction thread."""
+        self._stop_predict.set()
+
+    def _predict_loop(self) -> None:
+        dt = 1.0 / _PREDICT_HZ
+        while not self._stop_predict.is_set():
+            t0 = time.monotonic()
+            if self._tracking:
+                self._ekf.predict()
+            elapsed = time.monotonic() - t0
+            rem = dt - elapsed
+            if rem > 0:
+                time.sleep(rem)
 
     def update(
         self,
@@ -296,9 +315,9 @@ class BallTracker:
         depth_mm: np.ndarray,
     ) -> tuple[Optional[tuple[float, float, float]], Optional[BallDetection]]:
         """
-        Process one frame.  ir_uint16 and depth_mm must be the same spatial
-        resolution — both come from the depth sensor so they are natively
-        aligned (no aligned-depth transform needed).
+        Process one camera frame.  The EKF predict step runs independently at
+        _PREDICT_HZ in a background thread; this method only runs the
+        measurement correction when a detection is found.
 
         Returns
         -------
@@ -308,16 +327,26 @@ class BallTracker:
         detection = self._detect(ir_uint16, depth_mm)
 
         if not self._tracking:
+            self._lost_frames += 1
             if detection is not None:
-                self._ekf.init(detection.x_mm, detection.y_mm, detection.z_mm)
-                self._tracking = True
-                self._miss_count = 0
+                # Gate re-acquisition to last known position for _REACQUIRE_FRAMES
+                # so a false positive can't claim the track while the ball is
+                # temporarily hidden in the grid.
+                if self._lost_pos is not None and self._lost_frames <= _REACQUIRE_FRAMES:
+                    lx, ly = self._lost_pos
+                    dist = ((detection.x_mm - lx) ** 2 + (detection.y_mm - ly) ** 2) ** 0.5
+                    if dist > _GATE_DISTANCE_MM:
+                        detection = None
+                if detection is not None:
+                    self._ekf.init(detection.x_mm, detection.y_mm, detection.z_mm)
+                    self._tracking = True
+                    self._miss_count = 0
+                    self._lost_pos = None
+                    self._lost_frames = 0
         else:
-            predicted = self._ekf.predict()
-            px = float(predicted[0])
-            py = float(predicted[1])
-
+            # The predict thread has already advanced the filter; just correct.
             if detection is not None:
+                px, py, _ = self._ekf.position
                 dist = ((detection.x_mm - px) ** 2 + (detection.y_mm - py) ** 2) ** 0.5
                 if dist <= _GATE_DISTANCE_MM:
                     self._ekf.correct(detection.cx, detection.cy, detection.z_mm)
@@ -329,13 +358,27 @@ class BallTracker:
                 self._miss_count += 1
 
             if self._miss_count >= _MAX_MISS_FRAMES:
+                self._lost_pos = (self._ekf.position[0], self._ekf.position[1])
+                self._lost_frames = 0
                 self._tracking = False
                 self._miss_count = 0
 
         if not self._tracking:
             return None, None
 
-        return self._ekf.position, detection
+        pos = self._ekf.position
+        if detection is not None:
+            # Re-derive radius_px from EKF Z so the display circle is as smooth
+            # as the position rather than jittering with raw depth reads.
+            ekf_z = pos[2]
+            if ekf_z > 1.0:
+                smooth_r = detection.radius_mm * self.fx / ekf_z
+                detection = BallDetection(
+                    cx=detection.cx, cy=detection.cy, radius_px=smooth_r,
+                    x_mm=detection.x_mm, y_mm=detection.y_mm,
+                    z_mm=detection.z_mm, radius_mm=detection.radius_mm,
+                )
+        return pos, detection
 
     # ------------------------------------------------------------------
     # Detection (IR)
@@ -468,8 +511,9 @@ class BallTracker:
                 counts["depth"] += 1
                 cv2.circle(dbg, (icx, icy), ir_, _CLR_DEPTH, 1)
                 continue
-            x_mm = (cx - self.ppx) * z_mm / self.fx
-            y_mm = (cy - self.ppy) * z_mm / self.fy
+            x_mm, y_mm, _ = camera_geometry.unproject_pixel(
+                cx, cy, z_mm, self.fx, self.fy, self.ppx, self.ppy
+            )
 
             radius_mm = radius_px * z_mm / self.fx
             if not (self.ball_radius_min_mm <= radius_mm <= self.ball_radius_max_mm):
@@ -509,19 +553,10 @@ class BallTracker:
         cy: float,
         radius_px: float,
     ) -> Optional[float]:
-        r = max(1, int(radius_px * _DEPTH_SAMPLE_FRACTION))
-        h, w = depth_mm.shape[:2]
-        x0, x1 = max(0, int(cx) - r), min(w, int(cx) + r + 1)
-        y0, y1 = max(0, int(cy) - r), min(h, int(cy) + r + 1)
-        if x1 <= x0 or y1 <= y0:
-            return None
-
-        patch = depth_mm[y0:y1, x0:x1].astype(np.float32, copy=False)
-        valid = np.isfinite(patch) & (patch > 0)
-        if int(np.count_nonzero(valid)) < max(1, int(patch.size * _MIN_VALID_DEPTH_FRACTION)):
-            return None
-
-        return float(np.median(patch[valid]))
+        return camera_geometry.sample_depth_patch(
+            depth_mm, cx, cy, radius_px,
+            _DEPTH_SAMPLE_FRACTION, _MIN_VALID_DEPTH_FRACTION,
+        )
 
     def _sample_depth_ring(
         self,
@@ -533,41 +568,26 @@ class BallTracker:
         r_high_fraction: float,
     ) -> Optional[float]:
         """Median depth in an annular region [r_low, r_high] × radius_px."""
-        r_out = max(2, int(radius_px * r_high_fraction))
-        r_in  = max(1, int(radius_px * r_low_fraction))
-        h, w = depth_mm.shape[:2]
-        cx_i, cy_i = int(round(cx)), int(round(cy))
-        x0 = max(0, cx_i - r_out);  x1 = min(w, cx_i + r_out + 1)
-        y0 = max(0, cy_i - r_out);  y1 = min(h, cy_i + r_out + 1)
-        if x1 <= x0 or y1 <= y0:
-            return None
-
-        patch = depth_mm[y0:y1, x0:x1].astype(np.float32, copy=False)
-        ys = np.arange(y0, y1, dtype=np.float32) - cy
-        xs = np.arange(x0, x1, dtype=np.float32) - cx
-        XX, YY = np.meshgrid(xs, ys)
-        d2 = XX * XX + YY * YY
-        ring = (d2 >= r_in * r_in) & (d2 <= r_out * r_out)
-        valid = ring & np.isfinite(patch) & (patch > 0)
-        if int(np.count_nonzero(valid)) < max(1, int(np.count_nonzero(ring) * _MIN_VALID_DEPTH_FRACTION)):
-            return None
-
-        return float(np.median(patch[valid]))
+        return camera_geometry.sample_depth_ring(
+            depth_mm, cx, cy, radius_px,
+            r_low_fraction, r_high_fraction, _MIN_VALID_DEPTH_FRACTION,
+        )
 
     # ------------------------------------------------------------------
     # EKF factory
     # ------------------------------------------------------------------
 
     def _make_ekf(self, dt: float) -> _EKF:
-        # Process noise: position continuity tight, velocity can change fast.
+        # Scale Q so total noise added per second is constant across predict rates.
+        s = dt * 30.0  # relative to the original 30 Hz baseline
         Q = np.diag([
-            1.0,  1.0,  1.0,     # position (mm²)
-            50.0, 50.0, 50.0,    # velocity (mm²/s²)
+            1.0  * s, 1.0  * s, 1.0  * s,   # position (mm²/step)
+            50.0 * s, 50.0 * s, 50.0 * s,   # velocity (mm²/s²/step)
         ])
 
         # Measurement noise: [u_px, v_px, z_mm]
-        # Pixel centre uncertainty ~1–2 px; depth ~2–3 mm.
-        R = np.diag([2.0, 2.0, 9.0])
+        # Pixel uncertainty ~1–2 px; depth is noisier, especially on specular surfaces.
+        R = np.diag([2.0, 2.0, 25.0])
 
         return _EKF(
             fx=self.fx, fy=self.fy, ppx=self.ppx, ppy=self.ppy,

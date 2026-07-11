@@ -18,9 +18,9 @@
   --r:           14px;
   --r-sm:        9px;
   --r-xs:        6px;
-  --ui:          'DM Sans', sans-serif;
-  --display:     'DM Serif Display', Georgia, serif;
-  --mono:        'JetBrains Mono', 'Courier New', monospace;
+  --ui:          -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --display:     Georgia, 'Times New Roman', serif;
+  --mono:        ui-monospace, 'SF Mono', Consolas, 'Courier New', monospace;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -521,6 +521,95 @@ dd {
 /* light up when detected */
 .ball-panel:has(.pill.detected) .ball-readout dd {
   color: var(--accent);
+}
+
+/* ── Calibration panel ──────────────────────────────────────── */
+
+.calibration-panel {
+  grid-column: 1 / -1;
+}
+
+.calibration-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: 1rem;
+  padding: 0.9rem;
+}
+
+.calibration-side {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 0;
+}
+
+.calib-buttons {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.action.neutral {
+  background: transparent;
+  border: 1px solid var(--border-hi);
+  color: var(--text);
+}
+
+.action.neutral:hover { background: var(--accent-dim); color: var(--accent); }
+
+.action:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+.calib-residuals {
+  display: grid;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+
+.calib-residual-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface-hi);
+  font-family: var(--mono);
+  font-size: 0.62rem;
+  color: var(--text);
+}
+
+.calib-residual-row.bad {
+  color: var(--danger);
+  background: var(--danger-dim);
+}
+
+.calib-diagnostics {
+  font-family: var(--mono);
+  font-size: 0.58rem;
+  color: var(--text-muted);
+}
+
+.calib-diagnostics .diag-title {
+  margin-bottom: 0.3rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.calib-diagnostics .diag-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.15rem 0;
+}
+
+.calib-diagnostics .diag-row.current {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+@media (max-width: 760px) {
+  .calibration-body { grid-template-columns: 1fr; }
 }
 
 /* ── IR controls ────────────────────────────────────────────── */

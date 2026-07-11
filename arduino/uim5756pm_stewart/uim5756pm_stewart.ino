@@ -24,6 +24,7 @@
     jog <axis> <pulses>
     enable [axis]
     disable [axis]
+    hold                   — enable all drivers and hold current positions
     status
     help
 */
@@ -156,6 +157,15 @@ void setAxisEnable(uint8_t i, bool on) {
 
 void setEnable(bool on) {
   for (uint8_t i = 0; i < AXES; i++) setAxisEnable(i, on);
+}
+
+void holdCurrentPosition() {
+  stopVelocityMode();
+  for (uint8_t i = 0; i < AXES; i++) {
+    desiredTarget[i] = stepper[i].currentPosition();
+    stepper[i].moveTo(desiredTarget[i]);
+  }
+  setEnable(true);
 }
 
 bool limitHit(uint8_t i) {
@@ -431,6 +441,7 @@ void printHelp() {
   Serial.println(F("  steps <s0> <s1> <s2>"));
   Serial.println(F("  jog <axis> <pulses>"));
   Serial.println(F("  enable [axis] | disable [axis]"));
+  Serial.println(F("  hold   (enable all drivers, hold current positions)"));
   Serial.println(F("  status"));
   Serial.println(F("  help"));
 }
@@ -563,6 +574,13 @@ void handleCommand(String command) {
   else if (cmd == "jog"   || cmd == "j") parseJog(tokens, count);
   else if (cmd == "enable"  || cmd == "on")  parseEnableCommand(tokens, count, true);
   else if (cmd == "disable" || cmd == "off") parseEnableCommand(tokens, count, false);
+  else if (cmd == "hold" || cmd == "lock") {
+    if (count != 1) Serial.println(F("ERR hold takes no arguments"));
+    else {
+      holdCurrentPosition();
+      Serial.println(F("OK holding current positions"));
+    }
+  }
   else if (cmd == "status")              printStatus();
   else if (cmd == "help" || cmd == "?")  printHelp();
   else Serial.println(F("ERR unknown command"));

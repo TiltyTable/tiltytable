@@ -8,10 +8,10 @@ const startControl = document.querySelector('#startControl');
 const stopControl  = document.querySelector('#stopControl');
 const template     = document.querySelector('#servoTemplate');
 
-const ballPair           = document.querySelector('#ballPair');
 const irSection          = document.querySelector('#irSection');
 const trackerSection     = document.querySelector('#trackerSection');
 const irFeed             = document.querySelector('#irFeed');
+const trackerFeed        = document.querySelector('#trackerFeed');
 const irOverlay          = document.querySelector('#irOverlay');
 const irBrightnessSlider = document.querySelector('#irBrightnessSlider');
 const lblIrBrightness    = document.querySelector('#lblIrBrightness');
@@ -26,15 +26,52 @@ const depthStage   = document.querySelector('#depthStage');
 const depthImg     = document.querySelector('#depthFeed');
 const overlay      = document.querySelector('#depthOverlay');
 
-// IR brightness slider — debounced POST to avoid flooding the server.
-let irBrightnessDebounce = null;
+const ballWorld           = document.querySelector('#ballWorld');
+const calibCapture        = document.querySelector('#calibCapture');
+const calibAccept         = document.querySelector('#calibAccept');
+const calibRetry          = document.querySelector('#calibRetry');
+const calibStatus         = document.querySelector('#calibStatus');
+const calibStatusPill     = document.querySelector('#calibStatusPill');
+const calibResiduals      = document.querySelector('#calibResiduals');
+const calibDiagnostics    = document.querySelector('#calibDiagnostics');
+const markerThresholdSlider = document.querySelector('#markerThresholdSlider');
+const lblMarkerThreshold    = document.querySelector('#lblMarkerThreshold');
+
+let lastDiagnostics = null;
+
+// IR brightness slider — throttled POST: fires immediately, then at most every 50 ms while dragging.
+let irBrightnessThrottle = null;
+let irBrightnessPending  = null;
+async function sendIrBrightness(v) {
+  irBrightnessPending = null;
+  irBrightnessThrottle = setTimeout(() => {
+    irBrightnessThrottle = null;
+    if (irBrightnessPending !== null) sendIrBrightness(irBrightnessPending);
+  }, 50);
+  try { await postJson('/api/ir/brightness', { value: v }); } catch (_) {}
+}
 irBrightnessSlider.addEventListener('input', () => {
   const v = Number(irBrightnessSlider.value);
   lblIrBrightness.textContent = v;
-  clearTimeout(irBrightnessDebounce);
-  irBrightnessDebounce = setTimeout(async () => {
-    try { await postJson('/api/ir/brightness', { value: v }); } catch (_) {}
-  }, 80);
+  if (!irBrightnessThrottle) sendIrBrightness(v); else irBrightnessPending = v;
+});
+
+// Marker IR threshold slider — same throttled-POST pattern as IR brightness.
+let markerThresholdThrottle = null;
+let markerThresholdPending  = null;
+async function sendMarkerThreshold(v) {
+  markerThresholdPending = null;
+  markerThresholdThrottle = setTimeout(() => {
+    markerThresholdThrottle = null;
+    if (markerThresholdPending !== null) sendMarkerThreshold(markerThresholdPending);
+  }, 50);
+  try { await postJson('/api/calibration/threshold', { value: v }); } catch (_) {}
+}
+markerThresholdSlider.addEventListener('input', () => {
+  const v = Number(markerThresholdSlider.value);
+  lblMarkerThreshold.textContent = v;
+  if (!markerThresholdThrottle) sendMarkerThreshold(v); else markerThresholdPending = v;
+  renderDiagnostics(lastDiagnostics);
 });
 
 // Keep IR overlay canvas sized to the image element.
@@ -104,6 +141,7 @@ function renderState(state) {
   }
   clickHint.innerHTML = `Selected channel: <strong>${selectedChannel}</strong>. Drag on the depth map to set its depth box.`;
   renderBall(state.ball);
+  renderCalibrationStatus(state.extrinsics);
   drawOverlay();
 }
 
@@ -317,16 +355,29 @@ fetchState();
 stateTimer = window.setInterval(fetchState, 350);
 
 function renderBall(ball) {
-  if (!ball || !ball.enabled) {
-    ballPair.hidden = true;
+  // The IR feed and brightness slider work regardless of ball tracking (the
+  // Kinect always streams raw IR); only the ball readout/tracker debug view
+  // depend on --ball-tracking being enabled.
+  if (!ball) {
     clearBallOverlay();
     return;
   }
-  ballPair.hidden = false;
 
   if (ball.ir_brightness !== undefined && document.activeElement !== irBrightnessSlider) {
     irBrightnessSlider.value    = ball.ir_brightness;
     lblIrBrightness.textContent = ball.ir_brightness;
+  }
+
+  if (!ball.enabled) {
+    ballPill.textContent = 'ball tracking disabled';
+    ballPill.className   = 'pill';
+    ballX.textContent = '--';
+    ballY.textContent = '--';
+    ballZ.textContent = '--';
+    ballR.textContent = '--';
+    ballWorld.textContent = 'not calibrated';
+    clearBallOverlay();
+    return;
   }
 
   if (ball.detected) {
@@ -345,6 +396,111 @@ function renderBall(ball) {
     ballZ.textContent = '--';
     ballR.textContent = '--';
     clearBallOverlay();
+  }
+
+  if (!ball.calibrated) {
+    ballWorld.textContent = 'not calibrated';
+  } else if (ball.detected && ball.position_world) {
+    const w = ball.position_world;
+    ballWorld.textContent = `X=${fmtMm(w.x)} Y=${fmtMm(w.y)} Z=${fmtMm(w.z)}`;
+  } else {
+    ballWorld.textContent = 'calibrated — ball not detected';
+  }
+}
+
+function renderCalibrationStatus(extrinsics) {
+  if (!extrinsics) return;
+  if (extrinsics.calibrated) {
+    calibStatusPill.textContent = `calibrated, rms ${extrinsics.rms_residual_mm.toFixed(1)}mm`;
+    calibStatusPill.className   = 'pill detected';
+  } else {
+    calibStatusPill.textContent = 'not calibrated';
+    calibStatusPill.className   = 'pill';
+  }
+  if (extrinsics.marker_ir_min_counts !== undefined && document.activeElement !== markerThresholdSlider) {
+    markerThresholdSlider.value    = extrinsics.marker_ir_min_counts;
+    lblMarkerThreshold.textContent = extrinsics.marker_ir_min_counts;
+  }
+}
+
+calibCapture.addEventListener('click', async () => {
+  calibStatus.textContent = 'capturing…';
+  calibCapture.disabled = true;
+  try {
+    const result = await postJson('/api/calibration/capture');
+    renderCalibrationAttempt(result);
+  } catch (error) {
+    calibStatus.textContent = `capture error: ${error.message}`;
+  } finally {
+    calibCapture.disabled = false;
+  }
+});
+
+calibAccept.addEventListener('click', async () => {
+  try {
+    await postJson('/api/calibration/accept');
+    calibAccept.disabled = true;
+    calibRetry.disabled = true;
+    calibStatus.textContent = 'accepted — table frame active';
+    calibResiduals.innerHTML = '';
+    await fetchState();
+  } catch (error) {
+    calibStatus.textContent = `accept error: ${error.message}`;
+  }
+});
+
+calibRetry.addEventListener('click', async () => {
+  try { await postJson('/api/calibration/reject'); } catch (_) {}
+  calibAccept.disabled = true;
+  calibRetry.disabled = true;
+  calibStatus.textContent = 'no calibration attempt yet';
+  calibResiduals.innerHTML = '';
+});
+
+function renderCalibrationAttempt(result) {
+  lastDiagnostics = result.diagnostics || null;
+  renderDiagnostics(lastDiagnostics);
+
+  if (!result.ok) {
+    calibStatus.textContent = `detection failed: ${result.error}`;
+    calibAccept.disabled = true;
+    calibRetry.disabled = false;
+    calibResiduals.innerHTML = '';
+    return;
+  }
+
+  const rms  = result.fit.rms_residual_mm;
+  const maxR = result.fit.max_residual_mm;
+  calibStatus.textContent = `fit ok — rms ${rms.toFixed(1)}mm, max ${maxR.toFixed(1)}mm`;
+  calibRetry.disabled = false;
+  calibAccept.disabled = false;
+
+  calibResiduals.innerHTML = '';
+  const points = result.matched_points || {};
+  for (const [name, info] of Object.entries(points)) {
+    const row = document.createElement('div');
+    row.className = 'calib-residual-row' + (info.residual_mm > 10.0 ? ' bad' : '');
+    row.innerHTML = `<span>${name}</span><span>${info.residual_mm.toFixed(1)} mm</span>`;
+    calibResiduals.appendChild(row);
+  }
+}
+
+function renderDiagnostics(diagnostics) {
+  calibDiagnostics.innerHTML = '';
+  if (!diagnostics) return;
+
+  const currentThreshold = Number(markerThresholdSlider.value);
+  const title = document.createElement('div');
+  title.className = 'diag-title';
+  title.textContent = `IR diagnostics — frame max ${diagnostics.ir_max.toFixed(0)}`;
+  calibDiagnostics.appendChild(title);
+
+  for (const { threshold, count } of diagnostics.threshold_counts) {
+    const row = document.createElement('div');
+    const isCurrent = Math.abs(threshold - currentThreshold) < 25;
+    row.className = 'diag-row' + (isCurrent ? ' current' : '');
+    row.innerHTML = `<span>&ge; ${threshold.toFixed(0)}</span><span>${count} px</span>`;
+    calibDiagnostics.appendChild(row);
   }
 }
 

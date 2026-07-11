@@ -102,6 +102,7 @@ Use `115200` baud with newline enabled.
 
 ```text
 calibrate                 # cranks straight up = max heave (alias: zero)
+hold                      # enable all drivers and hold current positions
 enable [axis]
 disable [axis]
 pose <roll_deg> <pitch_deg> <heave_mm>

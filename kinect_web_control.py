@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 import cv2
 import numpy as np
 from pyk4a import (
+    CalibrationType,
     ColorResolution,
     Config,
     ImageFormat,
@@ -29,6 +30,12 @@ from depth_servo_control import (
     SERVO_CHANNELS,
     SERVO_DEPTH_PIXELS,
     ServoController,
+)
+from kinect_extrinsic_calibration import (
+    CalibrationAttempt,
+    load_extrinsics,
+    run_calibration,
+    save_extrinsics,
 )
 from live_capture_viewer import (
     COLOR_RESOLUTIONS,
@@ -48,6 +55,7 @@ from servo_write import BAUD_RATES
 ROOT_DIR = Path(__file__).resolve().parent
 WEB_DIR = ROOT_DIR / "web"
 DEFAULT_CONFIG_PATH = ROOT_DIR / "web_control_config.json"
+DEFAULT_EXTRINSICS_PATH = ROOT_DIR / "extrinsics.json"
 WEB_COLOR_RESOLUTIONS = {
     **COLOR_RESOLUTIONS,
     "off": ColorResolution.OFF,
@@ -224,6 +232,7 @@ class WebState:
             "depth_image": {"width": width, "height": height},
             "ball": camera.get_ball_state(),
             "camera": camera.status_snapshot(),
+            "extrinsics": camera.calibration_state_json(),
             "control": {
                 "running": control_running,
                 "message": control_message,
@@ -265,6 +274,19 @@ class KinectFrameHub:
         self.tracker_jpeg = None
         self.placeholder_tracker = make_placeholder_jpeg(640, 576, "Ball tracking not enabled")
         self.max_ir_brightness = args.max_ir_brightness
+
+        self.tracker_fx = None
+        self.tracker_fy = None
+        self.tracker_ppx = None
+        self.tracker_ppy = None
+        self._last_ir_frame = None
+        self._last_depth_for_tracker = None
+
+        self.extrinsics = load_extrinsics(Path(args.extrinsics_path))
+        self._last_calibration_attempt = None
+        self._calibration_debug_jpeg = None
+        self.placeholder_calibration = make_placeholder_jpeg(640, 576, "No calibration attempt yet")
+        self.marker_ir_min_counts = args.marker_ir_min_counts
 
     def start(self):
         self.thread = threading.Thread(target=self._run, name="kinect-capture", daemon=True)
@@ -309,6 +331,13 @@ class KinectFrameHub:
             self.k4a = PyK4A(config=config, device_id=args.device_id)
             self.k4a.start()
             self._set_status("running")
+
+            mat = self.k4a.calibration.get_camera_matrix(CalibrationType.DEPTH)
+            with self.lock:
+                self.tracker_fx = float(mat[0, 0])
+                self.tracker_fy = float(mat[1, 1])
+                self.tracker_ppx = float(mat[0, 2])
+                self.tracker_ppy = float(mat[1, 2])
 
             if args.ball_tracking:
                 try:
@@ -386,6 +415,8 @@ class KinectFrameHub:
                         self.tracker_jpeg = tracker_jpeg
                     self.depth_mm = depth_mm.copy()
                     self.depth_shape = depth_mm.shape[:2]
+                    self._last_ir_frame = ir_frame
+                    self._last_depth_for_tracker = depth_for_tracker
                     self.status = "running"
                     self.error = ""
                     self.lock.notify_all()
@@ -406,6 +437,10 @@ class KinectFrameHub:
                 jpeg = self.ir_jpeg or self.placeholder_ir
             elif kind == "tracker":
                 jpeg = self.tracker_jpeg or self.placeholder_tracker
+            elif kind == "calibration":
+                # Unlike the other streams, this only changes when a calibration
+                # capture is taken — it is static between captures, not per-frame.
+                jpeg = self._calibration_debug_jpeg or self.placeholder_calibration
             else:
                 jpeg = self.depth_jpeg or self.placeholder_depth
             return seq, jpeg
@@ -433,6 +468,10 @@ class KinectFrameHub:
         with self.lock:
             self.max_ir_brightness = max(1, int(value))
 
+    def set_marker_ir_min_counts(self, value: float) -> None:
+        with self.lock:
+            self.marker_ir_min_counts = max(0.0, float(value))
+
     def get_ball_state(self):
         with self.lock:
             if self.tracker is None:
@@ -441,12 +480,23 @@ class KinectFrameHub:
             det = self.ball_detection
             ir_brightness = self.max_ir_brightness
             reject_counts = dict(self.tracker.last_reject_counts)
+            extrinsics = self.extrinsics
         if pos is None:
-            return {"enabled": True, "detected": False, "position": None, "pixel": None, "radius_mm": None, "ir_brightness": ir_brightness, "reject_counts": reject_counts}
+            return {
+                "enabled": True, "detected": False, "position": None, "position_world": None,
+                "calibrated": extrinsics is not None, "pixel": None, "radius_mm": None,
+                "ir_brightness": ir_brightness, "reject_counts": reject_counts,
+            }
+        position_world = None
+        if extrinsics is not None:
+            wx, wy, wz = extrinsics.apply(pos)
+            position_world = {"x": round(wx, 1), "y": round(wy, 1), "z": round(wz, 1)}
         return {
             "enabled": True,
             "detected": True,
             "position": {"x": round(pos[0], 1), "y": round(pos[1], 1), "z": round(pos[2], 1)},
+            "position_world": position_world,
+            "calibrated": extrinsics is not None,
             "pixel": {
                 "cx": round(det.cx),
                 "cy": round(det.cy),
@@ -455,6 +505,95 @@ class KinectFrameHub:
             "radius_mm": round(det.radius_mm, 1) if det is not None else None,
             "ir_brightness": ir_brightness,
             "reject_counts": reject_counts,
+        }
+
+    # ------------------------------------------------------------------
+    # Extrinsic calibration
+    # ------------------------------------------------------------------
+
+    def capture_calibration_frame(self) -> CalibrationAttempt:
+        with self.lock:
+            if self.tracker_fx is None:
+                raise ValueError("camera intrinsics not available yet; is the Kinect running?")
+            fx, fy, ppx, ppy = self.tracker_fx, self.tracker_fy, self.tracker_ppx, self.tracker_ppy
+            marker_ir_min_counts = self.marker_ir_min_counts
+            last_seq = self.seq
+
+        n_frames = max(1, self.args.calibration_avg_frames)
+        ir_samples = []
+        depth_samples = []
+        for _ in range(n_frames):
+            with self.lock:
+                if self.seq == last_seq:
+                    self.lock.wait(timeout=1.0)
+                last_seq = self.seq
+                ir = self._last_ir_frame
+                depth = self._last_depth_for_tracker
+            if ir is not None and depth is not None:
+                ir_samples.append(ir.astype(np.float32))
+                depth_samples.append(depth.astype(np.float32))
+
+        if not ir_samples:
+            attempt = CalibrationAttempt(ok=False, error="no camera frames available", debug_frame=None, fit=None)
+        else:
+            ir_avg = np.mean(ir_samples, axis=0).astype(np.uint16)
+            # Depth 0 means "invalid" throughout this codebase; average only
+            # the valid samples per pixel so invalid readings don't drag down
+            # the mean.
+            depth_stack = np.stack(depth_samples, axis=0)
+            valid = np.isfinite(depth_stack) & (depth_stack > 0)
+            counts = valid.sum(axis=0)
+            sums = np.where(valid, depth_stack, 0.0).sum(axis=0)
+            depth_avg = np.divide(sums, counts, out=np.zeros_like(sums), where=counts > 0)
+            attempt = run_calibration(
+                ir_avg, depth_avg, fx, fy, ppx, ppy, marker_ir_min_counts=marker_ir_min_counts,
+            )
+
+        with self.lock:
+            self._last_calibration_attempt = attempt
+            if attempt.debug_frame is not None:
+                self._calibration_debug_jpeg = encode_jpeg(attempt.debug_frame, self.args.jpeg_quality)
+            self.lock.notify_all()
+        return attempt
+
+    def accept_calibration(self):
+        with self.lock:
+            attempt = self._last_calibration_attempt
+        if attempt is None or not attempt.ok or attempt.fit is None:
+            raise ValueError("no successful calibration attempt to accept")
+        if attempt.fit.rms_residual_mm > self.args.calibration_max_rms_mm:
+            raise ValueError(
+                f"RMS residual {attempt.fit.rms_residual_mm:.1f}mm exceeds "
+                f"--calibration-max-rms-mm ({self.args.calibration_max_rms_mm:.1f}mm)"
+            )
+        if attempt.fit.max_residual_mm > self.args.calibration_max_residual_mm:
+            raise ValueError(
+                f"max residual {attempt.fit.max_residual_mm:.1f}mm exceeds "
+                f"--calibration-max-residual-mm ({self.args.calibration_max_residual_mm:.1f}mm)"
+            )
+        extrinsics = save_extrinsics(Path(self.args.extrinsics_path), attempt.fit)
+        with self.lock:
+            self.extrinsics = extrinsics
+            self._last_calibration_attempt = None
+        return extrinsics
+
+    def reject_calibration(self):
+        with self.lock:
+            self._last_calibration_attempt = None
+            self._calibration_debug_jpeg = None
+            self.lock.notify_all()
+
+    def calibration_state_json(self):
+        with self.lock:
+            extrinsics = self.extrinsics
+            attempt = self._last_calibration_attempt
+            marker_ir_min_counts = self.marker_ir_min_counts
+        return {
+            "calibrated": extrinsics is not None,
+            "timestamp": extrinsics.timestamp if extrinsics else None,
+            "rms_residual_mm": extrinsics.rms_residual_mm if extrinsics else None,
+            "pending_attempt": attempt is not None,
+            "marker_ir_min_counts": marker_ir_min_counts,
         }
 
 
@@ -615,6 +754,10 @@ class KinectWebHandler(BaseHTTPRequestHandler):
             self.serve_mjpeg("ir")
         elif path == "/stream/tracker.mjpg":
             self.serve_mjpeg("tracker")
+        elif path == "/stream/calibration.mjpg":
+            self.serve_mjpeg("calibration")
+        elif path == "/api/calibration/state":
+            self.send_json(self.camera.calibration_state_json())
         else:
             self.send_error(404, "not found")
 
@@ -660,6 +803,22 @@ class KinectWebHandler(BaseHTTPRequestHandler):
                 return
             if path == ["api", "control", "stop"]:
                 self.control.stop()
+                self.send_json({"ok": True})
+                return
+            if path == ["api", "calibration", "capture"]:
+                attempt = self.camera.capture_calibration_frame()
+                self.send_json(calibration_attempt_to_json(attempt))
+                return
+            if path == ["api", "calibration", "threshold"]:
+                self.camera.set_marker_ir_min_counts(float(data["value"]))
+                self.send_json({"ok": True, "marker_ir_min_counts": self.camera.marker_ir_min_counts})
+                return
+            if path == ["api", "calibration", "accept"]:
+                extrinsics = self.camera.accept_calibration()
+                self.send_json({"ok": True, "extrinsics": extrinsics_to_json(extrinsics)})
+                return
+            if path == ["api", "calibration", "reject"]:
+                self.camera.reject_calibration()
                 self.send_json({"ok": True})
                 return
         except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -747,6 +906,34 @@ class KinectWebHandler(BaseHTTPRequestHandler):
 class KinectThreadingHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
+
+
+def extrinsics_to_json(extrinsics):
+    return {
+        "timestamp": extrinsics.timestamp,
+        "rms_residual_mm": extrinsics.rms_residual_mm,
+        "max_residual_mm": extrinsics.max_residual_mm,
+    }
+
+
+def calibration_attempt_to_json(attempt):
+    result = {"ok": attempt.ok, "error": attempt.error}
+    if attempt.fit is not None:
+        result["fit"] = {
+            "rms_residual_mm": attempt.fit.rms_residual_mm,
+            "max_residual_mm": attempt.fit.max_residual_mm,
+        }
+    if attempt.matched_points is not None:
+        result["matched_points"] = attempt.matched_points
+    if attempt.diagnostics is not None:
+        result["diagnostics"] = {
+            "ir_max": attempt.diagnostics.ir_max,
+            "threshold_counts": [
+                {"threshold": t, "count": c}
+                for t, c in sorted(attempt.diagnostics.threshold_counts.items())
+            ],
+        }
+    return result
 
 
 def clamp(value, low, high):
@@ -873,6 +1060,22 @@ def parse_args():
                       help="Dark if below FRAC × local background (0–1)")
     ball.add_argument("--max-ir-brightness", type=int, default=DEFAULT_MAX_BRIGHTNESS, metavar="DN",
                       help="16-bit IR value mapped to white in the IR stream, 100–5000")
+
+    calib = parser.add_argument_group("Extrinsic Calibration")
+    calib.add_argument("--extrinsics", dest="extrinsics_path", default=str(DEFAULT_EXTRINSICS_PATH),
+                        help="JSON file for the saved camera-to-table extrinsic calibration")
+    calib.add_argument("--calibration-max-rms-mm", type=float, default=10.0,
+                        help="reject accepting a calibration whose RMS residual exceeds this many mm "
+                             "(the current marker layout is compact/~277mm across, so residuals run "
+                             "higher than they would with markers spread across the full table)")
+    calib.add_argument("--calibration-max-residual-mm", type=float, default=15.0,
+                        help="reject accepting a calibration whose worst single-point residual exceeds this many mm")
+    calib.add_argument("--calibration-avg-frames", type=int, default=5,
+                        help="number of camera frames to average per calibration capture")
+    calib.add_argument("--marker-ir-min-counts", type=float, default=1000.0, metavar="COUNTS",
+                        help="raw 16-bit IR threshold for retroreflective marker detection; "
+                             "adjustable live via the web UI slider without restarting")
+
     parser.add_argument("--verbose", action="store_true")
     parser.set_defaults(auto_reverse=True)
 
@@ -903,6 +1106,14 @@ def parse_args():
         parser.error("--max-invalid must be greater than 0")
     if not 0 < args.step_shrink <= 1:
         parser.error("--step-shrink must be in the range (0, 1]")
+    if args.calibration_max_rms_mm <= 0:
+        parser.error("--calibration-max-rms-mm must be greater than 0")
+    if args.calibration_max_residual_mm <= 0:
+        parser.error("--calibration-max-residual-mm must be greater than 0")
+    if args.calibration_avg_frames <= 0:
+        parser.error("--calibration-avg-frames must be greater than 0")
+    if args.marker_ir_min_counts < 0:
+        parser.error("--marker-ir-min-counts cannot be negative")
     return args
 
 
