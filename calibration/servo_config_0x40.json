@@ -4,8 +4,8 @@
   "servos": {
     "0": {
       "extended": 320,
-      "neutral": 260,
-      "recessed": 210
+      "neutral": 206,
+      "recessed": 150
     },
     "1": {
       "extended": 320,
@@ -18,18 +18,18 @@
       "recessed": 130
     },
     "3": {
-      "extended": 310,
+      "extended": 260,
       "neutral": 210,
       "recessed": 160
     },
     "4": {
       "recessed": 130,
-      "neutral": 150,
+      "neutral": 176,
       "extended": 270
     },
     "5": {
       "recessed": 150,
-      "neutral": 190,
+      "neutral": 186,
       "extended": 310
     },
     "6": {
@@ -39,12 +39,12 @@
     },
     "7": {
       "recessed": 140,
-      "neutral": 190,
+      "neutral": 188,
       "extended": 300
     },
     "8": {
       "recessed": 160,
-      "neutral": 200,
+      "neutral": 204,
       "extended": 310
     },
     "9": {
@@ -64,7 +64,7 @@
     },
     "12": {
       "extended": 310,
-      "neutral": 210,
+      "neutral": 200,
       "recessed": 160
     },
     "13": {

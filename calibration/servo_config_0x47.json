@@ -3,14 +3,14 @@
   "i2c_address": "0x47",
   "servos": {
     "0": {
-      "extended": 1800,
-      "neutral": 1100,
+      "extended": 1870,
+      "neutral": 1120,
       "recessed": 650
     },
     "1": {
-      "extended": 1850,
-      "neutral": 1000,
-      "recessed": 550
+      "extended": 2600,
+      "neutral": 1920,
+      "recessed": 1320
     },
     "2": {
       "extended": 2600,
@@ -19,57 +19,57 @@
     },
     "3": {
       "extended": 2650,
-      "neutral": 2000,
-      "recessed": 1500
+      "neutral": 1930,
+      "recessed": 1480
     },
     "4": {
       "extended": 2650,
-      "neutral": 2050,
-      "recessed": 1550
+      "neutral": 1890,
+      "recessed": 1340
     },
     "5": {
       "extended": 2650,
-      "neutral": 2100,
-      "recessed": 1650
+      "neutral": 1900,
+      "recessed": 1350
     },
     "6": {
-      "extended": 2600,
-      "neutral": 1850,
-      "recessed": 1450
+      "extended": 2450,
+      "neutral": 1720,
+      "recessed": 1170
     },
     "7": {
       "extended": 2500,
-      "neutral": 1750,
-      "recessed": 1350
+      "neutral": 1700,
+      "recessed": 1300
     },
     "8": {
-      "extended": 2600,
-      "neutral": 2000,
-      "recessed": 1450
+      "extended": 2450,
+      "neutral": 1900,
+      "recessed": 1300
     },
     "9": {
-      "extended": 2500,
-      "neutral": 1750,
-      "recessed": 1400
+      "extended": 2300,
+      "neutral": 1550,
+      "recessed": 1100
     },
     "10": {
-      "extended": 2750,
+      "extended": 2800,
       "neutral": 2050,
       "recessed": 1450
     },
     "11": {
       "extended": 2600,
-      "neutral": 1950,
-      "recessed": 1500
+      "neutral": 1680,
+      "recessed": 1200
     },
     "12": {
-      "extended": 2650,
-      "neutral": 2100,
-      "recessed": 1800
+      "extended": 2550,
+      "neutral": 1970,
+      "recessed": 1420
     },
     "13": {
-      "recessed": 1750,
-      "neutral": 2200,
+      "recessed": 1320,
+      "neutral": 1970,
       "extended": 2650
     },
     "14": {
@@ -78,8 +78,8 @@
       "recessed": 1150
     },
     "15": {
-      "recessed": 1750,
-      "neutral": 2100,
+      "recessed": 1300,
+      "neutral": 1800,
       "extended": 2550
     }
   }

@@ -4,83 +4,83 @@
   "servos": {
     "0": {
       "extended": 2350,
-      "neutral": 1750,
-      "recessed": 1350
+      "neutral": 1370,
+      "recessed": 950
     },
     "1": {
-      "extended": 1900,
-      "neutral": 1300,
-      "recessed": 900
+      "extended": 2100,
+      "neutral": 1470,
+      "recessed": 1050
     },
     "2": {
       "extended": 2550,
-      "neutral": 2100,
-      "recessed": 1700
+      "neutral": 1780,
+      "recessed": 1400
     },
     "3": {
       "extended": 2400,
-      "neutral": 1800,
-      "recessed": 1450
-    },
-    "4": {
-      "extended": 2550,
-      "neutral": 1850,
-      "recessed": 1500
-    },
-    "5": {
-      "extended": 2500,
-      "neutral": 2000,
-      "recessed": 1550
-    },
-    "6": {
-      "extended": 2550,
-      "neutral": 1700,
-      "recessed": 1250
-    },
-    "7": {
-      "extended": 2500,
       "neutral": 1750,
       "recessed": 1350
     },
+    "4": {
+      "extended": 2550,
+      "neutral": 1800,
+      "recessed": 1400
+    },
+    "5": {
+      "extended": 2500,
+      "neutral": 1650,
+      "recessed": 1300
+    },
+    "6": {
+      "extended": 2550,
+      "neutral": 1800,
+      "recessed": 1350
+    },
+    "7": {
+      "extended": 2500,
+      "neutral": 1600,
+      "recessed": 1250
+    },
     "8": {
       "extended": 2600,
-      "neutral": 2000,
-      "recessed": 1450
+      "neutral": 1800,
+      "recessed": 1350
     },
     "9": {
       "extended": 2550,
-      "neutral": 1900,
-      "recessed": 1550
+      "neutral": 1700,
+      "recessed": 1350
     },
     "10": {
       "extended": 2500,
-      "neutral": 1900,
-      "recessed": 1600
+      "neutral": 1620,
+      "recessed": 1200
     },
     "11": {
       "extended": 2500,
-      "recessed": 1500,
-      "neutral": 1850
+      "recessed": 1150,
+      "neutral": 1630
     },
     "12": {
-      "extended": 1900,
-      "neutral": 1300,
-      "recessed": 850
+      "extended": 2200,
+      "neutral": 1530,
+      "recessed": 1130
     },
     "13": {
-      "extended": 2550,
-      "neutral": 2050,
-      "recessed": 1600
+      "extended": 1750,
+      "neutral": 1050,
+      "recessed": 650
     },
     "14": {
-      "extended": 2600,
-      "neutral": 2050,
-      "recessed": 1700
+      "extended": 2350,
+      "neutral": 1580,
+      "recessed": 1130
     },
     "15": {
-      "extended": 2200,
-      "neutral": 1700,
-      "recessed": 1050
+      "extended": 2400,
+      "neutral": 1780,
+      "recessed": 1300
     }
   }
 }

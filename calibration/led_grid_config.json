@@ -957,5 +957,24 @@
       143,
       144
     ]
+  },
+  "cell_colors": {
+    "1,0": "red",
+    "4,0": "yellow",
+    "5,3": "yellow",
+    "5,2": "yellow",
+    "6,1": "yellow",
+    "6,2": "yellow",
+    "7,1": "yellow",
+    "11,4": "yellow",
+    "6,5": "yellow",
+    "5,5": "red",
+    "6,7": "yellow",
+    "4,7": "red",
+    "3,4": "yellow",
+    "2,4": "red",
+    "0,4": "yellow",
+    "2,10": "red",
+    "8,11": "red"
   }
 }

@@ -267,10 +267,6 @@
       "address": "0x46",
       "channel": 11
     },
-    "4,4": {
-      "address": "0x45",
-      "channel": 1
-    },
     "4,6": {
       "address": "0x45",
       "channel": 10
@@ -329,7 +325,7 @@
     },
     "6,4": {
       "address": "0x45",
-      "channel": 3
+      "channel": 1
     },
     "7,0": {
       "address": "0x46",
@@ -354,10 +350,6 @@
     "7,3": {
       "address": "0x46",
       "channel": 12
-    },
-    "7,4": {
-      "address": "0x45",
-      "channel": 2
     },
     "7,5": {
       "address": "0x45",
@@ -578,6 +570,14 @@
     "7,6": {
       "address": "0x45",
       "channel": 9
+    },
+    "4,4": {
+      "address": "0x45",
+      "channel": 2
+    },
+    "7,4": {
+      "address": "0x45",
+      "channel": 3
     }
   },
   "faulty_cells": {},

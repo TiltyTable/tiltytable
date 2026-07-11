@@ -65,6 +65,10 @@ left driven against a mechanical limit forever if the host crashes or the
 USB link drops). This script runs a background heartbeat while any serial
 link is open specifically so that watchdog never fires during normal use —
 it only ever fires if this process actually dies or the port drops.
+
+NOTE ON SERVO HOLD TIME: every position command holds its channel for at
+most 3 seconds. A newer position command refreshes that channel's timer;
+when the timer expires, the host sends O to release the channel.
 """
 
 import argparse
@@ -105,6 +109,7 @@ DEFAULT_CONFIG_PREFIX = "servo_config"
 # How often to ping the board so its watchdog (5s timeout in the firmware)
 # never fires while this process is alive and the link is open.
 HEARTBEAT_INTERVAL_S = 2.0
+SERVO_HOLD_TIMEOUT_S = 3.0
 
 
 def autodetect_port():
@@ -227,6 +232,12 @@ def load_json_default(path, default):
     return default
 
 
+def save_json(path, data):
+    with open(path, "w") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+
+
 def build_channel_led_refs(i2c_address, servo_grid_cfg, led_cfg):
     """channel(int) -> (strip, index) or None, for THIS board — found by
     chaining servo_grid_config.json's board+channel -> global(row,col)
@@ -285,6 +296,9 @@ class Link:
         self._last_val = {}
         self._lock = threading.Lock()
         self._send_lock = threading.Lock()
+        self._active_i2c_address = None
+        self._servo_timers = {}       # (I2C address, channel) -> (generation, Timer)
+        self._servo_generations = {}
         threading.Thread(target=self._read_loop, daemon=True).start()
         threading.Thread(target=self._heartbeat_loop, daemon=True).start()
 
@@ -326,9 +340,85 @@ class Link:
                 break
 
     def send(self, cmd):
+        parts = cmd.split()
+        command = parts[0].upper() if parts else ""
         with self._send_lock:
-            self.ser.write((cmd + "\n").encode())
-            self.ser.flush()
+            if command == "A" and len(parts) >= 2:
+                try:
+                    self._active_i2c_address = parse_i2c_address(parts[1])
+                except argparse.ArgumentTypeError:
+                    pass
+                self._cancel_all_servo_timers_locked()
+            elif command == "P" and len(parts) >= 3:
+                try:
+                    ch = int(parts[1])
+                except ValueError:
+                    ch = None
+                if ch is not None and 0 <= ch < NUM_CHANNELS:
+                    self._arm_servo_timeout_locked(ch)
+            elif command == "O" and len(parts) >= 2:
+                try:
+                    ch = int(parts[1])
+                except ValueError:
+                    ch = None
+                if ch is not None:
+                    self._cancel_servo_timeout_locked(ch)
+            elif command == "X":
+                self._cancel_all_servo_timers_locked()
+
+            self._write_locked(cmd)
+
+    def _write_locked(self, cmd):
+        self.ser.write((cmd + "\n").encode())
+        self.ser.flush()
+
+    def _arm_servo_timeout_locked(self, ch):
+        address = self._active_i2c_address
+        # A position command before the PCA9685 address is known cannot be
+        # safely associated with a board, so leave it to normal command flow.
+        if address is None:
+            return
+        key = (address, ch)
+        old = self._servo_timers.pop(key, None)
+        if old:
+            old[1].cancel()
+        generation = self._servo_generations.get(key, 0) + 1
+        self._servo_generations[key] = generation
+        timer = threading.Timer(
+            SERVO_HOLD_TIMEOUT_S,
+            self._release_after_timeout,
+            args=(address, ch, generation),
+        )
+        timer.daemon = True
+        self._servo_timers[key] = (generation, timer)
+        # Start while holding _send_lock, so the timeout cannot race the
+        # position write that follows this method.
+        timer.start()
+
+    def _release_after_timeout(self, address, ch, generation):
+        with self._send_lock:
+            key = (address, ch)
+            current = self._servo_timers.get(key)
+            if (current is None or current[0] != generation or
+                    self._active_i2c_address != address):
+                return
+            # An A command releases all channels while switching boards. Do
+            # not send this old timer's O command to the newly selected board.
+            self._write_locked(f"O {ch}")
+            self._servo_timers.pop(key, None)
+
+    def _cancel_servo_timeout_locked(self, ch):
+        if self._active_i2c_address is None:
+            return
+        key = (self._active_i2c_address, ch)
+        timer = self._servo_timers.pop(key, None)
+        if timer:
+            timer[1].cancel()
+
+    def _cancel_all_servo_timers_locked(self):
+        for _, timer in self._servo_timers.values():
+            timer.cancel()
+        self._servo_timers.clear()
 
     def get_count(self, ch, timeout=0.5):
         with self._lock:
@@ -354,6 +444,8 @@ class Link:
 
     def close(self):
         self._stop = True
+        with self._send_lock:
+            self._cancel_all_servo_timers_locked()
         time.sleep(0.25)
         try:
             self.ser.close()
@@ -709,6 +801,7 @@ class GlobalCalTUI:
         self.sequence = sequence               # [(addr, ch, row_or_None, col_or_None), ...]
         self.pos_i = 0
         self.dirty = {addr: False for addr in configs}
+        self.led_dirty = False
         self.msg = "Arrow keys select a cell; A/D and Z/X jog its servo."
         self._active_hw_addr = None
 
@@ -716,6 +809,7 @@ class GlobalCalTUI:
         self._strip_led_counts = strip_led_counts
         self._lit_pos = None       # (row, col) currently showing the white crosshair
         self._cell_lookup = {(r, c): (a, ch) for a, ch, r, c in sequence if r is not None}
+        self._normalize_led_colors()
 
         self.count = JOG_START
         self._paint_all_status()
@@ -754,6 +848,23 @@ class GlobalCalTUI:
             return STATUS_GREEN
         return None
 
+    def _normalize_led_colors(self):
+        """Migrate the former yellow-only markers to the color map."""
+        colors = self.led_cfg.setdefault("cell_colors", {})
+        for key in self.led_cfg.pop("yellow_cells", []):
+            colors.setdefault(key, "yellow")
+
+    def _cell_color_name(self, row, col):
+        if row is None:
+            return None
+        return self.led_cfg.get("cell_colors", {}).get(f"{row},{col}")
+
+    def _cell_color(self, row, col, addr, ch):
+        rgb = {"red": (255, 0, 0), "yellow": (255, 255, 0), "green": (0, 255, 0)}
+        if self._cell_color_name(row, col) in rgb:
+            return rgb[self._cell_color_name(row, col)]
+        return self._status_color(addr, ch) or (0, 0, 0)
+
     def _neutral_of(self):
         return self._servo().get("neutral", JOG_START)
 
@@ -769,13 +880,13 @@ class GlobalCalTUI:
         if not ref:
             return
         strip, idx = ref
-        r, g, b = self._status_color(addr, ch) or (0, 0, 0)
+        r, g, b = self._cell_color(row, col, addr, ch)
         self.link.send(f"LP {strip} {idx} {r} {g} {b}")
         time.sleep(max(0.03, self._strip_led_counts.get(strip, 150) * 0.0003))
 
     def _paint_all_status(self):
         for addr, ch, row, col in self.sequence:
-            if row is not None and self._status_color(addr, ch):
+            if row is not None and (self._cell_color_name(row, col) or self._status_color(addr, ch)):
                 self._restore_led(row, col, addr, ch)
 
     def _light_current_led(self):
@@ -790,7 +901,10 @@ class GlobalCalTUI:
             self._lit_pos = None
             return
         strip, idx = ref
-        self.link.send(f"LP {strip} {idx} 255 255 255")
+        # The selected cell is always white, temporarily overriding its
+        # persistent status color so it is obvious which cell is active.
+        r, g, b = (255, 255, 255)
+        self.link.send(f"LP {strip} {idx} {r} {g} {b}")
         time.sleep(max(0.03, self._strip_led_counts.get(strip, 150) * 0.0003))
         self._lit_pos = (row, col)
 
@@ -894,6 +1008,18 @@ class GlobalCalTUI:
         if self._lit_pos != (row, col):
             self._restore_led(row, col, addr, ch)
 
+    def set_cell_color(self, color):
+        """Persist an explicit LED color for the selected physical cell."""
+        _, _, row, col = self._cur()
+        if row is None:
+            self.msg = f"current channel has no grid cell to mark {color}"
+            return
+        key = f"{row},{col}"
+        self.led_cfg.setdefault("cell_colors", {})[key] = color
+        self.msg = f"cell ({row},{col}) LED set {color}"
+        self.led_dirty = True
+        self._light_current_led()
+
     def goto(self, key):
         s = self._servo()
         if key in s:
@@ -926,6 +1052,13 @@ class GlobalCalTUI:
         if failed:
             detail = ", ".join(f"{addr} ({ex})" for addr, ex in failed)
             parts.append(f"! FAILED (still unsaved): {detail}")
+        if self.led_dirty:
+            try:
+                save_json(LED_CONFIG_PATH, self.led_cfg)
+                self.led_dirty = False
+                parts.append("saved LED cell colors")
+            except OSError as ex:
+                parts.append(f"! FAILED LED colors (still unsaved): {ex}")
         self.msg = "  |  ".join(parts) if parts else "nothing to save"
 
     def test(self, stdscr):
@@ -968,7 +1101,9 @@ class GlobalCalTUI:
 
         addr, ch, row, col = self._cur()
         loc = f"global ({row},{col})" if row is not None else "NOT grid-mapped yet"
-        led_state = "LED white (live)" if self._led_ref_at(row, col) else "no LED mapped"
+        led_state = (f"LED {self._cell_color_name(row, col)} (marked)" if self._cell_color_name(row, col)
+                     else "LED white (live)" if self._led_ref_at(row, col)
+                     else "no LED mapped")
         put(3, 2, f">> {addr} CH {ch:>2}   {loc}   {self.count:>4} us   [{led_state}]", cur_a)
 
         s = self._servo()
@@ -1001,6 +1136,8 @@ class GlobalCalTUI:
                     a, tch = tup
                     if is_cursor:
                         mark = "@"
+                    elif self._cell_color_name(r, c):
+                        mark = self._cell_color_name(r, c)[0].upper()
                     elif self._is_faulty(a, tch):
                         mark = "X"
                     elif self._is_done(a, tch):
@@ -1014,8 +1151,8 @@ class GlobalCalTUI:
 
         put(h - 5, 1, self.msg[: w - 2], warn_a if self.msg.startswith("!") else ok_a)
         put(h - 3, 1, "arrows: select mapped cell  A/D +/-10us  Z/X +/-50us  , . +/-2us  r n e: tag  1 2 3: goto", 0)
-        put(h - 2, 1, "Tab: next channel   Shift-Tab/u: previous   space: release   t: test   f: faulty   s: save all   q: quit", 0)
-        put(h - 1, 1, "LED: white = current   green = fully captured   red = flagged faulty   off = not calibrated / no LED mapped", 0)
+        put(h - 2, 1, "Tab: next channel   Shift-Tab/u: previous   space: release   t: test   f: faulty   9: red   8: yellow   7: green   s: save all   q: quit", 0)
+        put(h - 1, 1, "LED: white = selected cell   R/Y/G = persistent cell color   green/red = calibration status   off = not mapped", 0)
         stdscr.refresh()
 
 
@@ -1058,6 +1195,9 @@ def _global_cal_main(stdscr, link, configs, config_paths, sequence, led_cfg, str
         ord('U'): lambda: tui.step(-1),
         ord('f'): tui.toggle_faulty,
         ord('F'): tui.toggle_faulty,
+        ord('9'): lambda: tui.set_cell_color("red"),
+        ord('8'): lambda: tui.set_cell_color("yellow"),
+        ord('7'): lambda: tui.set_cell_color("green"),
         ord('s'): tui.save,
     }
 
@@ -1065,9 +1205,9 @@ def _global_cal_main(stdscr, link, configs, config_paths, sequence, led_cfg, str
         tui.draw(stdscr)
         k = stdscr.getch()
         if k in (ord('q'), ord('Q')):
-            if any(tui.dirty.values()):
+            if any(tui.dirty.values()) or tui.led_dirty:
                 tui.save()
-            if not any(tui.dirty.values()):
+            if not any(tui.dirty.values()) and not tui.led_dirty:
                 return
             # one or more boards failed to save — require a SECOND q/Q to
             # quit anyway, so a locked/permission-denied file can't cause

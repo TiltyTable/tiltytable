@@ -4,7 +4,7 @@
   "servos": {
     "0": {
       "extended": 2400,
-      "neutral": 1550,
+      "neutral": 1530,
       "recessed": 1100
     },
     "1": {
@@ -14,12 +14,12 @@
     },
     "2": {
       "extended": 2550,
-      "neutral": 1750,
-      "recessed": 1500
+      "neutral": 1730,
+      "recessed": 1250
     },
     "3": {
       "extended": 2450,
-      "neutral": 2170,
+      "neutral": 1950,
       "recessed": 1250
     },
     "4": {
@@ -29,8 +29,8 @@
     },
     "5": {
       "extended": 2500,
-      "neutral": 1620,
-      "recessed": 1250
+      "neutral": 1540,
+      "recessed": 1140
     },
     "6": {
       "extended": 1800,
@@ -40,12 +40,12 @@
     "7": {
       "extended": 2350,
       "neutral": 1350,
-      "recessed": 1150
+      "recessed": 1050
     },
     "8": {
       "extended": 2450,
       "neutral": 1620,
-      "recessed": 1300
+      "recessed": 1200
     },
     "9": {
       "extended": 2250,
@@ -64,7 +64,7 @@
     },
     "12": {
       "extended": 2550,
-      "neutral": 1770,
+      "neutral": 1730,
       "recessed": 1250
     },
     "13": {
@@ -79,8 +79,8 @@
     },
     "15": {
       "extended": 2350,
-      "recessed": 1350,
-      "neutral": 1540
+      "recessed": 1170,
+      "neutral": 1570
     }
   }
 }
