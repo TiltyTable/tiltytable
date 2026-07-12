@@ -376,7 +376,6 @@ function renderBall(ball) {
     ballZ.textContent = '--';
     ballR.textContent = '--';
     ballWorld.textContent = 'not calibrated';
-    clearBallOverlay();
     return;
   }
 
@@ -387,7 +386,6 @@ function renderBall(ball) {
     ballY.textContent = fmtMm(ball.position?.y);
     ballZ.textContent = fmtMm(ball.position?.z);
     ballR.textContent = fmtMm(ball.radius_mm);
-    if (ball.pixel) drawBallOnIR(ball.pixel);
   } else {
     ballPill.textContent = searchingLabel(ball.reject_counts);
     ballPill.className   = 'pill';
@@ -395,7 +393,6 @@ function renderBall(ball) {
     ballY.textContent = '--';
     ballZ.textContent = '--';
     ballR.textContent = '--';
-    clearBallOverlay();
   }
 
   if (!ball.calibrated) {

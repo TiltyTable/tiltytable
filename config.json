@@ -1,0 +1,56 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "http_port": 8080
+  },
+  "kinect": {
+    "device_id": 0,
+    "color_resolution": "720p",
+    "depth_mode": "nfov_unbinned",
+    "fps": "30",
+    "timeout_ms": 1000,
+    "max_depth": 4000,
+    "aligned_depth": false,
+    "depth_engine_display": ":0",
+    "jpeg_quality": 82
+  },
+  "depth": {
+    "servo_config": "web_control_config.json",
+    "default_box_size": 25,
+    "min_valid_pixels": 1,
+    "max_valid_depth": 0
+  },
+  "servo": {
+    "servo_port": "/dev/ttyACM0",
+    "baud": 115200,
+    "start_angle": 90.0,
+    "min_angle": 10.0,
+    "max_angle": 170.0,
+    "step_deg": 2.0,
+    "min_step_deg": 0.25,
+    "reverse": false,
+    "move_delay": 0.03,
+    "ready_timeout": 4.0,
+    "response_wait": 0.03,
+    "response_idle": 0.004,
+    "dry_run_servo": false,
+    "tolerance_mm": 1.0,
+    "max_invalid": 10,
+    "auto_reverse": true,
+    "worse_margin_mm": 25.0,
+    "step_shrink": 0.5
+  },
+  "ball": {
+    "ball_tracking": true,
+    "ball_radius_min": 20.0,
+    "ball_radius_max": 40.0,
+    "max_ir_brightness": 3600
+  },
+  "calibration": {
+    "extrinsics_path": "extrinsics.json",
+    "calibration_max_rms_mm": 10.0,
+    "calibration_max_residual_mm": 15.0,
+    "calibration_avg_frames": 5,
+    "marker_ir_min_counts": 1000.0
+  }
+}

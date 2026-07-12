@@ -3,22 +3,23 @@
 Real-time ball detection and 3D tracking using the Azure Kinect IR camera.
 
 The IR image is naturally co-registered with the depth map (both live on the
-depth sensor), so no aligned-depth transform is needed.  Detection first
-isolates the brightly lit tabletop (bright-region mask -> largest component ->
-convex hull), then finds dark blobs inside it: grid-gap lines are erased with
-a morphological opening and the ball is selected by circularity, fill fraction
-and depth-validated physical radius.  Tracking uses a hand-rolled EKF whose
-measurement function is the perspective projection
+depth sensor), so no aligned-depth transform is needed.  The ball is a highly
+retro-reflective sphere that appears as the brightest blob in the IR image.
 
-    h(x) = [ fx·X/Z + ppx,  fy·Y/Z + ppy,  Z ]
+Two classes are provided:
 
-which is nonlinear in Z; the Jacobian H is computed analytically at each step.
+    BallDetector  — runs the per-frame image pipeline; stateless between calls.
+    BallTracker   — maintains an EKF over BallDetection results; runs a 60 Hz
+                    predict thread independently of the camera frame rate.
 
-Usage:
-    tracker = BallTracker.from_k4a_calibration(k4a.calibration)
-    position, detection = tracker.update(ir_uint16, depth_mm)
+Typical usage:
+    detector = BallDetector.from_k4a_calibration(k4a.calibration)
+    tracker  = BallTracker.from_k4a_calibration(k4a.calibration)
+
+    # per frame:
+    detection = detector.detect(ir_uint16, depth_mm)
+    position, smoothed_detection = tracker.update(detection)
     # position: (X, Y, Z) mm from camera origin, or None
-    # detection: BallDetection with raw pixel info, or None
 """
 
 import threading
@@ -32,74 +33,51 @@ from typing import Optional
 import camera_geometry
 
 # ---------------------------------------------------------------------------
-# IR normalisation parameters
-# The 16-bit IR image is contrast-stretched between the scene's low and high
-# percentiles before thresholding.  Adjust _IR_THRESH_FRACTION if the ball
-# is not cleanly separated from the background.
+# Detection parameters
 # ---------------------------------------------------------------------------
-_IR_PERCENTILE_LOW  = 1     # scene floor for contrast stretch (near-minimum of valid pixels)
-_IR_PERCENTILE_HIGH = 99    # scene ceiling for contrast stretch (avoids hot spots)
 
-# A pixel is "dark" when below this fraction of the LOCAL background level
-# (morphological closing of the image).  Relative thresholding keeps the ball
-# detectable on both brightly lit and dim/unlit tiles.
-_IR_THRESH_FRACTION = 0.5
+_IR_PERCENTILE_LOW  = 1     # scene floor for contrast stretch
+_IR_PERCENTILE_HIGH = 99    # scene ceiling for contrast stretch
 
-# Kernel for the local-background closing.  Must comfortably exceed the ball
-# diameter in pixels so the closing erases the ball (and smaller features)
-# and reports the surrounding table level.
-_BG_CLOSE_KERNEL_PX = 75
+# Pixels above this fraction of the contrast-stretched (0–255) range are
+# treated as bright candidates.  The retro-reflective ball is significantly
+# brighter than the table surface.  Raise if tiles produce false positives;
+# lower if the ball is dim at large depth or off-axis.
+_BALL_BRIGHT_FRACTION = 0.85
 
-# Table-mask parameters.  The tabletop is the large bright region (IR-lit
-# tiles); dark-blob search is confined to its convex hull so the floor and
-# surroundings can never produce candidates.
-_TABLE_BRIGHT_FRACTION   = 0.4   # bright-tile threshold for the table mask
-_TABLE_CLOSE_KERNEL_PX   = 9     # merges tiles across grid gaps before CC labelling
-_MIN_TABLE_AREA_FRACTION = 0.05  # of valid FOV; below this, fall back to full FOV
-
-# Grid-gap suppression: opening the dark mask with this kernel erases the
-# gap lines between tiles.  Must exceed the gap width in pixels and stay
-# well below the ball diameter in pixels.
-_GRID_OPEN_KERNEL_PX = 13
-
-# Fraction of the detected pixel radius used when sampling depth.
-# The inner 40% avoids edge pixels where depth often reads the background.
+# Inner fraction of the detected radius used when sampling depth.
+# Avoids edge pixels where depth reads the background.
 _DEPTH_SAMPLE_FRACTION = 0.40
 
-# A candidate is rejected if fewer than this fraction of the sample patch
-# has valid depth values (handles specular glare at the ball's highlight).
+# Reject candidates if fewer than this fraction of the depth sample patch
+# has valid readings.
 _MIN_VALID_DEPTH_FRACTION = 0.10
 
-# Contour-based detection parameters.
-# Since the ball size is consistent we filter on circularity, fill fraction and
-# depth-validated physical radius rather than scanning a Hough accumulator.
-_MIN_CIRCULARITY  = 0.82  # 4π·Area/Perimeter²; perfect circle = 1.0; square = 0.785
-_MIN_CONTOUR_AREA = 15    # pixels² — rejects tiny noise blobs
-_MIN_FILL_FRACTION = 0.75 # contour area / min-enclosing-circle area; square ≈ 0.64
+# Contour shape filters
+_MIN_CIRCULARITY  = 0.82   # 4π·Area/Perimeter²; perfect circle = 1.0
+_MIN_CONTOUR_AREA = 15     # pixels²
+_MIN_FILL_FRACTION = 0.60  # contour area / min-enclosing-circle area
 
-# Gaussian blur sigma applied before thresholding (sensor-noise suppression
-# only; grid lines are removed structurally by the opening above).
-_IR_BLUR_SIGMA = 2.0
+_IR_BLUR_SIGMA = 2.0       # Gaussian pre-blur sigma for noise suppression
+
+# ---------------------------------------------------------------------------
+# Tracking parameters
+# ---------------------------------------------------------------------------
+
+_GATE_DISTANCE_MM  = 150.0  # max XY shift between prediction and detection
+_PREDICT_HZ        = 60.0   # EKF predict thread rate
+_MAX_MISS_FRAMES   = 15     # consecutive misses before tracking resets
+_REACQUIRE_FRAMES  = 30     # frames after loss during which the re-acquisition
+                             # gate is active (prevents false-positive hijack)
 
 
-# When already tracking, detections farther than this from the predicted XY
-# position are rejected as false positives.
-_GATE_DISTANCE_MM = 150.0
-
-# EKF predict thread rate.  Measurements still arrive at camera frame rate.
-_PREDICT_HZ = 60.0
-
-# After this many consecutive frames without a detection the filter is reset.
-_MAX_MISS_FRAMES = 15
-
-# After losing the ball, only re-acquire within _GATE_DISTANCE_MM of the last
-# known position for this many frames before opening up to the full FOV.
-_REACQUIRE_FRAMES = 30
-
+# ---------------------------------------------------------------------------
+# Data class
+# ---------------------------------------------------------------------------
 
 @dataclass
 class BallDetection:
-    """Raw per-frame output before EKF smoothing."""
+    """Raw per-frame output from BallDetector, before EKF smoothing."""
     cx: float          # 2-D pixel centre x (IR image)
     cy: float          # 2-D pixel centre y (IR image)
     radius_px: float   # 2-D pixel radius
@@ -110,7 +88,7 @@ class BallDetection:
 
 
 # ---------------------------------------------------------------------------
-# Extended Kalman Filter
+# Extended Kalman Filter (private)
 # ---------------------------------------------------------------------------
 
 class _EKF:
@@ -127,8 +105,8 @@ class _EKF:
         self,
         fx: float, fy: float, ppx: float, ppy: float,
         dt: float,
-        Q: np.ndarray,   # 6×6 process noise covariance
-        R: np.ndarray,   # 3×3 measurement noise covariance [u_px, v_px, z_mm]
+        Q: np.ndarray,
+        R: np.ndarray,
     ):
         self.fx = fx; self.fy = fy
         self.ppx = ppx; self.ppy = ppy
@@ -151,13 +129,11 @@ class _EKF:
             self.P = np.eye(6, dtype=np.float64) * 500.0
 
     def predict(self) -> None:
-        """Advance state one step (called by the predict thread)."""
         with self._lock:
             self.x = self.F @ self.x
             self.P = self.F @ self.P @ self.F.T + self.Q
 
     def correct(self, u_px: float, v_px: float, z_mm: float) -> None:
-        """Incorporate a pixel + depth measurement."""
         with self._lock:
             X, Y, Z = float(self.x[0]), float(self.x[1]), float(self.x[2])
             if abs(Z) < 1.0:
@@ -178,10 +154,8 @@ class _EKF:
 
             z = np.array([[u_px], [v_px], [z_mm]], dtype=np.float64)
             y = z - h
-
             S = H @ self.P @ H.T + self.R
             K = self.P @ H.T @ np.linalg.inv(S)
-
             I_KH = np.eye(6) - K @ H
             self.x = self.x + K @ y
             self.P = I_KH @ self.P @ I_KH.T + K @ self.R @ K.T
@@ -193,29 +167,24 @@ class _EKF:
 
 
 # ---------------------------------------------------------------------------
-# Ball tracker
+# Ball detector
 # ---------------------------------------------------------------------------
 
-class BallTracker:
+class BallDetector:
     """
-    Detects a ball in IR frames from the Azure Kinect and tracks its 3-D
-    position with an EKF.
+    Detects a retro-reflective ball in Azure Kinect IR frames.
+
+    Stateless between calls: each detect() call runs the full image pipeline
+    independently.  The debug_frame property returns a BGR annotation of the
+    most recent call, useful for streaming to a tracker view.
 
     Parameters
     ----------
     fx, fy, ppx, ppy
-        Depth/IR camera intrinsics (pixels).  Read from k4a.calibration or
-        supply manually.
+        Depth/IR camera intrinsics (pixels).
     ball_radius_min_mm, ball_radius_max_mm
         Plausible physical radius range in mm.  Defaults suit a 55 mm
-        diameter ball with margin for the IR shadow halo, which inflates
-        the apparent silhouette by several mm.
-    ir_thresh_fraction
-        A pixel counts as "dark" when below this fraction (0–1) of the
-        local background level.  Lower it if dim tiles are falsely
-        detected; raise it if a faintly dark ball is missed.
-    dt
-        Assumed time between frames in seconds for the EKF motion model.
+        diameter ball.
     """
 
     def __init__(
@@ -226,7 +195,6 @@ class BallTracker:
         ppy: float,
         ball_radius_min_mm: float = 20.0,
         ball_radius_max_mm: float = 40.0,
-        ir_thresh_fraction: float = _IR_THRESH_FRACTION,
     ):
         self.fx = fx
         self.fy = fy
@@ -234,38 +202,8 @@ class BallTracker:
         self.ppy = ppy
         self.ball_radius_min_mm = ball_radius_min_mm
         self.ball_radius_max_mm = ball_radius_max_mm
-        self.ir_thresh_fraction = ir_thresh_fraction
-
-        self._tracking = False
-        self._miss_count = 0
-        self._lost_pos: Optional[tuple[float, float]] = None  # XY at tracking loss
-        self._lost_frames = 0                                  # frames since loss
-        self._ekf = self._make_ekf(1.0 / _PREDICT_HZ)
-        self._stop_predict = threading.Event()
-        _pt = threading.Thread(target=self._predict_loop, daemon=True, name="ekf-predict")
-        _pt.start()
-        # Rect kernels: box morphology runs in O(1) per pixel (van Herk),
-        # and these two only bridge gaps / estimate background, so the
-        # kernel shape is irrelevant.
-        self._table_close_kernel = cv2.getStructuringElement(
-            cv2.MORPH_RECT, (_TABLE_CLOSE_KERNEL_PX, _TABLE_CLOSE_KERNEL_PX))
-        self._bg_close_kernel = cv2.getStructuringElement(
-            cv2.MORPH_RECT, (_BG_CLOSE_KERNEL_PX, _BG_CLOSE_KERNEL_PX))
-        self._grid_open_kernel = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE, (_GRID_OPEN_KERNEL_PX, _GRID_OPEN_KERNEL_PX))
         self._debug_frame: Optional[np.ndarray] = None
-        # Per-frame candidate tally from the last _detect() call:
-        # {"shape": n, "fill": n, "depth": n, "size": n, "accepted": n}
         self.last_reject_counts: dict[str, int] = {}
-
-    @property
-    def debug_frame(self) -> Optional[np.ndarray]:
-        """BGR image of the last detection attempt, or None before the first frame."""
-        return self._debug_frame
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     @classmethod
     def from_k4a_calibration(
@@ -273,15 +211,8 @@ class BallTracker:
         calibration,
         camera_type=None,
         **kwargs,
-    ) -> "BallTracker":
-        """
-        Build a tracker from a pyk4a Calibration object.
-
-        calibration  – k4a.calibration
-        camera_type  – pyk4a.CalibrationType.DEPTH (default; IR is on the
-                       depth sensor).  Override only if you know you want
-                       the colour camera intrinsics.
-        """
+    ) -> "BallDetector":
+        """Build a detector from a pyk4a Calibration object."""
         from pyk4a import CalibrationType
         if camera_type is None:
             camera_type = CalibrationType.DEPTH
@@ -294,44 +225,235 @@ class BallTracker:
             **kwargs,
         )
 
+    @property
+    def debug_frame(self) -> Optional[np.ndarray]:
+        """BGR annotation of the last detect() call, or None before the first."""
+        return self._debug_frame
+
+    def detect(
+        self,
+        ir_uint16: np.ndarray,
+        depth_mm: np.ndarray,
+    ) -> Optional[BallDetection]:
+        """
+        Run the detection pipeline on one camera frame.
+
+        Returns a BallDetection for the best candidate, or None if no ball
+        was found.  Always updates debug_frame and last_reject_counts.
+        """
+        counts = {"shape": 0, "fill": 0, "depth": 0, "size": 0, "accepted": 0}
+        self.last_reject_counts = counts
+
+        # Contrast-stretch 16-bit IR → 8-bit.
+        # Pixels outside the Kinect's circular FOV are exactly 0 (invalid).
+        # Erode the valid mask slightly to exclude the dim FOV-boundary ring.
+        ir_f = ir_uint16.astype(np.float32, copy=False)
+        raw_valid = (ir_uint16 > 0).astype(np.uint8)
+        fov_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
+        valid_u8 = cv2.erode(raw_valid, fov_kernel)
+        valid = valid_u8 > 0
+        valid_px = ir_f[valid]
+        if valid_px.size == 0:
+            self._debug_frame = None
+            return None
+        p_lo = float(np.percentile(valid_px, _IR_PERCENTILE_LOW))
+        p_hi = float(np.percentile(valid_px, _IR_PERCENTILE_HIGH))
+        if p_hi <= p_lo:
+            self._debug_frame = None
+            return None
+        ir8 = np.clip((ir_f - p_lo) / (p_hi - p_lo) * 255.0, 0, 255).astype(np.uint8)
+        ir8[~valid] = 0  # FOV boundary → black (not a bright candidate)
+
+        ir_blur = cv2.GaussianBlur(ir8, (0, 0), _IR_BLUR_SIGMA)
+
+        # Threshold for bright pixels (retro-reflective ball).
+        bright_thresh = int(_BALL_BRIGHT_FRACTION * 255)
+        mask = np.where((ir_blur >= bright_thresh) & valid, np.uint8(255), np.uint8(0))
+
+        # Debug frame: IR image with green tint over candidate pixels.
+        dbg = cv2.cvtColor(ir8, cv2.COLOR_GRAY2BGR)
+        tint = np.zeros_like(dbg)
+        tint[mask > 0] = (0, 60, 20)
+        dbg = cv2.addWeighted(dbg, 1.0, tint, 0.5, 0)
+
+        contours, _ = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+
+        radius_mid = (self.ball_radius_min_mm + self.ball_radius_max_mm) / 2.0
+        best: Optional[BallDetection] = None
+        best_score = float("inf")
+
+        _CLR_SHAPE = (0,  80, 200)
+        _CLR_FILL  = (200, 0, 200)
+        _CLR_DEPTH = (0, 165, 255)
+        _CLR_SIZE  = (0, 200, 200)
+        _CLR_CAND  = (0, 200,  80)
+        _CLR_BEST  = (0, 255, 120)
+
+        for c in contours:
+            area = float(cv2.contourArea(c))
+            if area < _MIN_CONTOUR_AREA:
+                continue
+
+            perimeter = float(cv2.arcLength(c, closed=True))
+            if perimeter < 1.0:
+                continue
+
+            circularity = 4.0 * np.pi * area / (perimeter * perimeter)
+            if circularity < _MIN_CIRCULARITY:
+                counts["shape"] += 1
+                cv2.drawContours(dbg, [c], -1, _CLR_SHAPE, 1)
+                continue
+
+            (_, _), radius_px = cv2.minEnclosingCircle(c)
+            radius_px = float(radius_px)
+            fill = area / (np.pi * radius_px * radius_px) if radius_px > 0 else 0.0
+            if fill < _MIN_FILL_FRACTION:
+                counts["fill"] += 1
+                cv2.drawContours(dbg, [c], -1, _CLR_FILL, 1)
+                continue
+
+            M = cv2.moments(c)
+            if M["m00"] == 0:
+                continue
+            cx = M["m10"] / M["m00"]
+            cy = M["m01"] / M["m00"]
+            icx, icy, ir_ = int(round(cx)), int(round(cy)), int(round(radius_px))
+
+            z_mm = self._sample_depth(depth_mm, cx, cy, radius_px)
+            if z_mm is None:
+                z_mm = self._sample_depth_ring(depth_mm, cx, cy, radius_px, 1.0, 1.6)
+            if z_mm is None:
+                counts["depth"] += 1
+                cv2.circle(dbg, (icx, icy), ir_, _CLR_DEPTH, 1)
+                continue
+
+            x_mm, y_mm, _ = camera_geometry.unproject_pixel(
+                cx, cy, z_mm, self.fx, self.fy, self.ppx, self.ppy,
+            )
+
+            radius_mm = radius_px * z_mm / self.fx
+            if not (self.ball_radius_min_mm <= radius_mm <= self.ball_radius_max_mm):
+                counts["size"] += 1
+                cv2.circle(dbg, (icx, icy), ir_, _CLR_SIZE, 1)
+                continue
+
+            counts["accepted"] += 1
+            cv2.circle(dbg, (icx, icy), ir_, _CLR_CAND, 1)
+
+            score = abs(radius_mm - radius_mid)
+            if score < best_score:
+                best_score = score
+                best = BallDetection(
+                    cx=cx, cy=cy, radius_px=radius_px,
+                    x_mm=x_mm, y_mm=y_mm, z_mm=z_mm, radius_mm=radius_mm,
+                )
+
+        if best is not None:
+            icx, icy, ir_ = int(round(best.cx)), int(round(best.cy)), int(round(best.radius_px))
+            cv2.circle(dbg, (icx, icy), ir_, _CLR_BEST, 2)
+            cv2.drawMarker(dbg, (icx, icy), _CLR_BEST, cv2.MARKER_CROSS, ir_ // 2, 1, cv2.LINE_AA)
+
+        summary = "  ".join(f"{k}:{v}" for k, v in counts.items() if v) or "no candidates"
+        cv2.putText(dbg, summary, (8, 20), cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5, (0, 255, 255), 1, cv2.LINE_AA)
+
+        self._debug_frame = dbg
+        return best
+
+    def _sample_depth(
+        self, depth_mm: np.ndarray, cx: float, cy: float, radius_px: float,
+    ) -> Optional[float]:
+        return camera_geometry.sample_depth_patch(
+            depth_mm, cx, cy, radius_px,
+            _DEPTH_SAMPLE_FRACTION, _MIN_VALID_DEPTH_FRACTION,
+        )
+
+    def _sample_depth_ring(
+        self, depth_mm: np.ndarray, cx: float, cy: float,
+        radius_px: float, r_low: float, r_high: float,
+    ) -> Optional[float]:
+        return camera_geometry.sample_depth_ring(
+            depth_mm, cx, cy, radius_px, r_low, r_high, _MIN_VALID_DEPTH_FRACTION,
+        )
+
+
+# ---------------------------------------------------------------------------
+# Ball tracker
+# ---------------------------------------------------------------------------
+
+class BallTracker:
+    """
+    Tracks a ball across frames using an EKF.
+
+    Takes BallDetection results from BallDetector and maintains a
+    constant-velocity EKF state [X, Y, Z, Vx, Vy, Vz] (mm, mm/s).
+
+    The predict step runs at _PREDICT_HZ in a daemon background thread;
+    update() only performs EKF corrections when a detection is provided.
+
+    Parameters
+    ----------
+    fx, fy, ppx, ppy
+        Depth/IR camera intrinsics (pixels).  Must match those used by the
+        BallDetector so the EKF measurement model is consistent.
+    """
+
+    def __init__(self, fx: float, fy: float, ppx: float, ppy: float):
+        self.fx = fx
+        self.fy = fy
+        self.ppx = ppx
+        self.ppy = ppy
+
+        self._tracking = False
+        self._miss_count = 0
+        self._lost_pos: Optional[tuple[float, float]] = None
+        self._lost_frames = 0
+        self._ekf = self._make_ekf(1.0 / _PREDICT_HZ)
+        self._stop_predict = threading.Event()
+        _pt = threading.Thread(target=self._predict_loop, daemon=True, name="ekf-predict")
+        _pt.start()
+
+    @classmethod
+    def from_k4a_calibration(cls, calibration, camera_type=None) -> "BallTracker":
+        """Build a tracker from a pyk4a Calibration object."""
+        from pyk4a import CalibrationType
+        if camera_type is None:
+            camera_type = CalibrationType.DEPTH
+        mat = calibration.get_camera_matrix(camera_type)
+        return cls(
+            fx=float(mat[0, 0]),
+            fy=float(mat[1, 1]),
+            ppx=float(mat[0, 2]),
+            ppy=float(mat[1, 2]),
+        )
+
     def close(self) -> None:
         """Stop the background prediction thread."""
         self._stop_predict.set()
 
-    def _predict_loop(self) -> None:
-        dt = 1.0 / _PREDICT_HZ
-        while not self._stop_predict.is_set():
-            t0 = time.monotonic()
-            if self._tracking:
-                self._ekf.predict()
-            elapsed = time.monotonic() - t0
-            rem = dt - elapsed
-            if rem > 0:
-                time.sleep(rem)
-
     def update(
         self,
-        ir_uint16: np.ndarray,
-        depth_mm: np.ndarray,
+        detection: Optional[BallDetection],
     ) -> tuple[Optional[tuple[float, float, float]], Optional[BallDetection]]:
         """
-        Process one camera frame.  The EKF predict step runs independently at
-        _PREDICT_HZ in a background thread; this method only runs the
-        measurement correction when a detection is found.
+        Advance the tracker with the latest detection result.
+
+        Parameters
+        ----------
+        detection
+            Output of BallDetector.detect(), or None if no ball was found.
 
         Returns
         -------
-        position : EKF-smoothed (X, Y, Z) mm from camera origin, or None.
-        detection : BallDetection with raw pixel data, or None if no blob found.
+        position
+            EKF-smoothed (X, Y, Z) mm from camera origin, or None if not tracking.
+        smoothed_detection
+            The input detection with radius_px re-derived from the EKF Z so the
+            display circle is smooth, or None.
         """
-        detection = self._detect(ir_uint16, depth_mm)
-
         if not self._tracking:
             self._lost_frames += 1
             if detection is not None:
-                # Gate re-acquisition to last known position for _REACQUIRE_FRAMES
-                # so a false positive can't claim the track while the ball is
-                # temporarily hidden in the grid.
                 if self._lost_pos is not None and self._lost_frames <= _REACQUIRE_FRAMES:
                     lx, ly = self._lost_pos
                     dist = ((detection.x_mm - lx) ** 2 + (detection.y_mm - ly) ** 2) ** 0.5
@@ -344,7 +466,6 @@ class BallTracker:
                     self._lost_pos = None
                     self._lost_frames = 0
         else:
-            # The predict thread has already advanced the filter; just correct.
             if detection is not None:
                 px, py, _ = self._ekf.position
                 dist = ((detection.x_mm - px) ** 2 + (detection.y_mm - py) ** 2) ** 0.5
@@ -368,8 +489,6 @@ class BallTracker:
 
         pos = self._ekf.position
         if detection is not None:
-            # Re-derive radius_px from EKF Z so the display circle is as smooth
-            # as the position rather than jittering with raw depth reads.
             ekf_z = pos[2]
             if ekf_z > 1.0:
                 smooth_r = detection.radius_mm * self.fx / ekf_z
@@ -380,215 +499,24 @@ class BallTracker:
                 )
         return pos, detection
 
-    # ------------------------------------------------------------------
-    # Detection (IR)
-    # ------------------------------------------------------------------
-
-    def _detect(
-        self, ir_uint16: np.ndarray, depth_mm: np.ndarray
-    ) -> Optional[BallDetection]:
-        counts = {"shape": 0, "fill": 0, "depth": 0, "size": 0, "accepted": 0}
-        self.last_reject_counts = counts
-
-        # --- contrast-stretch the 16-bit IR image to 8-bit ---
-        # Pixels outside the Kinect's circular FOV are exactly 0 (invalid).
-        # Compute contrast stretch only on valid pixels, then paint invalid
-        # pixels as 255 so they are bright background in THRESH_BINARY_INV.
-        ir_f = ir_uint16.astype(np.float32, copy=False)
-        # Erode the valid mask slightly to exclude the dim FOV-boundary ring
-        # (those pixels are technically > 0 but are vignetting artefacts).
-        raw_valid = (ir_uint16 > 0).astype(np.uint8)
-        fov_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
-        valid_u8 = cv2.erode(raw_valid, fov_kernel)
-        valid = valid_u8 > 0
-        valid_px = ir_f[valid]
-        if valid_px.size == 0:
-            self._debug_frame = None
-            return None
-        p_lo = float(np.percentile(valid_px, _IR_PERCENTILE_LOW))
-        p_hi = float(np.percentile(valid_px, _IR_PERCENTILE_HIGH))
-        if p_hi <= p_lo:
-            self._debug_frame = None
-            return None
-        ir8 = np.clip((ir_f - p_lo) / (p_hi - p_lo) * 255.0, 0, 255).astype(np.uint8)
-        ir8[~valid] = 255   # FOV boundary + invalid pixels → white → not detected
-
-        ir_blur = cv2.GaussianBlur(ir8, (0, 0), _IR_BLUR_SIGMA)
-
-        # --- table mask: confine the dark-blob search to the lit tabletop ---
-        # Bright tiles → close over grid gaps → largest component → convex
-        # hull.  The hull also covers grid gaps, missing tiles and a ball
-        # sitting at the table edge; the floor/surroundings are excluded.
-        bright = cv2.inRange(ir_blur, int(_TABLE_BRIGHT_FRACTION * 255), 255)
-        bright[~valid] = 0
-        bright = cv2.morphologyEx(bright, cv2.MORPH_CLOSE, self._table_close_kernel)
-        table_mask = valid_u8 * 255  # fallback: whole valid FOV
-        n_lbl, labels, stats, _ = cv2.connectedComponentsWithStats(bright)
-        if n_lbl > 1:
-            largest = 1 + int(np.argmax(stats[1:, cv2.CC_STAT_AREA]))
-            if stats[largest, cv2.CC_STAT_AREA] >= _MIN_TABLE_AREA_FRACTION * valid_px.size:
-                comp = (labels == largest).astype(np.uint8)
-                t_cnts, _ = cv2.findContours(comp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                if t_cnts:
-                    hull = cv2.convexHull(max(t_cnts, key=cv2.contourArea))
-                    table_mask = np.zeros_like(ir8)
-                    cv2.fillConvexPoly(table_mask, hull, 255)
-
-        # Local background: closing erases dark features smaller than the
-        # kernel, leaving the surrounding table level.  A pixel is "dark"
-        # relative to that level, so the ball is found on dim tiles too.
-        bg = cv2.morphologyEx(ir_blur, cv2.MORPH_CLOSE, self._bg_close_kernel)
-        dark = ir_blur.astype(np.float32) < bg.astype(np.float32) * self.ir_thresh_fraction
-        mask = np.where(dark & (table_mask > 0), np.uint8(255), np.uint8(0))
-        # Opening erases grid-gap lines (thinner than the kernel); the
-        # ball's disc survives with its silhouette intact.
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, self._grid_open_kernel)
-
-        # Build debug frame: IR image as background, mask tinted blue,
-        # table boundary outlined grey.
-        dbg = cv2.cvtColor(ir8, cv2.COLOR_GRAY2BGR)
-        tint = np.zeros_like(dbg)
-        tint[mask > 0] = (60, 20, 0)   # blue tint on masked pixels
-        dbg = cv2.addWeighted(dbg, 1.0, tint, 0.5, 0)
-        tm_cnts, _ = cv2.findContours(table_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(dbg, tm_cnts, -1, (128, 128, 128), 1)
-
-        # --- Contour-based detection ---
-        contours, _ = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-
-        radius_mid = (self.ball_radius_min_mm + self.ball_radius_max_mm) / 2.0
-        best: Optional[BallDetection] = None
-        best_score = float("inf")
-
-        _CLR_SHAPE  = (0,  80, 200)   # red  — failed area/circularity
-        _CLR_FILL   = (200, 0, 200)   # magenta — failed fill fraction
-        _CLR_DEPTH  = (0, 165, 255)   # orange — failed depth curvature
-        _CLR_SIZE   = (0, 200, 200)   # yellow — failed physical size
-        _CLR_CAND   = (0, 200,  80)   # green  — accepted candidate
-        _CLR_BEST   = (0, 255, 120)   # bright green — final pick
-
-        for c in contours:
-            area = float(cv2.contourArea(c))
-            if area < _MIN_CONTOUR_AREA:
-                continue
-
-            perimeter = float(cv2.arcLength(c, closed=True))
-            if perimeter < 1.0:
-                continue
-
-            circularity = 4.0 * np.pi * area / (perimeter * perimeter)
-            if circularity < _MIN_CIRCULARITY:
-                counts["shape"] += 1
-                cv2.drawContours(dbg, [c], -1, _CLR_SHAPE, 1)
-                continue
-
-            # The enclosing circle gives a radius estimate that is robust to
-            # nicks/highlights biting into the contour; the fill fraction
-            # rejects compact-but-non-round blobs (e.g. missing-tile holes).
-            (_, _), radius_px = cv2.minEnclosingCircle(c)
-            radius_px = float(radius_px)
-            fill = area / (np.pi * radius_px * radius_px) if radius_px > 0 else 0.0
-            if fill < _MIN_FILL_FRACTION:
-                counts["fill"] += 1
-                cv2.drawContours(dbg, [c], -1, _CLR_FILL, 1)
-                continue
-
-            M = cv2.moments(c)
-            if M["m00"] == 0:
-                continue
-            cx = M["m10"] / M["m00"]
-            cy = M["m01"] / M["m00"]
-            icx, icy, ir_ = int(round(cx)), int(round(cy)), int(round(radius_px))
-
-            # Get depth at ball centre; if the ball absorbs IR (invalid),
-            # fall back to the table surface just outside the silhouette.
-            z_mm = self._sample_depth(depth_mm, cx, cy, radius_px)
-            if z_mm is None:
-                z_mm = self._sample_depth_ring(
-                    depth_mm, cx, cy, radius_px, 1.0, 1.6,
-                )
-            if z_mm is None:
-                counts["depth"] += 1
-                cv2.circle(dbg, (icx, icy), ir_, _CLR_DEPTH, 1)
-                continue
-            x_mm, y_mm, _ = camera_geometry.unproject_pixel(
-                cx, cy, z_mm, self.fx, self.fy, self.ppx, self.ppy
-            )
-
-            radius_mm = radius_px * z_mm / self.fx
-            if not (self.ball_radius_min_mm <= radius_mm <= self.ball_radius_max_mm):
-                counts["size"] += 1
-                cv2.circle(dbg, (icx, icy), ir_, _CLR_SIZE, 1)
-                continue
-
-            counts["accepted"] += 1
-            cv2.circle(dbg, (icx, icy), ir_, _CLR_CAND, 1)
-
-            score = abs(radius_mm - radius_mid)
-            if score < best_score:
-                best_score = score
-                best = BallDetection(
-                    cx=cx, cy=cy, radius_px=radius_px,
-                    x_mm=x_mm, y_mm=y_mm, z_mm=z_mm, radius_mm=radius_mm,
-                )
-
-        # Highlight the winning detection
-        if best is not None:
-            icx, icy, ir_ = int(round(best.cx)), int(round(best.cy)), int(round(best.radius_px))
-            cv2.circle(dbg, (icx, icy), ir_, _CLR_BEST, 2)
-            cv2.drawMarker(dbg, (icx, icy), _CLR_BEST,
-                           cv2.MARKER_CROSS, ir_ // 2, 1, cv2.LINE_AA)
-
-        summary = "  ".join(f"{k}:{v}" for k, v in counts.items() if v) or "no candidates"
-        cv2.putText(dbg, summary, (8, 20), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5, (0, 255, 255), 1, cv2.LINE_AA)
-
-        self._debug_frame = dbg
-        return best
-
-    def _sample_depth(
-        self,
-        depth_mm: np.ndarray,
-        cx: float,
-        cy: float,
-        radius_px: float,
-    ) -> Optional[float]:
-        return camera_geometry.sample_depth_patch(
-            depth_mm, cx, cy, radius_px,
-            _DEPTH_SAMPLE_FRACTION, _MIN_VALID_DEPTH_FRACTION,
-        )
-
-    def _sample_depth_ring(
-        self,
-        depth_mm: np.ndarray,
-        cx: float,
-        cy: float,
-        radius_px: float,
-        r_low_fraction: float,
-        r_high_fraction: float,
-    ) -> Optional[float]:
-        """Median depth in an annular region [r_low, r_high] × radius_px."""
-        return camera_geometry.sample_depth_ring(
-            depth_mm, cx, cy, radius_px,
-            r_low_fraction, r_high_fraction, _MIN_VALID_DEPTH_FRACTION,
-        )
-
-    # ------------------------------------------------------------------
-    # EKF factory
-    # ------------------------------------------------------------------
+    def _predict_loop(self) -> None:
+        dt = 1.0 / _PREDICT_HZ
+        while not self._stop_predict.is_set():
+            t0 = time.monotonic()
+            if self._tracking:
+                self._ekf.predict()
+            elapsed = time.monotonic() - t0
+            rem = dt - elapsed
+            if rem > 0:
+                time.sleep(rem)
 
     def _make_ekf(self, dt: float) -> _EKF:
-        # Scale Q so total noise added per second is constant across predict rates.
-        s = dt * 30.0  # relative to the original 30 Hz baseline
+        s = dt * 30.0  # scale Q so noise per second is constant regardless of predict rate
         Q = np.diag([
-            1.0  * s, 1.0  * s, 1.0  * s,   # position (mm²/step)
-            50.0 * s, 50.0 * s, 50.0 * s,   # velocity (mm²/s²/step)
+            1.0  * s, 1.0  * s, 1.0  * s,
+            50.0 * s, 50.0 * s, 50.0 * s,
         ])
-
-        # Measurement noise: [u_px, v_px, z_mm]
-        # Pixel uncertainty ~1–2 px; depth is noisier, especially on specular surfaces.
-        R = np.diag([2.0, 2.0, 25.0])
-
+        R = np.diag([2.0, 2.0, 25.0])  # [u_px, v_px, z_mm]
         return _EKF(
             fx=self.fx, fy=self.fy, ppx=self.ppx, ppy=self.ppy,
             dt=dt, Q=Q, R=R,
@@ -619,17 +547,13 @@ if __name__ == "__main__":
     )
 
     def _parse():
-        p = _ap.ArgumentParser(
-            description="Ball tracker terminal test — prints 3-D position live."
-        )
+        p = _ap.ArgumentParser(description="Ball tracker terminal test — prints 3-D position live.")
         p.add_argument("--device-id",   type=int, default=0)
         p.add_argument("--depth-mode",  choices=sorted(_DEPTH_MODES), default="nfov_unbinned")
         p.add_argument("--fps",         choices=sorted(_FPS_VALUES, key=int), default="30")
         p.add_argument("--depth-engine-display", default=_DEPTH_ENGINE_DISPLAY)
         p.add_argument("--ball-radius-min",  type=float, default=25.0)
         p.add_argument("--ball-radius-max",  type=float, default=30.0)
-        p.add_argument("--ir-thresh",        type=float, default=_IR_THRESH_FRACTION,
-                       help="IR threshold fraction 0–1 (default %(default).2f)")
         return p.parse_args()
 
     _args = _parse()
@@ -642,7 +566,6 @@ if __name__ == "__main__":
         print(f"No Kinect at index {_args.device_id} ({_n} found).", file=_sys.stderr)
         raise SystemExit(1)
 
-    # IR + depth only — no colour camera needed.
     _config = _Config(
         depth_mode=_DEPTH_MODES[_args.depth_mode],
         camera_fps=_FPS_VALUES[_args.fps],
@@ -652,16 +575,15 @@ if __name__ == "__main__":
 
     try:
         _k4a.start()
-        _tracker = BallTracker.from_k4a_calibration(
+        _detector = BallDetector.from_k4a_calibration(
             _k4a.calibration,
             ball_radius_min_mm=_args.ball_radius_min,
             ball_radius_max_mm=_args.ball_radius_max,
-            ir_thresh_fraction=_args.ir_thresh,
         )
+        _tracker = BallTracker.from_k4a_calibration(_k4a.calibration)
         print(
-            f"Tracker ready.  "
-            f"IR thresh={_tracker.ir_thresh_fraction:.2f}  "
-            f"detecting dark ball"
+            f"Detector ready.  bright_threshold={_BALL_BRIGHT_FRACTION:.2f}  "
+            f"radius=[{_args.ball_radius_min}, {_args.ball_radius_max}] mm"
         )
         print("Ctrl-C to stop.\n")
 
@@ -677,7 +599,8 @@ if __name__ == "__main__":
             if _ir is None or _depth is None:
                 continue
 
-            _pos, _det = _tracker.update(_ir, _depth)
+            _det = _detector.detect(_ir, _depth)
+            _pos, _det = _tracker.update(_det)
 
             if _pos is not None:
                 _x, _y, _z = _pos
@@ -688,8 +611,7 @@ if __name__ == "__main__":
                     f"r={_r:5.1f} mm   "
                 )
             else:
-                _miss = _tracker._miss_count
-                _line = f"\r no ball   (miss {_miss:2d}/{_MAX_MISS_FRAMES}){'':30}"
+                _line = f"\r no ball   (miss {_tracker._miss_count:2d}/{_MAX_MISS_FRAMES}){'':30}"
 
             print(_line, end="", flush=True)
 
@@ -699,6 +621,7 @@ if __name__ == "__main__":
         print(f"\nError: {_exc}", file=_sys.stderr)
         raise SystemExit(1)
     finally:
+        _tracker.close()
         if _k4a.is_running:
             _set_display(_args.depth_engine_display, "depth engine", quiet=True)
             _k4a.stop()
