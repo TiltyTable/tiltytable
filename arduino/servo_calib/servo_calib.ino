@@ -186,6 +186,11 @@ bool read8(uint8_t reg, uint8_t &val) {
     return true;
 }
 
+uint8_t servoPwmPrescale() {
+    const uint32_t denom = (uint32_t)PWM_FREQ_HZ * 4096UL;
+    return (uint8_t)(((OSC_FREQ_HZ + denom / 2) / denom) - 1);
+}
+
 bool setPwmRaw(uint8_t ch, uint16_t on, uint16_t off) {
     if (ch >= NUM_CHANNELS) return false;
     Wire.beginTransmission(i2cAddr);
@@ -236,9 +241,19 @@ bool configurePwm(uint8_t addr) {
         return false;
     }
 
-    write8(PCA9685_MODE1, MODE1_RESTART);
+    if (!write8(PCA9685_MODE1, MODE1_RESTART)) {
+        Serial.print(F("ERR A WRITE MODE1 "));
+        printHexAddr(i2cAddr);
+        Serial.println();
+        return false;
+    }
     delay(10);
-    write8(PCA9685_MODE2, MODE2_OUTDRV);
+    if (!write8(PCA9685_MODE2, MODE2_OUTDRV)) {
+        Serial.print(F("ERR A WRITE MODE2 "));
+        printHexAddr(i2cAddr);
+        Serial.println();
+        return false;
+    }
 
     uint8_t oldmode;
     if (!read8(PCA9685_MODE1, oldmode)) {
@@ -248,13 +263,33 @@ bool configurePwm(uint8_t addr) {
         return false;
     }
 
-    uint32_t denom = (uint32_t)PWM_FREQ_HZ * 4096UL;
-    uint8_t prescale = (uint8_t)(((OSC_FREQ_HZ + denom / 2) / denom) - 1);
-    write8(PCA9685_MODE1, (oldmode & ~MODE1_RESTART) | MODE1_SLEEP);
-    write8(PCA9685_PRESCALE, prescale);
-    write8(PCA9685_MODE1, oldmode | MODE1_AI);
+    const uint8_t prescale = servoPwmPrescale();
+    if (!write8(PCA9685_MODE1, (oldmode & ~MODE1_RESTART) | MODE1_SLEEP) ||
+        !write8(PCA9685_PRESCALE, prescale) ||
+        !write8(PCA9685_MODE1, oldmode | MODE1_AI)) {
+        Serial.print(F("ERR A CONFIG "));
+        printHexAddr(i2cAddr);
+        Serial.println();
+        return false;
+    }
     delay(5);
-    write8(PCA9685_MODE1, (oldmode | MODE1_AI | MODE1_RESTART));
+    if (!write8(PCA9685_MODE1, (oldmode | MODE1_AI | MODE1_RESTART))) {
+        Serial.print(F("ERR A RESTART "));
+        printHexAddr(i2cAddr);
+        Serial.println();
+        return false;
+    }
+
+    uint8_t actualPrescale = 0xFF;
+    if (!read8(PCA9685_PRESCALE, actualPrescale) || actualPrescale != prescale) {
+        Serial.print(F("ERR A PRESCALE "));
+        printHexAddr(i2cAddr);
+        Serial.print(F(" expected "));
+        Serial.print(prescale);
+        Serial.print(F(" got "));
+        Serial.println(actualPrescale);
+        return false;
+    }
 
     for (uint8_t i = 0; i < NUM_CHANNELS; i++) {
         channelOff(i);

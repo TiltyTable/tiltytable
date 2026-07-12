@@ -543,24 +543,6 @@ dd {
   min-width: 0;
 }
 
-.calib-buttons {
-  display: flex;
-  gap: 0.4rem;
-}
-
-.action.neutral {
-  background: transparent;
-  border: 1px solid var(--border-hi);
-  color: var(--text);
-}
-
-.action.neutral:hover { background: var(--accent-dim); color: var(--accent); }
-
-.action:disabled {
-  opacity: 0.35;
-  cursor: not-allowed;
-}
-
 .calib-residuals {
   display: grid;
   gap: 1px;

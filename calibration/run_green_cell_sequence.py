@@ -50,7 +50,7 @@ except ImportError:
 
 CALIBRATION_DIR = os.path.dirname(os.path.abspath(__file__))
 POSITION_KEYS = ("recessed", "extended", "neutral")
-STEP_DELAY_S = 0.100
+STEP_DELAY_S = 0.500
 
 
 def load_json(path):

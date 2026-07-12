@@ -1,63 +1,69 @@
 #!/usr/bin/env python3
 """
-Extrinsic calibration of the Azure Kinect relative to the Stewart-platform
-table, using 5 retroreflective markers permanently mounted at fixed, known
-positions on the platform's table surface — not a removable fixture.
+Continuous tracking of the table's pose relative to the (tripod-fixed) Azure
+Kinect, using 5 retroreflective markers mounted on the vertical faces of
+~1 inch tall walls built around two adjacent edges of the table — not flat
+tape on the table's top surface.
 
-Calibration is performed by driving the platform to its one reproducible
-physical reference pose (cranks-up / max heave / roll=pitch=0 — see
-arduino/uim5756pm_stewart's `calibrate` command) and capturing a single frame.
-Because the markers never move relative to the table, their relative
-geometry is always known in advance and detection/matching is fully
-automatic — no per-session measurement or manual placement.
+The table sits on a 3-leg Stewart platform and tilts/heaves during normal
+operation, so the camera-to-table transform is *not* fixed for a session —
+it changes continuously as the platform moves. Because the markers are on
+raised wall faces (above the play surface, facing outward/upward) they stay
+visible to the camera across the platform's tilt range, which is what makes
+*continuous* re-tracking (rather than a one-time calibration) practical.
 
-Marker layout (world frame, all Z=0 — markers are flat retroreflective tape
-on a square table, side length TABLE_SIDE_LENGTH_MM = l):
+Marker layout (world frame = the table's own body-fixed frame; long wall is
+the X axis, short wall is the Y axis, meeting at the origin corner):
 
-    4 (0, l/6) ------ 2 (l/6, l/6) ------ 3 (l/3, l/3)
-        |
-        |
-    0 (0, 0) ---------------------- 1 (l/3, 0)
+    y2 (0, Ly/2, h)
+    |
+    y1 (0, Ly/4, h)
+    |
+    origin (0, 0, h) ------ x1 (Lx/3, 0, h) ------ x2 (2*Lx/3, 0, h)
 
-Point 0 is the table corner arbitrarily defined as the world origin once the
-platform reaches its reference pose. Point 1 sits 1/3 of a side length along
-one edge from 0. Point 4 sits 1/6 of a side length along the other edge.
-Point 2 sits at (l/6, l/6), and point 3 at (l/3, l/3) — both further into
-the table interior along the diagonal from 0.
+h = MARKER_HEIGHT_MM (~25.4mm, 1 inch wall height). Lx = TABLE_LONG_SIDE_MM,
+Ly = TABLE_SHORT_SIDE_MM (both placeholders below pending the user's actual
+wall measurements — update those two constants once known; everything else
+derives from them).
 
-World-frame convention: +X runs from point 0 toward point 1, +Y runs from
-point 0 toward point 4, +Z is "up" out of the table via the right-hand rule
-(X cross Y). Getting the physical orientation backwards silently mirrors the
-fitted pose; the Kabsch reflection-guard in fit_rigid_transform only
-corrects the SVD's internal sign ambiguity, it cannot detect a wrong
-physical convention.
-
-Note: this layout has more internal distance symmetry than a generic
-scattering of points (several pairwise distances coincide, e.g. |0-1|=|1-3|
-and |0-4|=|2-4|) — the full 5-point distance signature is still unique (no
-exact permutation ties), but the margin between the correct match and the
-next-best wrong one is thinner than it would be for a more irregular
-layout, so matching may be more sensitive to detection noise.
+World-frame convention: +X runs from origin toward the x-wall markers, +Y
+runs from origin toward the y-wall markers, +Z is "up" out of the table via
+the right-hand rule (X cross Y). Getting the physical orientation backwards
+silently mirrors the fitted pose; the Kabsch reflection-guard in
+fit_rigid_transform only corrects the SVD's internal sign ambiguity, it
+cannot detect a wrong physical convention.
 
 Point identity is recovered automatically (no operator input) via a
 pairwise-distance-signature match: since all 5 points' relative distances are
-fixed and known in advance, and this specific layout has no full permutation
-symmetry, each detected marker can be matched to its known point by finding
-the assignment whose pairwise distances best reproduce the known distance
-matrix — no assumption about right angles or arm shapes is needed.
+fixed and known in advance, each detected marker can be matched to its known
+point by finding the assignment whose pairwise distances best reproduce the
+known distance matrix — no assumption about right angles or arm shapes is
+needed.
 
-Usage:
-    attempt = run_calibration(ir_uint16, depth_mm, fx, fy, ppx, ppy)
-    if attempt.ok:
-        extrinsics = save_extrinsics(path, attempt.fit)
+Because `fit_rigid_transform` fits directly against the markers' known
+positions in the table's own body-fixed frame, running it repeatedly (not
+just once) gives the *current* camera-to-table pose at all times, correctly
+reflecting whatever tilt/heave the platform is at right now. This also means
+there is no "reference pose" precondition anymore — pose tracking works
+regardless of platform state, since the table's local frame is defined by
+the markers themselves.
+
+Usage (single attempt):
+    attempt = run_pose_fit(ir_uint16, depth_mm, fx, fy, ppx, ppy)
+
+Usage (continuous tracking, called repeatedly e.g. every few camera frames):
+    tracker = TablePoseTracker()
+    tracker.update(ir_uint16, depth_mm, fx, fy, ppx, ppy)
+    world_xyz, stale, age_s = tracker.apply(ball_cam_xyz)
+    # `stale` is True iff the most recent update() attempt failed (e.g. a
+    # marker was briefly occluded) — the tracker holds the last successful
+    # R/t rather than dropping position_world for one bad frame, but callers
+    # can see `stale`/`age_s` and decide whether to trust it.
 """
 
 import itertools
-import json
-import sys
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
-from pathlib import Path
+import time
+from dataclasses import dataclass, field
 from typing import Optional
 
 import cv2
@@ -67,17 +73,19 @@ import camera_geometry
 
 # ---------------------------------------------------------------------------
 # Table marker geometry — single source of truth for where the 5 permanent
-# markers sit on the table. Measured directly (rounded to whole mm), not
-# derived by dividing the side length, to keep the numbers simple and exact.
+# wall-mounted markers sit relative to the table's own origin corner.
 # ---------------------------------------------------------------------------
-TABLE_SIDE_LENGTH_MM = 832.0
+MARKER_HEIGHT_MM = 25.4  # ~1 inch wall height where markers are mounted
+
+TABLE_LONG_SIDE_MM = 832.0   # TODO: replace with measured long/X wall length
+TABLE_SHORT_SIDE_MM = 832.0  # TODO: replace with measured short/Y wall length
 
 TABLE_MARKER_WORLD_POINTS: dict[str, tuple[float, float, float]] = {
-    "0": (0.0, 0.0, 0.0),
-    "1": (277.0, 0.0, 0.0),
-    "2": (139.0, 139.0, 0.0),
-    "3": (277.0, 277.0, 0.0),
-    "4": (0.0, 139.0, 0.0),
+    "origin": (0.0, 0.0, MARKER_HEIGHT_MM),
+    "x1": (TABLE_LONG_SIDE_MM / 3.0, 0.0, MARKER_HEIGHT_MM),
+    "x2": (2.0 * TABLE_LONG_SIDE_MM / 3.0, 0.0, MARKER_HEIGHT_MM),
+    "y1": (0.0, TABLE_SHORT_SIDE_MM / 4.0, MARKER_HEIGHT_MM),
+    "y2": (0.0, TABLE_SHORT_SIDE_MM / 2.0, MARKER_HEIGHT_MM),
 }
 
 _EXPECTED_MARKER_COUNT = len(TABLE_MARKER_WORLD_POINTS)
@@ -88,13 +96,13 @@ _DISTANCE_MATCH_AMBIGUITY_MM = 15.0  # runner-up assignment must be at least thi
 
 # ---------------------------------------------------------------------------
 # Marker detection.  Retroreflective tape returns far more IR than the
-# diffuse tabletop, so — unlike ball_tracker.py's *relative*, local-background
-# dark threshold — this thresholds the raw 16-bit IR frame directly at a
-# high *absolute* count.  The contrast-stretched 8-bit image ball_tracker.py
-# builds would clip both the bright table and the marker to 255 and lose the
-# distinction entirely.
+# diffuse background, so — unlike ball_tracker.py's *relative*, local-
+# background dark threshold — this thresholds the raw 16-bit IR frame
+# directly at a high *absolute* count.  The contrast-stretched 8-bit image
+# ball_tracker.py builds would clip both the bright background and the
+# marker to 255 and lose the distinction entirely.
 # ---------------------------------------------------------------------------
-_MARKER_IR_MIN_COUNTS = 3600.0  # empirically the point where retroreflective tape pops against the table
+_MARKER_IR_MIN_COUNTS = 3600.0  # module default; overridden live via UI slider in practice
 _MIN_MARKER_AREA_PX = 4.0
 _MAX_MARKER_AREA_PX = 4000.0
 _MIN_MARKER_CIRCULARITY = 0.6
@@ -104,9 +112,9 @@ _MIN_VALID_DEPTH_FRACTION = 0.10
 
 
 # Candidate thresholds reported alongside every detection attempt (success or
-# failure) so the operator can tune _MARKER_IR_MIN_COUNTS from real sensor
-# data instead of guessing — pixel counts at each threshold reveal where the
-# markers actually separate from the table background.
+# failure) so the operator can tune the live threshold slider from real
+# sensor data instead of guessing — pixel counts at each threshold reveal
+# where the markers actually separate from the background.
 _DIAGNOSTIC_THRESHOLDS = (300.0, 500.0, 800.0, 1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 3500.0, 4000.0)
 
 
@@ -155,29 +163,13 @@ class RigidFitResult:
 
 
 @dataclass
-class CalibrationAttempt:
+class PoseFitAttempt:
     ok: bool
     error: Optional[str]
     debug_frame: Optional[np.ndarray]
     fit: Optional[RigidFitResult]
     matched_points: Optional[dict] = field(default=None)
     diagnostics: Optional[DetectionDiagnostics] = field(default=None)
-
-
-@dataclass
-class Extrinsics:
-    R: list          # 3x3, JSON-serializable
-    t: list          # 3
-    timestamp: str
-    residuals_mm: list[float]
-    rms_residual_mm: float
-    max_residual_mm: float
-
-    def apply(self, cam_xyz: tuple[float, float, float]) -> tuple[float, float, float]:
-        R = np.array(self.R, dtype=np.float64)
-        t = np.array(self.t, dtype=np.float64)
-        world = R @ np.array(cam_xyz, dtype=np.float64) + t
-        return float(world[0]), float(world[1]), float(world[2])
 
 
 # ---------------------------------------------------------------------------
@@ -283,8 +275,9 @@ _KNOWN_DIST_MATRIX = np.linalg.norm(
 def match_points(blobs: list) -> dict:
     """
     Match detected marker blobs (or any object exposing .x_mm/.y_mm/.z_mm) to
-    named table marker points ("0" .. "4") using only the blobs' relative 3D
-    geometry — no assumption about right angles or arm shapes.
+    named table marker points ("origin", "x1", "x2", "y1", "y2") using only
+    the blobs' relative 3D geometry — no assumption about right angles or
+    arm shapes.
 
     Tries every assignment of blobs to known points (5! = 120, trivially
     cheap) and picks the one whose pairwise distances best reproduce the
@@ -334,8 +327,8 @@ def match_points(blobs: list) -> dict:
 def fit_rigid_transform(camera_pts: np.ndarray, world_pts: np.ndarray) -> RigidFitResult:
     """
     Solve for the rigid transform (R, t) mapping camera-frame points to
-    world-frame points: world = R @ camera + t.  Classic Kabsch/Umeyama
-    solution via SVD, with reflection correction.
+    world-frame (table-frame) points: world = R @ camera + t.  Classic
+    Kabsch/Umeyama solution via SVD, with reflection correction.
     """
     camera_pts = np.asarray(camera_pts, dtype=np.float64)
     world_pts = np.asarray(world_pts, dtype=np.float64)
@@ -365,10 +358,10 @@ def fit_rigid_transform(camera_pts: np.ndarray, world_pts: np.ndarray) -> RigidF
 
 
 # ---------------------------------------------------------------------------
-# Top-level orchestration
+# Single-attempt orchestration
 # ---------------------------------------------------------------------------
 
-def run_calibration(
+def run_pose_fit(
     ir_uint16: np.ndarray,
     depth_mm: np.ndarray,
     fx: float,
@@ -376,21 +369,21 @@ def run_calibration(
     ppx: float,
     ppy: float,
     marker_ir_min_counts: float = _MARKER_IR_MIN_COUNTS,
-) -> CalibrationAttempt:
-    """One calibration attempt end to end: detect -> match -> fit. Never raises."""
+) -> PoseFitAttempt:
+    """One pose-fit attempt end to end: detect -> match -> fit. Never raises."""
     try:
         blobs, debug_frame, diagnostics = detect_markers(
             ir_uint16, depth_mm, fx, fy, ppx, ppy, ir_min_counts=marker_ir_min_counts,
         )
     except DetectionError as exc:
-        return CalibrationAttempt(
+        return PoseFitAttempt(
             ok=False, error=str(exc), debug_frame=exc.debug_frame, fit=None, diagnostics=exc.diagnostics,
         )
 
     try:
         matched = match_points(blobs)
     except MatchingError as exc:
-        return CalibrationAttempt(
+        return PoseFitAttempt(
             ok=False, error=str(exc), debug_frame=debug_frame, fit=None, diagnostics=diagnostics,
         )
 
@@ -409,50 +402,78 @@ def run_calibration(
         for i, pid in enumerate(point_ids)
     }
 
-    return CalibrationAttempt(
+    return PoseFitAttempt(
         ok=True, error=None, debug_frame=debug_frame, fit=fit,
         matched_points=matched_points, diagnostics=diagnostics,
     )
 
 
 # ---------------------------------------------------------------------------
-# Persistence
+# Continuous tracking
 # ---------------------------------------------------------------------------
 
-def load_extrinsics(path) -> Optional[Extrinsics]:
-    path = Path(path)
-    if not path.exists():
-        return None
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        print(f"Could not load {path}: {exc}", file=sys.stderr)
-        return None
-    try:
-        return Extrinsics(
-            R=data["R"],
-            t=data["t"],
-            timestamp=data["timestamp"],
-            residuals_mm=data.get("residuals_mm", []),
-            rms_residual_mm=data.get("rms_residual_mm", 0.0),
-            max_residual_mm=data.get("max_residual_mm", 0.0),
-        )
-    except (KeyError, TypeError) as exc:
-        print(f"Malformed extrinsics file {path}: {exc}", file=sys.stderr)
-        return None
+class TablePoseTracker:
+    """
+    Holds the most recently fitted camera-to-table pose and refreshes it via
+    repeated calls to `update()` (intended to be called every few camera
+    frames, not necessarily every single one).
 
+    If an update attempt fails (a marker briefly occluded, a bad frame,
+    etc.), the previous successful R/t is kept rather than discarded — the
+    table doesn't stop existing just because one frame's detection failed —
+    but `apply()` reports `stale=True` so callers can decide whether to
+    trust the position for that duration.
+    """
 
-def save_extrinsics(path, fit: RigidFitResult) -> Extrinsics:
-    path = Path(path)
-    extrinsics = Extrinsics(
-        R=fit.R.tolist(),
-        t=fit.t.tolist(),
-        timestamp=datetime.now(timezone.utc).isoformat(),
-        residuals_mm=fit.residuals_mm,
-        rms_residual_mm=fit.rms_residual_mm,
-        max_residual_mm=fit.max_residual_mm,
-    )
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
-    tmp_path.write_text(json.dumps(asdict(extrinsics), indent=2) + "\n", encoding="utf-8")
-    tmp_path.replace(path)
-    return extrinsics
+    def __init__(self):
+        self.R: Optional[np.ndarray] = None
+        self.t: Optional[np.ndarray] = None
+        self.last_fit: Optional[RigidFitResult] = None
+        self.last_attempt: Optional[PoseFitAttempt] = None
+        self.last_success_monotonic: Optional[float] = None
+        self.last_error: Optional[str] = None
+
+    @property
+    def is_tracking(self) -> bool:
+        return self.R is not None
+
+    def age_seconds(self, now: Optional[float] = None) -> Optional[float]:
+        if self.last_success_monotonic is None:
+            return None
+        now = time.monotonic() if now is None else now
+        return now - self.last_success_monotonic
+
+    def update(
+        self,
+        ir_uint16: np.ndarray,
+        depth_mm: np.ndarray,
+        fx: float,
+        fy: float,
+        ppx: float,
+        ppy: float,
+        marker_ir_min_counts: float = _MARKER_IR_MIN_COUNTS,
+        now: Optional[float] = None,
+    ) -> PoseFitAttempt:
+        attempt = run_pose_fit(ir_uint16, depth_mm, fx, fy, ppx, ppy, marker_ir_min_counts=marker_ir_min_counts)
+        self.last_attempt = attempt
+        if attempt.ok:
+            self.R = attempt.fit.R
+            self.t = attempt.fit.t
+            self.last_fit = attempt.fit
+            self.last_success_monotonic = time.monotonic() if now is None else now
+            self.last_error = None
+        else:
+            self.last_error = attempt.error
+        return attempt
+
+    def apply(
+        self, cam_xyz: tuple[float, float, float], now: Optional[float] = None
+    ) -> tuple[Optional[tuple[float, float, float]], bool, Optional[float]]:
+        """Returns (world_xyz | None, stale, age_s). world_xyz is None only if
+        there has never been a successful fit yet."""
+        if self.R is None:
+            return None, True, None
+        world = self.R @ np.array(cam_xyz, dtype=np.float64) + self.t
+        age_s = self.age_seconds(now)
+        stale = self.last_error is not None
+        return (float(world[0]), float(world[1]), float(world[2])), stale, age_s

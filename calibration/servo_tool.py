@@ -835,10 +835,28 @@ class GlobalCalTUI:
 
     def _is_done(self, addr, ch):
         s = self.configs[addr]["servos"].get(str(ch), {})
-        return all(k in s for k in POSITION_KEYS)
+        if all(k in s for k in POSITION_KEYS):
+            return True
+
+        # A green cell is the persisted grid-level completion marker. Treat
+        # it exactly like a fully captured servo so the backend counters,
+        # status, and global progress view agree.
+        return any(
+            mapped_addr == addr
+            and mapped_ch == ch
+            and self._cell_color_name(row, col) == "green"
+            for (row, col), (mapped_addr, mapped_ch) in self._cell_lookup.items()
+        )
 
     def _is_faulty(self, addr, ch):
-        return bool(self.configs[addr]["servos"].get(str(ch), {}).get("faulty"))
+        if self.configs[addr]["servos"].get(str(ch), {}).get("faulty"):
+            return True  # legacy config compatibility
+        return any(
+            mapped_addr == addr
+            and mapped_ch == ch
+            and self._cell_color_name(row, col) == "red"
+            for (row, col), (mapped_addr, mapped_ch) in self._cell_lookup.items()
+        )
 
     def _status_color(self, addr, ch):
         """RED wins over GREEN — same rule as CalTUI._status_color()."""
@@ -1136,10 +1154,13 @@ class GlobalCalTUI:
                     a, tch = tup
                     if is_cursor:
                         mark = "@"
-                    elif self._cell_color_name(r, c):
-                        mark = self._cell_color_name(r, c)[0].upper()
                     elif self._is_faulty(a, tch):
                         mark = "X"
+                    elif self._cell_color_name(r, c):
+                        color_name = self._cell_color_name(r, c)
+                        # Green means completed/tagged, so use the same
+                        # progress marker as other completed cells.
+                        mark = "#" if color_name == "green" else color_name[0].upper()
                     elif self._is_done(a, tch):
                         mark = "#"
                     else:
@@ -1151,8 +1172,8 @@ class GlobalCalTUI:
 
         put(h - 5, 1, self.msg[: w - 2], warn_a if self.msg.startswith("!") else ok_a)
         put(h - 3, 1, "arrows: select mapped cell  A/D +/-10us  Z/X +/-50us  , . +/-2us  r n e: tag  1 2 3: goto", 0)
-        put(h - 2, 1, "Tab: next channel   Shift-Tab/u: previous   space: release   t: test   f: faulty   9: red   8: yellow   7: green   s: save all   q: quit", 0)
-        put(h - 1, 1, "LED: white = selected cell   R/Y/G = persistent cell color   green/red = calibration status   off = not mapped", 0)
+        put(h - 2, 1, "Tab: next channel   Shift-Tab/u: previous   space: release   t: test   9: red/faulty   8: yellow   7: green/done   s: save all   q: quit", 0)
+        put(h - 1, 1, "LED: white = selected cell   R = faulty   Y = warning   # = done   off = not mapped", 0)
         stdscr.refresh()
 
 
@@ -1193,8 +1214,6 @@ def _global_cal_main(stdscr, link, configs, config_paths, sequence, led_cfg, str
         curses.KEY_BTAB: lambda: tui.step(-1),
         ord('u'): lambda: tui.step(-1),             # redundant back-nav
         ord('U'): lambda: tui.step(-1),
-        ord('f'): tui.toggle_faulty,
-        ord('F'): tui.toggle_faulty,
         ord('9'): lambda: tui.set_cell_color("red"),
         ord('8'): lambda: tui.set_cell_color("yellow"),
         ord('7'): lambda: tui.set_cell_color("green"),

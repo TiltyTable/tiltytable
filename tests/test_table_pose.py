@@ -2,15 +2,15 @@ from __future__ import annotations
 
 import random
 import sys
-import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import kinect_extrinsic_calibration as kec
+import table_pose as tp
 
 
 def _rotation_from_euler_deg(x_deg: float, y_deg: float, z_deg: float) -> np.ndarray:
@@ -22,7 +22,7 @@ def _rotation_from_euler_deg(x_deg: float, y_deg: float, z_deg: float) -> np.nda
 
 
 def _world_points_array() -> np.ndarray:
-    return np.array([kec.TABLE_MARKER_WORLD_POINTS[k] for k in kec.TABLE_MARKER_WORLD_POINTS], dtype=np.float64)
+    return np.array([tp.TABLE_MARKER_WORLD_POINTS[k] for k in tp.TABLE_MARKER_WORLD_POINTS], dtype=np.float64)
 
 
 class _FakeBlob:
@@ -40,7 +40,7 @@ class KabschFitTests(unittest.TestCase):
         world_pts = _world_points_array()
         camera_pts = (np.linalg.inv(R0) @ (world_pts - t0).T).T
 
-        fit = kec.fit_rigid_transform(camera_pts, world_pts)
+        fit = tp.fit_rigid_transform(camera_pts, world_pts)
 
         np.testing.assert_allclose(fit.R, R0, atol=1e-8)
         np.testing.assert_allclose(fit.t, t0, atol=1e-8)
@@ -48,15 +48,15 @@ class KabschFitTests(unittest.TestCase):
         self.assertLess(fit.max_residual_mm, 1e-6)
 
     def test_noise_tolerance_stays_bounded(self):
-        # NOTE: the current marker layout spans only ~277mm (vs. a full
-        # 832mm table), so it's a compact, weakly-conditioned point cluster
-        # for estimating rotation. A small rotation error is nearly free in
-        # residual terms at the cluster itself, but couples with the ~900mm
-        # camera-to-table distance to produce a much larger *raw* R/t
+        # NOTE: the current marker layout spans only ~277-416mm (vs. a full
+        # ~832mm table wall), so it's a compact, weakly-conditioned point
+        # cluster for estimating rotation. A small rotation error is nearly
+        # free in residual terms at the cluster itself, but couples with the
+        # ~900mm camera-to-table distance to produce a much larger *raw* R/t
         # deviation from ground truth than the fit residual alone suggests.
-        # So this test checks the residual (what accept_calibration() actually
-        # gates on), not raw R/t vs. ground truth, which would be misleadingly
-        # strict for this geometry.
+        # So this test checks the residual (what TablePoseTracker actually
+        # exposes as rms/max_residual_mm), not raw R/t vs. ground truth,
+        # which would be misleadingly strict for this geometry.
         rng = np.random.default_rng(42)
         R0 = _rotation_from_euler_deg(3.0, 8.0, -5.0)
         t0 = np.array([10.0, 5.0, 900.0])
@@ -65,22 +65,24 @@ class KabschFitTests(unittest.TestCase):
         camera_pts = (np.linalg.inv(R0) @ (world_pts - t0).T).T
         camera_pts += rng.normal(scale=1.0, size=camera_pts.shape)
 
-        fit = kec.fit_rigid_transform(camera_pts, world_pts)
+        fit = tp.fit_rigid_transform(camera_pts, world_pts)
 
         self.assertLess(fit.rms_residual_mm, 5.0)
         self.assertLess(fit.max_residual_mm, 8.0)
 
     def test_reflection_guard_on_planar_points(self):
-        # All world points are Z=0 (planar) -- exactly this jig's configuration,
-        # a case where SVD conditioning on the reflection sign matters.
+        # All world points share Z = MARKER_HEIGHT_MM (planar, wall-mounted
+        # markers all at the same height) -- exactly this layout's
+        # configuration, a case where SVD conditioning on the reflection
+        # sign matters.
         R0 = _rotation_from_euler_deg(0.0, 0.0, 33.0)
         t0 = np.array([0.0, 0.0, 800.0])
 
         world_pts = _world_points_array()
-        self.assertTrue(np.allclose(world_pts[:, 2], 0.0))
+        self.assertTrue(np.allclose(world_pts[:, 2], world_pts[0, 2]))
         camera_pts = (np.linalg.inv(R0) @ (world_pts - t0).T).T
 
-        fit = kec.fit_rigid_transform(camera_pts, world_pts)
+        fit = tp.fit_rigid_transform(camera_pts, world_pts)
 
         self.assertAlmostEqual(np.linalg.det(fit.R), 1.0, places=6)
         np.testing.assert_allclose(fit.R, R0, atol=1e-6)
@@ -107,10 +109,10 @@ class MatchPointsTests(unittest.TestCase):
         random.Random(7).shuffle(order)
         shuffled = [blobs[i] for i in order]
 
-        matched = kec.match_points(shuffled)
+        matched = tp.match_points(shuffled)
 
-        self.assertEqual(set(matched.keys()), set(kec.TABLE_MARKER_WORLD_POINTS.keys()))
-        for i, name in enumerate(kec.TABLE_MARKER_WORLD_POINTS.keys()):
+        self.assertEqual(set(matched.keys()), set(tp.TABLE_MARKER_WORLD_POINTS.keys()))
+        for i, name in enumerate(tp.TABLE_MARKER_WORLD_POINTS.keys()):
             got = matched[name]
             self.assertAlmostEqual(got.x_mm, camera_pts[i][0], places=6)
             self.assertAlmostEqual(got.y_mm, camera_pts[i][1], places=6)
@@ -121,16 +123,16 @@ class MatchPointsTests(unittest.TestCase):
             R0 = _rotation_from_euler_deg(2.0, -3.0, z_deg)
             camera_pts = self._camera_points(R0=R0, t0=np.array([0.0, 0.0, 900.0]))
             blobs = [_FakeBlob(*p) for p in camera_pts]
-            matched = kec.match_points(blobs)
-            self.assertEqual(set(matched.keys()), set(kec.TABLE_MARKER_WORLD_POINTS.keys()))
+            matched = tp.match_points(blobs)
+            self.assertEqual(set(matched.keys()), set(tp.TABLE_MARKER_WORLD_POINTS.keys()))
 
     def test_noise_within_tolerance_still_matches(self):
         rng = np.random.default_rng(3)
         camera_pts = self._camera_points()
         camera_pts = camera_pts + rng.normal(scale=2.0, size=camera_pts.shape)
         blobs = [_FakeBlob(*p) for p in camera_pts]
-        matched = kec.match_points(blobs)
-        self.assertEqual(set(matched.keys()), set(kec.TABLE_MARKER_WORLD_POINTS.keys()))
+        matched = tp.match_points(blobs)
+        self.assertEqual(set(matched.keys()), set(tp.TABLE_MARKER_WORLD_POINTS.keys()))
 
     def test_non_matching_geometry_raises(self):
         # An arbitrary point cloud with no relation to the known table marker
@@ -142,49 +144,82 @@ class MatchPointsTests(unittest.TestCase):
             _FakeBlob(20.0, -60.0, 910.0),
             _FakeBlob(-10.0, -20.0, 890.0),
         ]
-        with self.assertRaises(kec.MatchingError):
-            kec.match_points(blobs)
+        with self.assertRaises(tp.MatchingError):
+            tp.match_points(blobs)
 
     def test_wrong_marker_count_raises(self):
         camera_pts = self._camera_points()[:4]
         blobs = [_FakeBlob(*p) for p in camera_pts]
-        with self.assertRaises(kec.MatchingError):
-            kec.match_points(blobs)
+        with self.assertRaises(tp.MatchingError):
+            tp.match_points(blobs)
 
 
-class ExtrinsicsPersistenceTests(unittest.TestCase):
-    def test_round_trip_and_atomic_write(self):
-        R0 = _rotation_from_euler_deg(1.0, 2.0, 3.0)
-        t0 = np.array([5.0, 6.0, 700.0])
-        world_pts = _world_points_array()
-        camera_pts = (np.linalg.inv(R0) @ (world_pts - t0).T).T
-        fit = kec.fit_rigid_transform(camera_pts, world_pts)
+class TablePoseTrackerTests(unittest.TestCase):
+    """These test the tracker's state machine (hold-last-pose + stale flag)
+    in isolation from real image detection, by mocking run_pose_fit."""
 
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "extrinsics.json"
-            saved = kec.save_extrinsics(path, fit)
+    def _successful_attempt(self, rms=2.0, max_r=3.0):
+        R0 = _rotation_from_euler_deg(0.0, 0.0, 10.0)
+        fit = tp.RigidFitResult(
+            R=R0, t=np.array([1.0, 2.0, 3.0]),
+            residuals_mm=[rms] * 5, rms_residual_mm=rms, max_residual_mm=max_r,
+        )
+        return tp.PoseFitAttempt(ok=True, error=None, debug_frame=None, fit=fit)
 
-            self.assertTrue(path.exists())
-            self.assertFalse(path.with_suffix(path.suffix + ".tmp").exists())
+    def _failed_attempt(self, error="expected 5 retroreflective markers, found 4"):
+        return tp.PoseFitAttempt(ok=False, error=error, debug_frame=None, fit=None)
 
-            loaded = kec.load_extrinsics(path)
-            self.assertIsNotNone(loaded)
-            np.testing.assert_allclose(loaded.R, saved.R)
-            np.testing.assert_allclose(loaded.t, saved.t)
+    def test_before_any_success_apply_reports_untracked_and_stale(self):
+        tracker = tp.TablePoseTracker()
+        world, stale, age_s = tracker.apply((0.0, 0.0, 0.0))
+        self.assertFalse(tracker.is_tracking)
+        self.assertIsNone(world)
+        self.assertTrue(stale)
+        self.assertIsNone(age_s)
 
-            world_from_apply = loaded.apply(tuple(camera_pts[0]))
-            np.testing.assert_allclose(world_from_apply, world_pts[0], atol=1e-6)
+    def test_successful_update_starts_tracking_and_is_not_stale(self):
+        tracker = tp.TablePoseTracker()
+        with mock.patch.object(tp, "run_pose_fit", return_value=self._successful_attempt()):
+            attempt = tracker.update(None, None, 1.0, 1.0, 1.0, 1.0, now=100.0)
 
-    def test_load_missing_file_returns_none(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "does_not_exist.json"
-            self.assertIsNone(kec.load_extrinsics(path))
+        self.assertTrue(attempt.ok)
+        self.assertTrue(tracker.is_tracking)
+        world, stale, age_s = tracker.apply((0.0, 0.0, 0.0), now=100.0)
+        self.assertIsNotNone(world)
+        self.assertFalse(stale)
+        self.assertAlmostEqual(age_s, 0.0)
 
-    def test_load_malformed_json_returns_none(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "extrinsics.json"
-            path.write_text("not valid json", encoding="utf-8")
-            self.assertIsNone(kec.load_extrinsics(path))
+    def test_failed_update_after_success_holds_last_pose_but_flags_stale(self):
+        tracker = tp.TablePoseTracker()
+        with mock.patch.object(tp, "run_pose_fit", return_value=self._successful_attempt()):
+            tracker.update(None, None, 1.0, 1.0, 1.0, 1.0, now=100.0)
+        R_before, t_before = tracker.R.copy(), tracker.t.copy()
+
+        with mock.patch.object(tp, "run_pose_fit", return_value=self._failed_attempt()):
+            attempt = tracker.update(None, None, 1.0, 1.0, 1.0, 1.0, now=105.0)
+
+        self.assertFalse(attempt.ok)
+        self.assertTrue(tracker.is_tracking)  # still holds the old pose
+        np.testing.assert_allclose(tracker.R, R_before)
+        np.testing.assert_allclose(tracker.t, t_before)
+
+        world, stale, age_s = tracker.apply((0.0, 0.0, 0.0), now=105.0)
+        self.assertIsNotNone(world)  # coasting on the held pose
+        self.assertTrue(stale)
+        self.assertAlmostEqual(age_s, 5.0)  # age is since the last *success*
+
+    def test_recovering_after_a_failure_clears_stale(self):
+        tracker = tp.TablePoseTracker()
+        with mock.patch.object(tp, "run_pose_fit", return_value=self._successful_attempt()):
+            tracker.update(None, None, 1.0, 1.0, 1.0, 1.0, now=100.0)
+        with mock.patch.object(tp, "run_pose_fit", return_value=self._failed_attempt()):
+            tracker.update(None, None, 1.0, 1.0, 1.0, 1.0, now=105.0)
+        with mock.patch.object(tp, "run_pose_fit", return_value=self._successful_attempt()):
+            tracker.update(None, None, 1.0, 1.0, 1.0, 1.0, now=110.0)
+
+        world, stale, age_s = tracker.apply((0.0, 0.0, 0.0), now=110.0)
+        self.assertFalse(stale)
+        self.assertAlmostEqual(age_s, 0.0)
 
 
 class BallTrackerRegressionTests(unittest.TestCase):

@@ -62,7 +62,7 @@
             <div><dt>Z (depth)</dt><dd id="ballZ">--</dd></div>
             <div><dt>Radius</dt><dd id="ballR">--</dd></div>
           </dl>
-          <p class="hint">Table frame: <strong id="ballWorld">not calibrated</strong></p>
+          <p class="hint">Table frame: <strong id="ballWorld">not tracking</strong></p>
           <div class="ir-controls">
             <div class="slider-row">
               <div class="slider-label">Brightness <span id="lblIrBrightness">3600</span></div>
@@ -90,31 +90,25 @@
         </article>
       </div>
 
-      <article class="panel calibration-panel" id="calibrationSection">
+      <article class="panel calibration-panel" id="poseSection">
         <div class="panel-head">
           <div>
-            <h2>Extrinsic Calibration</h2>
-            <p>Table markers &rarr; camera pose. Drive the platform to cranks-up / calibrate pose first.</p>
+            <h2>Table Pose Tracking</h2>
+            <p>Wall-mounted table markers &rarr; live camera-to-table pose. Updates continuously as the platform moves.</p>
           </div>
-          <span class="pill" id="calibStatusPill">not calibrated</span>
+          <span class="pill" id="poseStatusPill">not tracking</span>
         </div>
         <div class="calibration-body">
           <div class="ir-stage">
-            <img class="feed-img" id="calibFeed" src="/stream/calibration.mjpg" alt="Calibration marker debug stream">
+            <img class="feed-img" id="poseFeed" src="/stream/pose.mjpg" alt="Table pose marker debug stream">
           </div>
           <div class="calibration-side">
-            <p class="hint">Ensure the Stewart platform is at cranks-up / calibrate pose (roll = pitch = 0, max heave) before capturing.</p>
             <div class="slider-row">
               <div class="slider-label">Marker IR threshold <span id="lblMarkerThreshold">1000</span></div>
               <input type="range" id="markerThresholdSlider" min="0" max="4500" step="50" value="1000">
             </div>
-            <div class="calib-buttons">
-              <button class="action neutral" id="calibCapture" type="button">Capture</button>
-              <button class="action start" id="calibAccept" type="button" disabled>Accept</button>
-              <button class="action neutral" id="calibRetry" type="button" disabled>Retry</button>
-            </div>
-            <div class="control-status" id="calibStatus">no calibration attempt yet</div>
-            <div class="calib-residuals" id="calibResiduals"></div>
+            <div class="control-status" id="poseStatus">no pose fit yet</div>
+            <div class="calib-residuals" id="poseResiduals"></div>
             <div class="calib-diagnostics" id="calibDiagnostics"></div>
           </div>
         </div>

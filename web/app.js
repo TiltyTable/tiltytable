@@ -27,12 +27,9 @@ const depthImg     = document.querySelector('#depthFeed');
 const overlay      = document.querySelector('#depthOverlay');
 
 const ballWorld           = document.querySelector('#ballWorld');
-const calibCapture        = document.querySelector('#calibCapture');
-const calibAccept         = document.querySelector('#calibAccept');
-const calibRetry          = document.querySelector('#calibRetry');
-const calibStatus         = document.querySelector('#calibStatus');
-const calibStatusPill     = document.querySelector('#calibStatusPill');
-const calibResiduals      = document.querySelector('#calibResiduals');
+const poseStatus          = document.querySelector('#poseStatus');
+const poseStatusPill      = document.querySelector('#poseStatusPill');
+const poseResiduals       = document.querySelector('#poseResiduals');
 const calibDiagnostics    = document.querySelector('#calibDiagnostics');
 const markerThresholdSlider = document.querySelector('#markerThresholdSlider');
 const lblMarkerThreshold    = document.querySelector('#lblMarkerThreshold');
@@ -65,7 +62,7 @@ async function sendMarkerThreshold(v) {
     markerThresholdThrottle = null;
     if (markerThresholdPending !== null) sendMarkerThreshold(markerThresholdPending);
   }, 50);
-  try { await postJson('/api/calibration/threshold', { value: v }); } catch (_) {}
+  try { await postJson('/api/pose/threshold', { value: v }); } catch (_) {}
 }
 markerThresholdSlider.addEventListener('input', () => {
   const v = Number(markerThresholdSlider.value);
@@ -141,7 +138,7 @@ function renderState(state) {
   }
   clickHint.innerHTML = `Selected channel: <strong>${selectedChannel}</strong>. Drag on the depth map to set its depth box.`;
   renderBall(state.ball);
-  renderCalibrationStatus(state.extrinsics);
+  renderTablePose(state.table_pose);
   drawOverlay();
 }
 
@@ -375,7 +372,7 @@ function renderBall(ball) {
     ballY.textContent = '--';
     ballZ.textContent = '--';
     ballR.textContent = '--';
-    ballWorld.textContent = 'not calibrated';
+    ballWorld.textContent = 'not tracking';
     return;
   }
 
@@ -395,91 +392,53 @@ function renderBall(ball) {
     ballR.textContent = '--';
   }
 
-  if (!ball.calibrated) {
-    ballWorld.textContent = 'not calibrated';
+  if (!ball.table_tracking) {
+    ballWorld.textContent = 'not tracking';
   } else if (ball.detected && ball.position_world) {
     const w = ball.position_world;
-    ballWorld.textContent = `X=${fmtMm(w.x)} Y=${fmtMm(w.y)} Z=${fmtMm(w.z)}`;
+    const staleTag = ball.pose_stale ? ` (stale, ${ball.pose_age_s?.toFixed(1)}s)` : '';
+    ballWorld.textContent = `X=${fmtMm(w.x)} Y=${fmtMm(w.y)} Z=${fmtMm(w.z)}${staleTag}`;
   } else {
-    ballWorld.textContent = 'calibrated — ball not detected';
+    ballWorld.textContent = 'tracking — ball not detected';
   }
 }
 
-function renderCalibrationStatus(extrinsics) {
-  if (!extrinsics) return;
-  if (extrinsics.calibrated) {
-    calibStatusPill.textContent = `calibrated, rms ${extrinsics.rms_residual_mm.toFixed(1)}mm`;
-    calibStatusPill.className   = 'pill detected';
+function renderTablePose(pose) {
+  if (!pose) return;
+
+  if (!pose.tracking) {
+    poseStatusPill.textContent = 'not tracking';
+    poseStatusPill.className   = 'pill';
+    poseStatus.textContent = pose.last_error ? `no fit yet: ${pose.last_error}` : 'no pose fit yet';
+    poseResiduals.innerHTML = '';
+  } else if (pose.stale) {
+    poseStatusPill.textContent = `stale (${pose.age_s?.toFixed(1)}s ago)`;
+    poseStatusPill.className   = 'pill';
+    poseStatus.textContent = pose.last_error ? `holding last pose — ${pose.last_error}` : 'holding last pose';
   } else {
-    calibStatusPill.textContent = 'not calibrated';
-    calibStatusPill.className   = 'pill';
+    poseStatusPill.textContent = `tracking, rms ${pose.rms_residual_mm.toFixed(1)}mm`;
+    poseStatusPill.className   = 'pill detected';
+    poseStatus.textContent = `fit ok — rms ${pose.rms_residual_mm.toFixed(1)}mm, max ${pose.max_residual_mm.toFixed(1)}mm`;
   }
-  if (extrinsics.marker_ir_min_counts !== undefined && document.activeElement !== markerThresholdSlider) {
-    markerThresholdSlider.value    = extrinsics.marker_ir_min_counts;
-    lblMarkerThreshold.textContent = extrinsics.marker_ir_min_counts;
+
+  if (pose.tracking) {
+    poseResiduals.innerHTML = '';
+    const points = pose.matched_points || {};
+    for (const [name, info] of Object.entries(points)) {
+      const row = document.createElement('div');
+      row.className = 'calib-residual-row' + (info.residual_mm > 10.0 ? ' bad' : '');
+      row.innerHTML = `<span>${name}</span><span>${info.residual_mm.toFixed(1)} mm</span>`;
+      poseResiduals.appendChild(row);
+    }
   }
-}
 
-calibCapture.addEventListener('click', async () => {
-  calibStatus.textContent = 'capturing…';
-  calibCapture.disabled = true;
-  try {
-    const result = await postJson('/api/calibration/capture');
-    renderCalibrationAttempt(result);
-  } catch (error) {
-    calibStatus.textContent = `capture error: ${error.message}`;
-  } finally {
-    calibCapture.disabled = false;
+  if (pose.marker_ir_min_counts !== undefined && document.activeElement !== markerThresholdSlider) {
+    markerThresholdSlider.value    = pose.marker_ir_min_counts;
+    lblMarkerThreshold.textContent = pose.marker_ir_min_counts;
   }
-});
 
-calibAccept.addEventListener('click', async () => {
-  try {
-    await postJson('/api/calibration/accept');
-    calibAccept.disabled = true;
-    calibRetry.disabled = true;
-    calibStatus.textContent = 'accepted — table frame active';
-    calibResiduals.innerHTML = '';
-    await fetchState();
-  } catch (error) {
-    calibStatus.textContent = `accept error: ${error.message}`;
-  }
-});
-
-calibRetry.addEventListener('click', async () => {
-  try { await postJson('/api/calibration/reject'); } catch (_) {}
-  calibAccept.disabled = true;
-  calibRetry.disabled = true;
-  calibStatus.textContent = 'no calibration attempt yet';
-  calibResiduals.innerHTML = '';
-});
-
-function renderCalibrationAttempt(result) {
-  lastDiagnostics = result.diagnostics || null;
+  lastDiagnostics = pose.diagnostics || null;
   renderDiagnostics(lastDiagnostics);
-
-  if (!result.ok) {
-    calibStatus.textContent = `detection failed: ${result.error}`;
-    calibAccept.disabled = true;
-    calibRetry.disabled = false;
-    calibResiduals.innerHTML = '';
-    return;
-  }
-
-  const rms  = result.fit.rms_residual_mm;
-  const maxR = result.fit.max_residual_mm;
-  calibStatus.textContent = `fit ok — rms ${rms.toFixed(1)}mm, max ${maxR.toFixed(1)}mm`;
-  calibRetry.disabled = false;
-  calibAccept.disabled = false;
-
-  calibResiduals.innerHTML = '';
-  const points = result.matched_points || {};
-  for (const [name, info] of Object.entries(points)) {
-    const row = document.createElement('div');
-    row.className = 'calib-residual-row' + (info.residual_mm > 10.0 ? ' bad' : '');
-    row.innerHTML = `<span>${name}</span><span>${info.residual_mm.toFixed(1)} mm</span>`;
-    calibResiduals.appendChild(row);
-  }
 }
 
 function renderDiagnostics(diagnostics) {
