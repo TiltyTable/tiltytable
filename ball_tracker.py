@@ -248,10 +248,7 @@ class BallDetector:
         # Pixels outside the Kinect's circular FOV are exactly 0 (invalid).
         # Erode the valid mask slightly to exclude the dim FOV-boundary ring.
         ir_f = ir_uint16.astype(np.float32, copy=False)
-        raw_valid = (ir_uint16 > 0).astype(np.uint8)
-        fov_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
-        valid_u8 = cv2.erode(raw_valid, fov_kernel)
-        valid = valid_u8 > 0
+        valid = ir_uint16 > 0
         valid_px = ir_f[valid]
         if valid_px.size == 0:
             self._debug_frame = None
@@ -262,7 +259,7 @@ class BallDetector:
             self._debug_frame = None
             return None
         ir8 = np.clip((ir_f - p_lo) / (p_hi - p_lo) * 255.0, 0, 255).astype(np.uint8)
-        ir8[~valid] = 0  # FOV boundary → black (not a bright candidate)
+        ir8[~valid] = 0
 
         ir_blur = cv2.GaussianBlur(ir8, (0, 0), _IR_BLUR_SIGMA)
 
