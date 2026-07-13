@@ -289,7 +289,7 @@ class GameEngine:
             {
                 "key": key,
                 "value": int(cell["value"]),
-                "color": cell.get("color", "#FFFFFF"),
+                "color": cell.get("color", "#000000"),
                 "dynamic": bool(cell.get("dynamic")),
             }
             for key, cell in raw.items()
@@ -354,4 +354,3 @@ class GameEngine:
         self.score_saved = False
         self.error = ""
         self.map_cells = []
-

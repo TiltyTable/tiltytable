@@ -1,8 +1,17 @@
 # Progress
 
 ## Completed
+- [x] Arcade cabinet copy pass: player-facing actions only, concise level/placement/play/result screens, 854×480 tuning, and persistent UI rule.
+- [x] Arcade V1 web app: 854×480 gauntlet/practice UI, 3 levels, score/timer/retries, JSON leaderboard, synthesized audio, and module-grid adapter.
+- [x] LED remount to 9 independent strands + firmware flash + `led_grid_config` remap (2026-07-12).
 - [x] Migrated repo to public `TiltyTable/tiltytable` with project-neutral authorship.
 - [x] Consolidated calibration mega-suite + configs into `calibration/`.
+- [x] Documented trusted 12×12 LED/servo global maps (`module-grid-mapping` rule); cleared stale orientation-mismatch guidance in `tilt_table_cli`.
+- [x] Remapped grid origin to `(0,0)` = top-left (row↓ col→).
+- [x] Module servos: pulse-then-release only; never leave PWM latched (hardware-safety rule).
+- [x] Archived obsolete Arduino sketches under `arduino/archive/`; live modules board = `servo_calib`.
+- [x] `game_runner.py` + maps schema; firmware per-channel 3s HOLD timeout on R4.
+- [x] LED palette (9 game colors) + per-tile gain cal tool; game_runner uses them.
 - [x] Archived old `scratch/tilt-table` sandbox.
 - [x] Documented correct board roles (R3 Stewart / R4 modules).
 - [x] Stewart pinout PLS 2/7/11, DIR 3/8/12, ENA 4/9/13; Amazon wire colors (Brown=COM, Gray=DIR, Yellow=PLS, Blue=ENA).
@@ -18,7 +27,6 @@
 
 ## Next Steps
 - [ ] Install `udev/99-tiltytable-rollerball.rules` so roller ball needs no sudo.
-- [ ] Module-grid calibration session with `calibration/tilt_table_cli.py` (human visual confirm).
 - [ ] Wire ball tracking / table vision to Arducam frames.
 - [ ] Revisit KINEMATICS.md / tilt_kinematics.py for BASE=119 neutral-pose implications.
 

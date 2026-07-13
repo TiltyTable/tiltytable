@@ -1,4 +1,22 @@
-# Product Context: Marble Maze Workspace
+# Product Context: TiltyTable
+
+## TiltyTable — Open Sauce Arcade Game
+
+TiltyTable is a **fun physical interactive arcade game** being built for
+**Open Sauce**. Players navigate scored gauntlet and practice levels on a
+real 12×12 servo-actuated tile grid with addressable LEDs, Stewart-platform
+tilt, arcade roller-ball input, and (planned) camera tracking.
+
+The `arcade/` stack is the game layer: level engine, hardware adapter
+(module-grid LEDs/servos), Flask kiosk, scoring, and audio. Simulation mode
+exercises the full UI without energizing hardware.
+
+**Cabinet UI** is an important design constraint within that game — not the
+whole project identity. The 854×480 projector kiosk must stay player-facing:
+minimal text, immediate legibility, action-oriented copy. See
+`.cursor/rules/arcade-player-interface.mdc`.
+
+## Marble Maze Design Workspace
 
 ## What Is It?
 A local browser workspace for comparing two actuator architectures for a modular marble maze:

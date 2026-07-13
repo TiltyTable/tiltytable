@@ -208,6 +208,19 @@ h1 {
   text-transform: uppercase;
 }
 
+.decision-copy {
+  margin-top: 16px;
+  color: var(--yellow);
+  font-size: 12px;
+  line-height: 1.6;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+}
+
+.screen-title {
+  font-size: 44px;
+}
+
 .attract-layout {
   display: grid;
   grid-template-columns: 1.25fr .75fr;
@@ -780,6 +793,17 @@ h1,
   text-shadow: 2px 2px 0 #862f00;
 }
 
+.decision-copy {
+  font-family: var(--pixel);
+  font-size: clamp(9px, 1vw, 17px);
+  text-shadow: 2px 2px 0 #862f00;
+}
+
+.screen-title {
+  font-size: clamp(30px, 4.3vw, 72px);
+  line-height: 1.2;
+}
+
 .attract-layout {
   grid-template-columns: 56% 44%;
   gap: clamp(15px, 2.5vw, 44px);
@@ -1077,4 +1101,20 @@ h1,
   .menu-item { min-height: 40px; }
   .rules-layout { padding: 8px 18px; }
   .game-layout { padding: 5px 16px; }
+}
+
+@media (width: 854px) and (height: 480px) {
+  .scene { grid-template-rows: 38px 1fr 29px; }
+  .attract-layout { padding: 8px 18px; }
+  .hero-title { font-size: 58px; }
+  .menu { margin-top: 14px; }
+  .menu-item { min-height: 46px; padding-block: 10px; }
+  .score-row { height: 30px; }
+  .rules-layout { padding: 8px 28px; }
+  .level-stamp { height: 200px; }
+  .game-layout { padding: 5px 24px; }
+  .board-wrap { width: 344px; }
+  .hud { gap: 9px; }
+  .hud h1 { font-size: 34px; }
+  .timer { font-size: 68px; }
 }

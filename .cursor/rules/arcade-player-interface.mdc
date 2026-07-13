@@ -1,0 +1,33 @@
+---
+description: Open Sauce physical arcade game — player-facing cabinet UI copy rules
+alwaysApply: true
+---
+
+# TiltyTable Arcade — Open Sauce
+
+We are building a **fun physical interactive arcade game for Open Sauce** on
+TiltyTable hardware: real servo-actuated tiles, LEDs, Stewart tilt, roller-ball
+input, scored gauntlet/practice levels, and synthesized cabinet audio. The
+`arcade/` stack ties game logic, hardware adapters, and the cabinet display
+together.
+
+## Cabinet UI copy (hard requirement)
+
+The 854×480 projector kiosk is player-facing — not a marketing page, product
+demo, developer console, or hardware dashboard.
+
+- Every visible word must help the player understand the current state or take
+  the next action.
+- Use short commands, essential game rules, timer/score labels, and clear
+  results.
+- Do not show implementation details, device paths, hardware jargon, developer
+  terminology, future integrations, diagnostics, or calibration details.
+- Do not add slogans, promotional claims, decorative subheadings, tile-count
+  branding, or helper copy that repeats an on-screen action.
+- Use `TILTYTABLE` as the title unless the project establishes a real game name.
+- Keep level instructions limited to the immediate mechanic; explain ball
+  placement on the placement screen.
+- Optimize every state for immediate legibility at 854×480 from cabinet
+  viewing distance.
+- Preserve the old-school arcade visual style without using extra copy as
+  decoration.

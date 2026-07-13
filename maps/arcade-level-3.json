@@ -5,739 +5,571 @@
   },
   "B1": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "C1": {
     "value": 1,
-    "color": "#76D69E",
-    "dynamic": {
-      "intervalSeconds": 7,
-      "pattern": [
-        {
-          "value": 1,
-          "color": "#76D69E"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        },
-        {
-          "value": -1,
-          "color": "#F29C64"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        }
-      ]
-    }
+    "color": "#00E050"
   },
   "D1": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "E1": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "F1": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "G1": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "H1": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "I1": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "J1": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "K1": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "L1": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "A2": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "B2": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "C2": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "D2": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "E2": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "F2": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "G2": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "H2": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "I2": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "J2": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "K2": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "L2": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "A3": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "B3": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "C3": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "D3": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "E3": {
     "value": 1,
-    "color": "#76D69E",
-    "dynamic": {
-      "intervalSeconds": 7,
-      "pattern": [
-        {
-          "value": 1,
-          "color": "#76D69E"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        },
-        {
-          "value": -1,
-          "color": "#F29C64"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        }
-      ]
-    }
+    "color": "#00E050"
   },
   "F3": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "G3": {
     "value": 1,
-    "color": "#76D69E",
-    "dynamic": {
-      "intervalSeconds": 7,
-      "pattern": [
-        {
-          "value": 1,
-          "color": "#76D69E"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        },
-        {
-          "value": -1,
-          "color": "#F29C64"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        }
-      ]
-    }
+    "color": "#00E050"
   },
   "H3": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "I3": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "J3": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "K3": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "L3": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "A4": {
     "value": -1,
-    "color": "#F29C64"
+    "color": "#FF1A1A"
   },
   "B4": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "C4": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "D4": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "E4": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "F4": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "G4": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "H4": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "I4": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "J4": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "K4": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "L4": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "A5": {
     "value": -1,
-    "color": "#F29C64"
+    "color": "#FF1A1A"
   },
   "B5": {
     "value": -1,
-    "color": "#F29C64"
+    "color": "#FF1A1A"
   },
   "C5": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "D5": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "E5": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "F5": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "G5": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "H5": {
     "value": 1,
-    "color": "#76D69E",
-    "dynamic": {
-      "intervalSeconds": 7,
-      "pattern": [
-        {
-          "value": 1,
-          "color": "#76D69E"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        },
-        {
-          "value": -1,
-          "color": "#F29C64"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        }
-      ]
-    }
+    "color": "#00E050"
   },
   "I5": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "J5": {
     "value": 1,
-    "color": "#76D69E",
-    "dynamic": {
-      "intervalSeconds": 7,
-      "pattern": [
-        {
-          "value": 1,
-          "color": "#76D69E"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        },
-        {
-          "value": -1,
-          "color": "#F29C64"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        }
-      ]
-    }
+    "color": "#00E050"
   },
   "K5": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "L5": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "A6": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "B6": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "C6": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "D6": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "E6": {
     "value": -1,
-    "color": "#F29C64"
+    "color": "#FF1A1A"
   },
   "F6": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "G6": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "H6": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "I6": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "J6": {
     "value": 1,
-    "color": "#76D69E",
-    "dynamic": {
-      "intervalSeconds": 7,
-      "pattern": [
-        {
-          "value": 1,
-          "color": "#76D69E"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        },
-        {
-          "value": -1,
-          "color": "#F29C64"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        }
-      ]
-    }
+    "color": "#00E050"
   },
   "K6": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "L6": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "A7": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "B7": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "C7": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "D7": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "E7": {
     "value": -1,
-    "color": "#F29C64"
+    "color": "#FF1A1A"
   },
   "F7": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "G7": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "H7": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "I7": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "J7": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "K7": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "L7": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "A8": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "B8": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "C8": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "D8": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "E8": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "F8": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "G8": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "H8": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "I8": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "J8": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "K8": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "L8": {
     "value": 1,
-    "color": "#76D69E",
-    "dynamic": {
-      "intervalSeconds": 7,
-      "pattern": [
-        {
-          "value": 1,
-          "color": "#76D69E"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        },
-        {
-          "value": -1,
-          "color": "#F29C64"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        }
-      ]
-    }
+    "color": "#00E050"
   },
   "A9": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "B9": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "C9": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "D9": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "E9": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "F9": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "G9": {
     "value": -1,
-    "color": "#F29C64"
+    "color": "#FF1A1A"
   },
   "H9": {
     "value": -1,
-    "color": "#F29C64"
+    "color": "#FF1A1A"
   },
   "I9": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "J9": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "K9": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "L9": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "A10": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "B10": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "C10": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "D10": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "E10": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "F10": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "G10": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "H10": {
     "value": -1,
-    "color": "#F29C64"
+    "color": "#FF1A1A"
   },
   "I10": {
     "value": 1,
-    "color": "#76D69E",
-    "dynamic": {
-      "intervalSeconds": 7,
-      "pattern": [
-        {
-          "value": 1,
-          "color": "#76D69E"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        },
-        {
-          "value": -1,
-          "color": "#F29C64"
-        },
-        {
-          "value": 0,
-          "color": "#FFFFFF"
-        }
-      ]
-    }
+    "color": "#00E050"
   },
   "J10": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "K10": {
     "value": -1,
-    "color": "#F29C64"
+    "color": "#FF1A1A"
   },
   "L10": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "A11": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "B11": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "C11": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "D11": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "E11": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "F11": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "G11": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "H11": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "I11": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "J11": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "K11": {
     "value": -1,
-    "color": "#F29C64"
+    "color": "#FF1A1A"
   },
   "L11": {
     "value": 0,
-    "color": "#F4D35E"
+    "color": "#FF8C00"
   },
   "A12": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "B12": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "C12": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "D12": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "E12": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "F12": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "G12": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "H12": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "I12": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "J12": {
     "value": 0,
-    "color": "#FFFFFF"
+    "color": "#000000"
   },
   "K12": {
     "value": 1,
-    "color": "#76D69E"
+    "color": "#00E050"
   },
   "L12": {
     "value": 0,

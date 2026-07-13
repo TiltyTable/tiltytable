@@ -60,11 +60,10 @@ ordinary `maps/*.json` files compatible with `game_runner.py`.
 
 - Level 1: neutral surface with illuminated route
 - Level 2: static raised walls
-- Level 3: 25% recessed borders and 20% dynamic borders
+- Level 3: recessed-pit course
 
 ## Safety
 
 The live server exclusively owns `/dev/arduino-modules`. Do not run
 `game_runner.py`, `tilt_table_cli.py`, or calibration tools at the same time.
 Module moves retain the firmware/host pulse-then-release behavior.
-

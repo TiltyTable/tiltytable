@@ -96,13 +96,13 @@ function escapeHtml(value) {
 }
 
 function brand() {
-  return `<span class="brand"><span class="brand-bars"><i></i><i></i><i></i></span>TILTYTABLE / 144</span>`;
+  return `<span class="brand"><span class="brand-bars"><i></i><i></i><i></i></span>TILTYTABLE</span>`;
 }
 
 function hardwareStatus() {
   const hw = game?.hardware || {};
   const css = hw.error ? "error" : hw.busy ? "busy" : "";
-  const label = hw.error ? "FAULT" : hw.busy ? "BUILDING" : hw.ready ? "TABLE READY" : "OFFLINE";
+  const label = hw.error ? "HELP NEEDED" : hw.busy ? "PLEASE WAIT" : hw.ready ? "READY" : "NOT READY";
   return `<span class="status"><i class="status-dot ${css}"></i>${label}</span>`;
 }
 
@@ -124,10 +124,9 @@ function abandonOverlay() {
   return `
     <div class="overlay">
       <article class="message-card">
-        <p class="kicker">End current run?</p>
-        <h1>WALK AWAY</h1>
-        <p class="hero-sub">Completed levels will still make the leaderboard.</p>
-        <p class="prompt"><span class="key">ENTER</span> END RUN &nbsp; <span class="key">ESC</span> KEEP PLAYING</p>
+        <h1>END RUN?</h1>
+        <p class="decision-copy">CLEARED LEVELS WILL BE SAVED</p>
+        <p class="prompt"><span class="key">ENTER</span> END &nbsp; <span class="key">ESC</span> KEEP PLAYING</p>
       </article>
     </div>`;
 }
@@ -136,17 +135,10 @@ function renderSetup() {
   const fault = game.state === "hardware_fault";
   return shell(`
     <article class="setup-card">
-      <p class="kicker">${fault ? "Operator attention" : "Cabinet startup"}</p>
-      <h1>${fault ? "TABLE FAULT" : "SYSTEM CHECK"}</h1>
-      ${fault ? `<p class="error-text">${escapeHtml(game.error || game.hardware.error)}</p>` : ""}
-      <div class="setup-list">
-        <span>Module controller on /dev/arduino-modules</span>
-        <span>144 LED and servo mappings loaded</span>
-        <span>Projector audio routed to Beats Pill</span>
-        <span>Kinect and Stewart integrations reserved for later</span>
-      </div>
-      <p class="prompt"><span class="key">ENTER</span> ${fault ? "RETRY" : "INITIALIZE TABLE"}</p>
-    </article>`, `<span class="key">ENTER</span> SETUP`);
+      <h1>${fault ? "GAME PAUSED" : "TILTYTABLE"}</h1>
+      ${fault ? `<p class="decision-copy">CALL AN ATTENDANT</p>` : ""}
+      <p class="prompt"><span class="key">ENTER</span> ${fault ? "TRY AGAIN" : "START"}</p>
+    </article>`, `<span class="key">ENTER</span> ${fault ? "TRY AGAIN" : "START"}`);
 }
 
 function leaderboardRows(limit = 8) {
@@ -162,21 +154,15 @@ function leaderboardRows(limit = 8) {
 }
 
 function renderAttract() {
-  const choices = [
-    ["START GAUNTLET", "Three levels. One scored run."],
-    ["LEVEL SELECT", "Practice any level. No score saved."],
-  ];
+  const choices = ["START RUN", "PRACTICE"];
   return shell(`
     <div class="attract-layout">
       <div class="attract-copy">
-        <p class="kicker">Physical surface arcade</p>
-        <h1 class="hero-title">ROLL<br>THE TABLE</h1>
-        <p class="hero-sub">Three levels · 144 moving tiles</p>
+        <h1 class="hero-title">TILTY<br>TABLE</h1>
         <div class="menu">
           ${choices.map((choice, index) => `
             <div class="menu-item ${attractChoice === index ? "selected" : ""}">
-              <strong>${choice[0]}</strong><br>
-              <small>${choice[1]}</small>
+              <strong>${choice}</strong>
             </div>`).join("")}
         </div>
       </div>
@@ -192,14 +178,12 @@ function renderInitials() {
   const chars = initialsDraft.padEnd(3, " ").slice(0, 3).split("");
   return shell(`
     <div>
-      <p class="kicker">Player registration</p>
       <h1>ENTER INITIALS</h1>
       <div class="initials-boxes">
         ${chars.map((char, index) =>
           `<div class="initial-box ${index === Math.min(initialsDraft.length, 2) ? "active" : ""}">${escapeHtml(char)}</div>`
         ).join("")}
       </div>
-      <p class="hero-sub">${initialsDraft.length === 3 ? "READY TO ROLL" : "TYPE THREE LETTERS"}</p>
     </div>`,
     `<span class="key">A-Z</span> TYPE <span class="key">⌫</span> ERASE <span class="key">ENTER</span> CONFIRM`);
 }
@@ -207,13 +191,11 @@ function renderInitials() {
 function renderLevelSelect() {
   return shell(`
     <div style="width:100%">
-      <p class="kicker">Practice mode · scores disabled</p>
-      <h1 style="font-size:46px">SELECT LEVEL</h1>
+      <h1 class="screen-title">PRACTICE</h1>
       <div class="menu" style="margin:20px auto 0;max-width:610px">
         ${game.levels.map((level, index) => `
           <div class="menu-item ${levelChoice === index ? "selected" : ""}">
-            <strong>0${level.number} / ${escapeHtml(level.title)}</strong>
-            &nbsp;—&nbsp; ${escapeHtml(level.subtitle)}
+            <strong>0${level.number} ${escapeHtml(level.title)}</strong>
           </div>`).join("")}
       </div>
     </div>`,
@@ -226,7 +208,6 @@ function renderRules() {
     <div class="rules-layout">
       <div class="level-stamp"><strong>${level.number}</strong><span>LEVEL</span></div>
       <div class="rules-copy">
-        <p class="kicker">${escapeHtml(level.subtitle)}</p>
         <h1>${escapeHtml(level.title)}</h1>
         <p class="feature">${escapeHtml(level.feature)}</p>
         ${level.rules.map((rule, index) =>
@@ -241,18 +222,19 @@ function renderLoading() {
   const restarting = game.state === "restarting";
   return shell(`
     <div>
-      <p class="kicker">Level ${game.level.number}</p>
-      <h1 style="font-size:52px">${restarting ? "RESETTING" : "BUILDING"}<br>THE BOARD</h1>
+      <p class="kicker">LEVEL ${game.level.number}</p>
+      <h1 class="screen-title">${restarting ? "RESETTING" : "GET READY"}</h1>
       <div class="loading-bars"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <p class="hero-sub">Tiles moving · stand clear</p>
-    </div>`, `PLEASE WAIT`);
+      <p class="decision-copy">STAND CLEAR</p>
+    </div>`, `STAND CLEAR`);
 }
 
 function tileClass(cell) {
   if (cell.key === game.level.startCell) return "start";
   if (cell.key === game.level.endCell) return "finish";
   const color = String(cell.color || "").toUpperCase();
-  if (color === "#F4D35E" || color === "#FFD400") return "path";
+  if (color === "#FF8C00") return "path";
+  if (color === "#3366FF") return "points";
   if (cell.value === 1) return "wall";
   if (cell.value === -1) return "trap";
   return "";
@@ -283,16 +265,16 @@ function renderPlacement() {
     <div class="game-layout">
       ${boardMarkup(true)}
       <div class="hud">
-        <p class="hud-level">Level ${game.level.number} / ${escapeHtml(game.level.title)}</p>
+        <p class="hud-level">LEVEL ${game.level.number} · ${escapeHtml(game.level.title)}</p>
         <h1>PLACE<br>THE BALL</h1>
-        <p class="hud-instruction">Put the ball on blinking cyan <strong>${game.level.startCell}</strong>. Press Enter when the board is clear.</p>
+        <p class="hud-instruction">BALL ON CYAN <strong>${game.level.startCell}</strong><br>CLEAR HANDS, THEN ENTER</p>
         <div class="hud-stats">
           <div class="hud-stat"><span>TIME LIMIT</span><strong>${game.level.timeLimitSeconds}s</strong></div>
           <div class="hud-stat"><span>RESTARTS</span><strong>${game.restarts}</strong></div>
         </div>
-        <p class="prompt"><span class="key">ENTER</span> START TIMER</p>
+        <p class="prompt"><span class="key">ENTER</span> START</p>
       </div>
-    </div>`, `<span class="key">ENTER</span> CONFIRM PLACEMENT <span class="key">ESC</span> END RUN`);
+    </div>`, `<span class="key">ENTER</span> START <span class="key">ESC</span> END RUN`);
 }
 
 function renderPlaying() {
@@ -301,16 +283,16 @@ function renderPlaying() {
     <div class="game-layout">
       ${boardMarkup(false)}
       <div class="hud">
-        <p class="hud-level">Level ${game.level.number} / ${escapeHtml(game.level.title)}</p>
+        <p class="hud-level">LEVEL ${game.level.number} · ${escapeHtml(game.level.title)}</p>
         <div class="timer ${remaining <= 10 ? "danger" : ""}">${String(remaining).padStart(2, "0")}</div>
         <div class="hud-stats">
           <div class="hud-stat"><span>RUN SCORE</span><strong>${Number(game.score).toLocaleString()}</strong></div>
           <div class="hud-stat"><span>RESTARTS</span><strong>${game.restarts}</strong></div>
         </div>
-        <p class="hud-instruction">Reach the magenta finish at <strong>${game.level.endCell}</strong>. Host presses C when the ball arrives.</p>
+        <p class="hud-instruction">REACH MAGENTA <strong>${game.level.endCell}</strong></p>
       </div>
     </div>`,
-    `<span class="key">C</span> COMPLETE <span class="key">R</span> RESTART <span class="key">ESC</span> END RUN`);
+    `<span class="key">C</span> FINISH <span class="key">R</span> RESTART <span class="key">ESC</span> END RUN`);
 }
 
 function renderTimeUp() {
@@ -319,7 +301,6 @@ function renderTimeUp() {
       <p class="kicker">Level ${game.level.number}</p>
       <h1 style="color:var(--red)">TIME UP</h1>
       <p class="result-number">−100</p>
-      <p class="hero-sub">Place the ball back at the start · unlimited retries</p>
       <p class="prompt"><span class="key">ENTER</span> TRY AGAIN</p>
     </article>`, `<span class="key">ENTER</span> RETRY <span class="key">ESC</span> END RUN`);
 }
@@ -327,11 +308,11 @@ function renderTimeUp() {
 function renderLevelClear() {
   return shell(`
     <article class="message-card">
-      <p class="kicker">Level ${game.level.number} complete</p>
-      <h1>COURSE<br>CLEAR</h1>
+      <p class="kicker">LEVEL ${game.level.number}</p>
+      <h1>CLEAR!</h1>
       <p class="result-number">+${Number(game.lastLevelResult.score).toLocaleString()}</p>
-      <p class="hero-sub">${game.lastLevelResult.remainingSeconds}s remaining</p>
-      <p class="prompt"><span class="key">ENTER</span> SCORE BREAKDOWN</p>
+      <p class="decision-copy">${game.lastLevelResult.remainingSeconds}s LEFT</p>
+      <p class="prompt"><span class="key">ENTER</span> SCORE</p>
     </article>`, `<span class="key">ENTER</span> CONTINUE`);
 }
 
@@ -353,10 +334,9 @@ function renderLevelScore() {
 function renderSummary() {
   return shell(`
     <article class="message-card">
-      <p class="kicker">${game.mode === "practice" ? "Practice complete" : (game.endedEarly ? "Run ended" : "Gauntlet complete")}</p>
+      <p class="kicker">${game.mode === "practice" ? "PRACTICE COMPLETE" : (game.endedEarly ? "RUN ENDED" : "RUN COMPLETE")}</p>
       <h1>${game.mode === "practice" ? game.level.title : `${game.levelsCleared}/3 CLEARED`}</h1>
       <p class="result-number">${game.mode === "practice" ? "—" : Number(game.score).toLocaleString()}</p>
-      <p class="hero-sub">${game.mode === "practice" ? "No score recorded" : `${escapeHtml(game.initials)} · leaderboard entry saved`}</p>
       <p class="prompt"><span class="key">ENTER</span> ${game.mode === "practice" ? "LEVEL SELECT" : "LEADERBOARD"}</p>
     </article>`, `<span class="key">ENTER</span> CONTINUE`);
 }
@@ -365,10 +345,9 @@ function renderAbandoned() {
   const saved = game.mode === "gauntlet" && game.levelsCleared > 0;
   return shell(`
     <article class="message-card">
-      <p class="kicker">${saved ? "Completed progress saved" : "Session ended"}</p>
-      <h1>RUN<br>ENDED</h1>
+      <h1>RUN ENDED</h1>
       <p class="result-number">${saved ? `${game.levelsCleared}/3` : "—"}</p>
-      <p class="hero-sub">${saved ? `${Number(game.score).toLocaleString()} points will enter the leaderboard` : "No score recorded"}</p>
+      ${saved ? `<p class="decision-copy">${Number(game.score).toLocaleString()} PTS SAVED</p>` : ""}
       <p class="prompt"><span class="key">ENTER</span> CONTINUE</p>
     </article>`, `<span class="key">ENTER</span> CONTINUE`);
 }
@@ -376,8 +355,7 @@ function renderAbandoned() {
 function renderLeaderboard() {
   return shell(`
     <div style="width:min(670px,90vw)">
-      <p class="kicker">Local legends</p>
-      <h1 style="font-size:44px">HIGH SCORES</h1>
+      <h1 class="screen-title">HIGH SCORES</h1>
       <aside class="leader-card" style="margin-top:16px">${leaderboardRows(10)}</aside>
       <p class="prompt"><span class="key">ENTER</span> TITLE SCREEN</p>
     </div>`, `<span class="key">ENTER</span> TITLE`);

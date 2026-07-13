@@ -24,6 +24,18 @@ https://tiltytable.github.io/tiltytable/
 
 ## Commands
 
+### Arcade cabinet (854×480 projector)
+
+```bash
+# Test the complete UI without touching hardware
+./run_arcade.sh --simulation
+
+# Live module-grid levels (Kinect and Stewart are intentionally V2/V3)
+./run_arcade.sh
+```
+
+See `arcade/README.md` for keyboard controls, scoring, and level details.
+
 ### Stewart tilt (Uno R3)
 
 ```bash
