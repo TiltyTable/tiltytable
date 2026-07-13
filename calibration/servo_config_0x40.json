@@ -3,84 +3,84 @@
   "i2c_address": "0x40",
   "servos": {
     "0": {
-      "extended": 320,
-      "neutral": 206,
-      "recessed": 150
+      "extended": 2350,
+      "neutral": 1560,
+      "recessed": 1160
     },
     "1": {
-      "extended": 320,
-      "neutral": 230,
-      "recessed": 180
+      "extended": 1950,
+      "neutral": 1270,
+      "recessed": 770
     },
     "2": {
-      "extended": 300,
-      "neutral": 180,
-      "recessed": 130
+      "extended": 2300,
+      "neutral": 1390,
+      "recessed": 990
     },
     "3": {
-      "extended": 200,
-      "neutral": 106,
-      "recessed": 60
+      "extended": 1800,
+      "neutral": 1030,
+      "recessed": 580
     },
     "4": {
-      "recessed": 130,
-      "neutral": 176,
-      "extended": 270
+      "extended": 2000,
+      "neutral": 1320,
+      "recessed": 870
     },
     "5": {
-      "recessed": 150,
-      "neutral": 186,
-      "extended": 310
+      "extended": 2300,
+      "neutral": 1420,
+      "recessed": 1020
     },
     "6": {
-      "recessed": 150,
-      "neutral": 190,
-      "extended": 310
+      "extended": 2300,
+      "neutral": 1500,
+      "recessed": 1000
     },
     "7": {
-      "recessed": 140,
-      "neutral": 188,
-      "extended": 300
+      "extended": 2200,
+      "neutral": 1450,
+      "recessed": 950
     },
     "8": {
-      "recessed": 160,
-      "neutral": 204,
-      "extended": 310
+      "extended": 2200,
+      "neutral": 1580,
+      "recessed": 1180
     },
     "9": {
-      "recessed": 180,
-      "neutral": 230,
-      "extended": 320
+      "extended": 2350,
+      "neutral": 1770,
+      "recessed": 1270
     },
     "10": {
-      "recessed": 140,
-      "neutral": 200,
-      "extended": 290
+      "extended": 2250,
+      "neutral": 1530,
+      "recessed": 1130
     },
     "11": {
-      "recessed": 140,
-      "neutral": 190,
-      "extended": 300
+      "extended": 2100,
+      "neutral": 1430,
+      "recessed": 980
     },
     "12": {
-      "extended": 310,
-      "neutral": 200,
-      "recessed": 160
+      "extended": 2200,
+      "neutral": 1510,
+      "recessed": 1060
     },
     "13": {
-      "recessed": 110,
-      "neutral": 150,
-      "extended": 260
+      "extended": 2000,
+      "neutral": 1160,
+      "recessed": 710
     },
     "14": {
-      "recessed": 160,
-      "neutral": 210,
-      "extended": 300
+      "extended": 2300,
+      "neutral": 1580,
+      "recessed": 1180
     },
     "15": {
-      "extended": 310,
-      "neutral": 200,
-      "recessed": 140
+      "extended": 2300,
+      "neutral": 1550,
+      "recessed": 1050
     }
   }
 }

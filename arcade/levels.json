@@ -1,0 +1,52 @@
+{
+  "levels": [
+    {
+      "id": "level-1",
+      "number": 1,
+      "title": "Learn to Roll",
+      "subtitle": "Follow the light",
+      "map": "maps/arcade-level-1.json",
+      "timeLimitSeconds": 60,
+      "startCell": "A1",
+      "endCell": "L12",
+      "feature": "A clear table. Learn how the ball responds before the maze fights back.",
+      "rules": [
+        "Place the ball on the blinking cyan start tile.",
+        "Follow the yellow route to the magenta finish.",
+        "The physical rim keeps the ball on the table."
+      ]
+    },
+    {
+      "id": "level-2",
+      "number": 2,
+      "title": "Walls Up",
+      "subtitle": "The maze takes shape",
+      "map": "maps/arcade-level-2.json",
+      "timeLimitSeconds": 75,
+      "startCell": "A1",
+      "endCell": "L12",
+      "feature": "Green wall tiles rise around the route. Read the maze before you move.",
+      "rules": [
+        "Place the ball on the blinking cyan start tile.",
+        "Stay on the yellow route between raised green walls.",
+        "Reach the magenta finish before time runs out."
+      ]
+    },
+    {
+      "id": "level-3",
+      "number": 3,
+      "title": "Shifting Ground",
+      "subtitle": "Nothing stays put",
+      "map": "maps/arcade-level-3.json",
+      "timeLimitSeconds": 90,
+      "startCell": "A1",
+      "endCell": "L12",
+      "feature": "Orange pits and selected borders change state while the clock runs.",
+      "rules": [
+        "Place the ball on the blinking cyan start tile.",
+        "Green walls block; orange tiles are recessed hazards.",
+        "Watch dynamic tiles cycle raised, neutral, then recessed."
+      ]
+    }
+  ]
+}

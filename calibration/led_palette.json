@@ -1,0 +1,61 @@
+{
+  "colors": {
+    "path": {
+      "label": "Path / marked route",
+      "hex": "#FFD400",
+      "rgb": [255, 212, 0]
+    },
+    "trap": {
+      "label": "Trap / recessed pit",
+      "hex": "#FF1A1A",
+      "rgb": [255, 26, 26]
+    },
+    "wall": {
+      "label": "Wall / raised blocker",
+      "hex": "#00E050",
+      "rgb": [0, 224, 80]
+    },
+    "unmarked": {
+      "label": "Unmarked / not yet labeled",
+      "hex": "#FFFFFF",
+      "rgb": [255, 255, 255]
+    },
+    "start": {
+      "label": "Start tile",
+      "hex": "#00E5FF",
+      "rgb": [0, 229, 255]
+    },
+    "end": {
+      "label": "End / finish tile",
+      "hex": "#FF00AA",
+      "rgb": [255, 0, 170]
+    },
+    "points": {
+      "label": "Points / encouraged tiles",
+      "hex": "#FF8C00",
+      "rgb": [255, 140, 0]
+    },
+    "floor": {
+      "label": "Open floor (not path)",
+      "hex": "#C8D0D8",
+      "rgb": [200, 208, 216]
+    },
+    "dynamic": {
+      "label": "Dynamic / special tiles",
+      "hex": "#3366FF",
+      "rgb": [51, 102, 255]
+    },
+    "violet": {
+      "label": "Module check / violet",
+      "hex": "#BF00FF",
+      "rgb": [191, 0, 255]
+    }
+  },
+  "export_hex_aliases": {
+    "#F4D35E": "path",
+    "#76D69E": "wall",
+    "#FFFFFF": "unmarked",
+    "#F29C64": "trap",
+    "#BF00FF": "violet"
+  }
+}
