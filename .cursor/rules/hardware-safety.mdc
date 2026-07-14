@@ -13,6 +13,27 @@ This project drives real motors (Stewart steppers + ~144 module servos).
 - Servo `P` / calibrate / drive / demo that moves actuators
 - Anything that energizes motors against mechanical limits
 
+## Module servos — never leave energized
+
+SG90 / PCA9685 module actuators **must not be left holding PWM**.
+Stalled or loaded holds burn out servos.
+
+Hard rules for agents and host tools:
+
+- After every discrete `P` move: brief settle, then **`O` (channel) or `X` (all)**.
+- Do not leave a channel energized across idle time, REPL prompts, or process exit.
+- Active motion (jog pulse, sweep while running, demo jiggle) may energize
+  only for the duration of that motion, then release immediately.
+- `park` / pulse-and-limp is the correct pattern for “hold a pose” — friction,
+  not continuous torque.
+- On connect and on exit: release every channel (`X` or per-board `O` loops).
+- Prefer `O` / `X` / `LX` over leaving PWM latched on the PCA9685.
+
+Firmware backstop (`arduino/servo_calib`): each `P` auto-limps that channel
+after **3s** (`HOLD`), independent of host heartbeats. Host silence still
+triggers the **5s** `WATCHDOG`. Dynamic / timed tiles work by re-issuing `P`
+before the hold window expires (or after limp — friction holds the pose).
+
 ## Always OK without asking
 
 - Serial open + `help` / `status` / `?`

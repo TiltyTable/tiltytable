@@ -9,6 +9,7 @@ from typing import Any
 
 from flask import Flask, jsonify, make_response, request, send_from_directory
 
+from .ball_adapters import HttpKinectBallAdapter, ManualBallAdapter
 from .engine import GameEngine
 from .hardware import BaseTableHardware, ModuleGridHardware, SimulatedTableHardware
 from .levels import load_levels
@@ -22,11 +23,13 @@ def create_app(
     hardware: BaseTableHardware | None = None,
     score_path: Path | None = None,
     start_ticker: bool = True,
+    ball_adapter: ManualBallAdapter | HttpKinectBallAdapter | None = None,
 ) -> Flask:
     app = Flask(__name__, static_folder=None)
     table = hardware or SimulatedTableHardware()
     scores = ScoreStore(score_path) if score_path else ScoreStore()
-    engine = GameEngine(load_levels(), table, scores)
+    tracking = ball_adapter or ManualBallAdapter()
+    engine = GameEngine(load_levels(), table, scores, ball_adapter=tracking)
     app.config["GAME_ENGINE"] = engine
 
     stop_event = threading.Event()
@@ -99,6 +102,20 @@ def create_app(
         scores.clear()
         return jsonify({"ok": True, "game": engine.public_state()})
 
+    @app.post("/api/dev/ball-cell")
+    def dev_ball_cell():
+        body: dict[str, Any] = request.get_json(silent=True) or {}
+        key = body.get("key")
+        if not key and "row" in body and "col" in body:
+            from .ball_adapters import row_col_to_cell_key
+
+            key = row_col_to_cell_key(int(body["row"]), int(body["col"]))
+        try:
+            engine.set_ball_cell(str(key) if key else None)
+        except ValueError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 400
+        return jsonify({"ok": True, "game": engine.public_state()})
+
     @app.get("/api/leaderboard/export")
     def export_leaderboard():
         response = make_response(
@@ -128,6 +145,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8080, help="HTTP port")
     parser.add_argument("--hardware", action="store_true", help="connect live module grid")
     parser.add_argument("--module-port", default="/dev/arduino-modules")
+    parser.add_argument(
+        "--kinect-url",
+        default="",
+        help="Kinect web control base URL (e.g. http://127.0.0.1:8080) for survival ball tracking",
+    )
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args(argv)
 
@@ -137,7 +159,11 @@ def main(argv: list[str] | None = None) -> int:
     else:
         hardware = SimulatedTableHardware()
 
-    app = create_app(hardware=hardware)
+    ball_adapter: ManualBallAdapter | HttpKinectBallAdapter = ManualBallAdapter()
+    if args.kinect_url:
+        ball_adapter = HttpKinectBallAdapter(args.kinect_url)
+
+    app = create_app(hardware=hardware, ball_adapter=ball_adapter)
     url = f"http://{args.host}:{args.port}"
     mode = "LIVE MODULE GRID" if args.hardware else "SIMULATION"
     print(f"TiltyTable Arcade ({mode}) — {url}")

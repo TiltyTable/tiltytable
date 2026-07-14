@@ -1,61 +1,59 @@
 {
   "colors": {
-    "path": {
-      "label": "Path / marked route",
-      "hex": "#FFD400",
-      "rgb": [255, 212, 0]
-    },
     "trap": {
-      "label": "Trap / recessed pit",
+      "label": "Pit / recessed hazard",
+      "calibration_name": "red",
       "hex": "#FF1A1A",
       "rgb": [255, 26, 26]
     },
     "wall": {
       "label": "Wall / raised blocker",
+      "calibration_name": "green",
       "hex": "#00E050",
       "rgb": [0, 224, 80]
     },
-    "unmarked": {
-      "label": "Unmarked / not yet labeled",
-      "hex": "#FFFFFF",
-      "rgb": [255, 255, 255]
-    },
     "start": {
       "label": "Start tile",
+      "calibration_name": "cyan",
       "hex": "#00E5FF",
       "rgb": [0, 229, 255]
     },
     "end": {
       "label": "End / finish tile",
+      "calibration_name": "magenta",
       "hex": "#FF00AA",
       "rgb": [255, 0, 170]
     },
-    "points": {
-      "label": "Points / encouraged tiles",
+    "yellow": {
+      "label": "Marked path",
+      "calibration_name": "yellow",
       "hex": "#FF8C00",
       "rgb": [255, 140, 0]
     },
     "floor": {
-      "label": "Open floor (not path)",
+      "label": "Open floor",
+      "calibration_name": "gray",
       "hex": "#C8D0D8",
       "rgb": [200, 208, 216]
     },
-    "dynamic": {
-      "label": "Dynamic / special tiles",
+    "points": {
+      "label": "Points / special tile",
+      "calibration_name": "blue",
       "hex": "#3366FF",
       "rgb": [51, 102, 255]
     },
-    "violet": {
-      "label": "Module check / violet",
-      "hex": "#BF00FF",
-      "rgb": [191, 0, 255]
+    "off": {
+      "label": "Black / LED off",
+      "calibration_name": "black",
+      "hex": "#000000",
+      "rgb": [0, 0, 0]
     }
   },
   "export_hex_aliases": {
-    "#F4D35E": "path",
-    "#76D69E": "wall",
-    "#FFFFFF": "unmarked",
-    "#F29C64": "trap",
-    "#BF00FF": "violet"
+    "#567DBB": "floor",
+    "#FF8C00": "yellow",
+    "#00E050": "wall",
+    "#000000": "off",
+    "#FF1A1A": "trap"
   }
 }

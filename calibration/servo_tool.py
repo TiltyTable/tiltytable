@@ -48,11 +48,11 @@ that has unsaved changes, not just the current one. Passing
 behavior, scoped to just that one board's 16 channels.
 
 NOTE ON HOLDING POSITION: opening the serial port resets the Uno (standard
-Uno DTR auto-reset), which re-limps every channel. So a one-shot `drive`
-necessarily drops all other servos for ~2 s before commanding the one you
-asked for. To hold many servos simultaneously, use interactive `drive` and
-keep the session open. The PCA9685 latches PWM in hardware, so positions
-persist as long as the board is not reset and OE stays enabled.
+Uno DTR auto-reset), which re-limps every channel. Module servos must NEVER
+be left energized after a move — stalled holds burn them out. Every `P` is
+followed by a short settle and `O`/`X` (see `park` for pulse-and-limp pose
+holds). Interactive calibrate jogs pulse-then-release; the µs value stays in
+software for tagging.
 
 NOTE ON RANGES: calibrated recessed/neutral/extended values are per-servo
 and can differ wildly between channels and boards — that's expected, not a
@@ -62,13 +62,16 @@ always prefer a channel's own calibrated values when they exist.
 NOTE ON THE WATCHDOG: servo_calib.ino force-releases every channel if it
 gets no host traffic at all for 5 seconds (guards against a servo being
 left driven against a mechanical limit forever if the host crashes or the
-USB link drops). This script runs a background heartbeat while any serial
-link is open specifically so that watchdog never fires during normal use —
-it only ever fires if this process actually dies or the port drops.
+USB link drops). Separately, every P auto-limps that channel after 3
+seconds (HOLD), even if the host is still heartbeating — so position
+commands cannot stall a motor indefinitely. This script runs a background
+heartbeat while any serial link is open specifically so the silence
+watchdog never fires during normal use — it only ever fires if this
+process actually dies or the port drops. Re-issue P to refresh a hold
+(e.g. dynamic tiles in game_runner.py).
 
-NOTE ON SERVO HOLD TIME: every position command holds its channel for at
-most 3 seconds. A newer position command refreshes that channel's timer;
-when the timer expires, the host sends O to release the channel.
+NOTE ON SERVO HOLD TIME: host-side Link also arms a 3s release timer per
+P as defense in depth; firmware HOLD is the authoritative backstop.
 """
 
 import argparse
@@ -109,6 +112,10 @@ DEFAULT_CONFIG_PREFIX = "servo_config"
 # How often to ping the board so its watchdog (5s timeout in the firmware)
 # never fires while this process is alive and the link is open.
 HEARTBEAT_INTERVAL_S = 2.0
+# After discrete P commands: wait then release. Never leave PWM latched —
+# stalled module servos burn out. Jog uses a shorter settle.
+SERVO_SETTLE_S = 0.45
+SERVO_JOG_SETTLE_S = 0.15
 SERVO_HOLD_TIMEOUT_S = 3.0
 
 
@@ -529,7 +536,7 @@ class CalTUI:
         strip, idx = ref
         r, g, b = self._status_color(ch) or (0, 0, 0)
         self.link.send(f"LP {strip} {idx} {r} {g} {b}")
-        time.sleep(max(0.03, self._strip_led_counts.get(strip, 150) * 0.0003))
+        time.sleep(max(0.03, self._strip_led_counts.get(strip, 50) * 0.0003))
 
     def _paint_all_status(self):
         """Light every already-flagged channel's LED (green or red), all
@@ -551,17 +558,19 @@ class CalTUI:
         strip, idx = ref
         r, g, b = CROSSHAIR_WHITE
         self.link.send(f"LP {strip} {idx} {r} {g} {b}")
-        time.sleep(max(0.03, self._strip_led_counts.get(strip, 150) * 0.0003))
+        time.sleep(max(0.03, self._strip_led_counts.get(strip, 50) * 0.0003))
         self._lit_ch = self.ch
 
-    def move(self, count):
+    def move(self, count, settle=SERVO_JOG_SETTLE_S):
         count = max(HARD_MIN, min(HARD_MAX, int(count)))
         self.count = count
         self.link.send(f"P {self.ch} {count}")
+        time.sleep(settle)
+        self.link.send(f"O {self.ch}")  # never leave energized
         if count < SOFT_MIN or count > SOFT_MAX:
             self.msg = f"! {count} outside typical SG90 band {SOFT_MIN}-{SOFT_MAX} - confirm this servo really needs that"
         else:
-            self.msg = f"ch {self.ch}  ->  {count}"
+            self.msg = f"ch {self.ch}  ->  {count} (released)"
 
     def jog(self, delta):
         self.move(self.count + delta)
@@ -637,10 +646,10 @@ class CalTUI:
             self.msg = "capture all three positions before testing"
             return
         for key in ("recessed", "neutral", "extended", "neutral"):
-            self.move(s[key])
+            self.move(s[key], settle=SERVO_SETTLE_S)
             self.msg = f"test: ch {self.ch} -> {key} ({s[key]})"
             self.draw(stdscr)
-            curses.napms(700)
+            curses.napms(400)
 
     # ---- drawing -----------------------------------------------------------
     def draw(self, stdscr):
@@ -900,7 +909,7 @@ class GlobalCalTUI:
         strip, idx = ref
         r, g, b = self._cell_color(row, col, addr, ch)
         self.link.send(f"LP {strip} {idx} {r} {g} {b}")
-        time.sleep(max(0.03, self._strip_led_counts.get(strip, 150) * 0.0003))
+        time.sleep(max(0.03, self._strip_led_counts.get(strip, 50) * 0.0003))
 
     def _paint_all_status(self):
         for addr, ch, row, col in self.sequence:
@@ -923,7 +932,7 @@ class GlobalCalTUI:
         # persistent status color so it is obvious which cell is active.
         r, g, b = (255, 255, 255)
         self.link.send(f"LP {strip} {idx} {r} {g} {b}")
-        time.sleep(max(0.03, self._strip_led_counts.get(strip, 150) * 0.0003))
+        time.sleep(max(0.03, self._strip_led_counts.get(strip, 50) * 0.0003))
         self._lit_pos = (row, col)
 
     # ---- board switching + jogging -------------------------------------
@@ -938,14 +947,16 @@ class GlobalCalTUI:
         self.count = self._neutral_of()
         self._light_current_led()
 
-    def move(self, count):
+    def move(self, count, settle=SERVO_JOG_SETTLE_S):
         count = max(HARD_MIN, min(HARD_MAX, int(count)))
         self.count = count
         self.link.send(f"P {self.ch} {count}")
+        time.sleep(settle)
+        self.link.send(f"O {self.ch}")  # never leave energized
         if count < SOFT_MIN or count > SOFT_MAX:
             self.msg = f"! {count} outside typical SG90 band {SOFT_MIN}-{SOFT_MAX} - confirm this servo really needs that"
         else:
-            self.msg = f"{self.addr} ch {self.ch}  ->  {count}"
+            self.msg = f"{self.addr} ch {self.ch}  ->  {count} (released)"
 
     def jog(self, delta):
         self.move(self.count + delta)
@@ -1085,10 +1096,10 @@ class GlobalCalTUI:
             self.msg = "capture all three positions before testing"
             return
         for key in ("recessed", "neutral", "extended", "neutral"):
-            self.move(s[key])
+            self.move(s[key], settle=SERVO_SETTLE_S)
             self.msg = f"test: {self.addr} ch {self.ch} -> {key} ({s[key]})"
             self.draw(stdscr)
-            curses.napms(700)
+            curses.napms(400)
 
     # ---- drawing --------------------------------------------------------
     def draw(self, stdscr):
@@ -1258,7 +1269,7 @@ def run_global_calibrate(link, configs, config_paths, sequence, led_cfg, strip_l
 
 
 # ================================ DRIVE ==================================
-def move_named(link, cfg, ch, pos_key):
+def move_named(link, cfg, ch, pos_key, settle=SERVO_SETTLE_S):
     s = cfg["servos"].get(str(ch))
     if not s:
         print(f"   ! channel {ch} not in config"); return False
@@ -1266,7 +1277,9 @@ def move_named(link, cfg, ch, pos_key):
         print(f"   ! channel {ch} has no '{pos_key}' saved"); return False
     count = clamp_warn(s[pos_key])
     link.send(f"P {ch} {count}")
-    print(f"   → ch {ch} {pos_key} ({count})")
+    time.sleep(settle)
+    link.send(f"O {ch}")  # never leave energized
+    print(f"   → ch {ch} {pos_key} ({count}) released")
     return True
 
 
@@ -1293,8 +1306,13 @@ def run_park(link, cfg, assignments, settle, interval):
     interval <= 0 means: park once and exit (servos left released)."""
     def assert_and_release():
         for ch, pos_key in assignments:
-            if move_named(link, cfg, ch, pos_key):
-                time.sleep(0.05)
+            s = cfg["servos"].get(str(ch))
+            if not s or pos_key not in s:
+                print(f"   ! channel {ch} missing '{pos_key}'"); continue
+            count = clamp_warn(s[pos_key])
+            link.send(f"P {ch} {count}")
+            print(f"   → ch {ch} {pos_key} ({count})")
+            time.sleep(0.05)
         time.sleep(settle)            # let them arrive before cutting power
         for ch, _ in assignments:
             link.send(f"O {ch}")
@@ -1314,12 +1332,14 @@ def run_park(link, cfg, assignments, settle, interval):
 
 DRIVE_HELP = """\
    DRIVE COMMANDS  (positions: recessed|neutral|extended, or rec|neu|ext)
-     <ch> <pos>      move channel to a named position   e.g.  3 extended
-     all <pos>       move every configured channel to <pos>
+     <ch> <pos>      pulse channel to a named position, then RELEASE
+     all <pos>       pulse every configured channel to <pos>, then RELEASE each
      off <ch>        release a channel (limp)
      e / d / X       enable / disable / all-off
      list            show configured channels & positions
      help / q        help / quit
+
+   Servos are never left energized — each move settles then sends O.
 """
 
 
@@ -1358,6 +1378,7 @@ def run_drive(link, cfg):
         elif cmd in ("help", "?"):
             print(DRIVE_HELP)
         elif cmd in ("quit", "q", "exit"):
+            link.send("X")
             return
         else:
             print("   ? unknown — type 'help'")
@@ -1395,6 +1416,9 @@ def run_sweep(link, cfg, ch, lo, hi, period):
                 time.sleep(dwell)
     except KeyboardInterrupt:
         print("\nStopped.")
+    finally:
+        link.send(f"O {ch}")
+        print(f"   ch {ch} released")
 
 
 def parse_channels(spec):
@@ -1484,6 +1508,10 @@ def run_sweep_all(link, cfg, channels, lo, hi, period, each):
                 _sweep_cycle(link, bounds, period)
     except KeyboardInterrupt:
         print("\nStopped.")
+    finally:
+        for ch in channels:
+            link.send(f"O {ch}")
+        print(f"   released {len(channels)} channel(s)")
 
 
 # ================================ MAIN ===================================
@@ -1498,11 +1526,11 @@ def main():
     sub = ap.add_subparsers(dest="mode", required=True)
     sub.add_parser("calibrate", help="interactive calibration (whole 12x12 table if "
                                       "--i2c-address AND --config are both omitted)")
-    d = sub.add_parser("drive", help="drive servos by named position")
+    d = sub.add_parser("drive", help="drive servos by named position (always releases after move)")
     d.add_argument("channel", nargs="?", type=int, help="one-shot: channel")
     d.add_argument("position", nargs="?", help="one-shot: rec/neu/ext")
     d.add_argument("--release", action="store_true",
-                   help="after reaching the position, release the servo (limp)")
+                   help="(ignored; release is always on — kept for old scripts)")
     pk = sub.add_parser("park", help="move servos to named positions, cut power, refresh periodically")
     pk.add_argument("assignments", nargs="+", metavar="CH:POS",
                     help="e.g. 12:extended 13:neutral 14:recessed")
@@ -1546,7 +1574,7 @@ def main():
                 save_config(cfg, path)
             configs[addr] = cfg
             config_paths[addr] = path
-        strip_led_counts = {int(s): int(v.get("led_count", 150))
+        strip_led_counts = {int(s): int(v.get("led_count", 50))
                              for s, v in led_cfg.get("strips", {}).items()}
 
         print(f"GLOBAL calibrate: {mapped_n}/{len(sequence)} channels are grid-mapped "
@@ -1565,6 +1593,7 @@ def main():
         try:
             run_global_calibrate(link, configs, config_paths, sequence, led_cfg, strip_led_counts)
         finally:
+            link.send("X")
             link.close()
         return
 
@@ -1606,7 +1635,7 @@ def main():
             led_cfg = load_json_default(LED_CONFIG_PATH, {"cells": {}, "strips": {}})
             servo_grid_cfg = load_json_default(SERVO_GRID_CONFIG_PATH, {"cells": {}})
             led_refs = build_channel_led_refs(i2c_address, servo_grid_cfg, led_cfg)
-            strip_led_counts = {int(s): int(v.get("led_count", 150))
+            strip_led_counts = {int(s): int(v.get("led_count", 50))
                                  for s, v in led_cfg.get("strips", {}).items()}
             mapped_n = sum(1 for v in led_refs.values() if v)
             print(f"LED cross-reference: {mapped_n}/{NUM_CHANNELS} channels on "
@@ -1629,14 +1658,10 @@ def main():
                 print(f"   ! position must be one of {list(POS_ALIASES)}")
             else:
                 move_named(link, cfg, args.channel, POS_ALIASES[pos])
-                time.sleep(0.5)   # let the move register before we close
-                if args.release:
-                    link.send(f"O {args.channel}")
-                    print(f"   ch {args.channel} released (limp)")
         else:
             run_drive(link, cfg)
     finally:
-        # Leave servos holding their last commanded position on exit.
+        link.send("X")  # never leave module servos energized on exit
         link.close()
 
 

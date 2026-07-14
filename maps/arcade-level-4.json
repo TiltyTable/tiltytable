@@ -1,6 +1,6 @@
 {
   "A1": {
-    "value": -1,
+    "value": 0,
     "color": "#00FFFF"
   },
   "B1": {
@@ -60,8 +60,8 @@
     "color": "#4DFF00"
   },
   "D2": {
-    "value": -1,
-    "color": "#FF0000"
+    "value": 1,
+    "color": "#4DFF00"
   },
   "E2": {
     "value": 1,
@@ -113,20 +113,7 @@
   },
   "E3": {
     "value": 1,
-    "color": "#4DFF00",
-    "dynamic": {
-      "intervalSeconds": 3.0,
-      "pattern": [
-        {
-          "value": 1,
-          "color": "#4DFF00"
-        },
-        {
-          "value": 0,
-          "color": "#F49400"
-        }
-      ]
-    }
+    "color": "#4DFF00"
   },
   "F3": {
     "value": 1,
@@ -165,29 +152,20 @@
     "color": "#F49400"
   },
   "C4": {
-    "value": 0,
-    "color": "#001FFF"
+    "value": 1,
+    "color": "#4DFF00"
   },
   "D4": {
-    "value": 0,
-    "color": "#F49400",
-    "dynamic": {
-      "type": "delayed_trap",
-      "armDelaySeconds": 4.0,
-      "warnDurationSeconds": 6.0,
-      "initialIntervalSeconds": 1.2,
-      "minIntervalSeconds": 0.12,
-      "trapColor": "#FF0000",
-      "floorColor": "#F49400"
-    }
+    "value": 1,
+    "color": "#4DFF00"
   },
   "E4": {
-    "value": 0,
-    "color": "#F49400"
+    "value": 1,
+    "color": "#4DFF00"
   },
   "F4": {
-    "value": 0,
-    "color": "#F49400"
+    "value": 1,
+    "color": "#4DFF00"
   },
   "G4": {
     "value": 1,
@@ -218,8 +196,8 @@
     "color": "#4DFF00"
   },
   "B5": {
-    "value": -1,
-    "color": "#FF0000"
+    "value": 0,
+    "color": "#F49400"
   },
   "C5": {
     "value": 1,
@@ -235,20 +213,7 @@
   },
   "F5": {
     "value": 1,
-    "color": "#4DFF00",
-    "dynamic": {
-      "intervalSeconds": 3.0,
-      "pattern": [
-        {
-          "value": 1,
-          "color": "#4DFF00"
-        },
-        {
-          "value": 0,
-          "color": "#F49400"
-        }
-      ]
-    }
+    "color": "#4DFF00"
   },
   "G5": {
     "value": 1,
@@ -279,8 +244,8 @@
     "color": "#4DFF00"
   },
   "B6": {
-    "value": 1,
-    "color": "#4DFF00"
+    "value": 0,
+    "color": "#F49400"
   },
   "C6": {
     "value": 1,
@@ -295,29 +260,20 @@
     "color": "#4DFF00"
   },
   "F6": {
-    "value": 0,
-    "color": "#F49400",
-    "dynamic": {
-      "type": "delayed_trap",
-      "armDelaySeconds": 4.0,
-      "warnDurationSeconds": 6.0,
-      "initialIntervalSeconds": 1.2,
-      "minIntervalSeconds": 0.12,
-      "trapColor": "#FF0000",
-      "floorColor": "#F49400"
-    }
+    "value": 1,
+    "color": "#4DFF00"
   },
   "G6": {
-    "value": 0,
-    "color": "#001FFF"
+    "value": 1,
+    "color": "#4DFF00"
   },
   "H6": {
-    "value": -1,
-    "color": "#FF0000"
+    "value": 1,
+    "color": "#4DFF00"
   },
   "I6": {
-    "value": -1,
-    "color": "#FF0000"
+    "value": 1,
+    "color": "#4DFF00"
   },
   "J6": {
     "value": 1,
@@ -336,48 +292,87 @@
     "color": "#4DFF00"
   },
   "B7": {
-    "value": 1,
-    "color": "#4DFF00"
+    "value": 0,
+    "color": "#F49400"
   },
   "C7": {
-    "value": 1,
-    "color": "#4DFF00"
+    "value": 0,
+    "color": "#F49400"
   },
   "D7": {
-    "value": 1,
-    "color": "#4DFF00"
+    "value": 0,
+    "color": "#F49400"
   },
   "E7": {
     "value": 1,
-    "color": "#4DFF00"
+    "color": "#4DFF00",
+    "dynamic": {
+      "intervalSeconds": 2.5,
+      "pattern": [
+        {
+          "value": 1,
+          "color": "#4DFF00"
+        },
+        {
+          "value": 0,
+          "color": "#F49400"
+        }
+      ]
+    }
   },
   "F7": {
     "value": 0,
     "color": "#F49400"
   },
   "G7": {
-    "value": 0,
-    "color": "#F49400"
+    "value": 1,
+    "color": "#4DFF00",
+    "dynamic": {
+      "intervalSeconds": 2.5,
+      "pattern": [
+        {
+          "value": 1,
+          "color": "#4DFF00"
+        },
+        {
+          "value": 0,
+          "color": "#F49400"
+        }
+      ]
+    }
   },
   "H7": {
     "value": 0,
     "color": "#F49400"
   },
   "I7": {
+    "value": 1,
+    "color": "#4DFF00",
+    "dynamic": {
+      "intervalSeconds": 2.5,
+      "pattern": [
+        {
+          "value": 1,
+          "color": "#4DFF00"
+        },
+        {
+          "value": 0,
+          "color": "#F49400"
+        }
+      ]
+    }
+  },
+  "J7": {
     "value": 0,
     "color": "#F49400"
   },
-  "J7": {
-    "value": 1,
-    "color": "#4DFF00"
-  },
   "K7": {
-    "value": 1,
-    "color": "#4DFF00"
+    "value": 0,
+    "color": "#F49400"
   },
   "L7": {
-    "value": 1,
-    "color": "#4DFF00"
+    "value": 0,
+    "color": "#F49400"
   },
   "A8": {
     "value": 1,
@@ -405,37 +400,15 @@
   },
   "G8": {
     "value": 1,
-    "color": "#4DFF00",
-    "dynamic": {
-      "intervalSeconds": 3.0,
-      "pattern": [
-        {
-          "value": 1,
-          "color": "#4DFF00"
-        },
-        {
-          "value": 0,
-          "color": "#F49400"
-        }
-      ]
-    }
+    "color": "#4DFF00"
   },
   "H8": {
-    "value": 0,
-    "color": "#F49400"
+    "value": 1,
+    "color": "#4DFF00"
   },
   "I8": {
-    "value": 0,
-    "color": "#F49400",
-    "dynamic": {
-      "type": "delayed_trap",
-      "armDelaySeconds": 4.0,
-      "warnDurationSeconds": 6.0,
-      "initialIntervalSeconds": 1.2,
-      "minIntervalSeconds": 0.12,
-      "trapColor": "#FF0000",
-      "floorColor": "#F49400"
-    }
+    "value": 1,
+    "color": "#4DFF00"
   },
   "J8": {
     "value": 1,
@@ -446,8 +419,8 @@
     "color": "#4DFF00"
   },
   "L8": {
-    "value": 1,
-    "color": "#4DFF00"
+    "value": 0,
+    "color": "#F49400"
   },
   "A9": {
     "value": 1,
@@ -482,16 +455,16 @@
     "color": "#4DFF00"
   },
   "I9": {
-    "value": 0,
-    "color": "#F49400"
+    "value": 1,
+    "color": "#4DFF00"
   },
   "J9": {
-    "value": 0,
-    "color": "#001FFF"
+    "value": 1,
+    "color": "#4DFF00"
   },
   "K9": {
-    "value": 0,
-    "color": "#F49400"
+    "value": 1,
+    "color": "#4DFF00"
   },
   "L9": {
     "value": 0,
@@ -526,42 +499,20 @@
     "color": "#4DFF00"
   },
   "H10": {
-    "value": -1,
-    "color": "#FF0000"
+    "value": 1,
+    "color": "#4DFF00"
   },
   "I10": {
     "value": 1,
-    "color": "#4DFF00",
-    "dynamic": {
-      "intervalSeconds": 3.0,
-      "pattern": [
-        {
-          "value": 1,
-          "color": "#4DFF00"
-        },
-        {
-          "value": 0,
-          "color": "#F49400"
-        }
-      ]
-    }
+    "color": "#4DFF00"
   },
   "J10": {
     "value": 1,
     "color": "#4DFF00"
   },
   "K10": {
-    "value": 0,
-    "color": "#F49400",
-    "dynamic": {
-      "type": "delayed_trap",
-      "armDelaySeconds": 4.0,
-      "warnDurationSeconds": 6.0,
-      "initialIntervalSeconds": 1.2,
-      "minIntervalSeconds": 0.12,
-      "trapColor": "#FF0000",
-      "floorColor": "#F49400"
-    }
+    "value": 1,
+    "color": "#4DFF00"
   },
   "L10": {
     "value": 0,
@@ -600,8 +551,8 @@
     "color": "#4DFF00"
   },
   "I11": {
-    "value": -1,
-    "color": "#FF0000"
+    "value": 1,
+    "color": "#4DFF00"
   },
   "J11": {
     "value": 1,
@@ -652,8 +603,8 @@
     "color": "#4DFF00"
   },
   "J12": {
-    "value": -1,
-    "color": "#FF0000"
+    "value": 1,
+    "color": "#4DFF00"
   },
   "K12": {
     "value": 1,

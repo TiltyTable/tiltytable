@@ -70,6 +70,16 @@ arduino-cli upload -p /dev/arduino-modules --fqbn arduino:renesas_uno:minima ard
 
 # Unified runtime CLI (uses calibration/ configs)
 python3 calibration/tilt_table_cli.py --port /dev/arduino-modules
+
+# LED color calibration (8 named colors + per-tile direct RGB overrides)
+.venv/bin/python3 calibration/led_color_cal_tool.py --port /dev/arduino-modules
+
+# Button UI: select a 4x4 module, cycle the existing palette colours,
+# then set direct per-module R/G/B values with sliders and save.
+.venv/bin/python3 calibration/led_color_cal_gui.py --port /dev/arduino-modules
+
+# Apply a tile-map JSON to the table (walls/floors/pits)
+.venv/bin/python3 game_runner.py maps/tile-map-2026-07-12T04-05-46-868Z.json --once
 ```
 
 ### udev aliases

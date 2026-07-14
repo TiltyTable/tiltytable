@@ -2,7 +2,7 @@
 """
 Continuous tracking of the table's pose relative to the (tripod-fixed) Azure
 Kinect, using 5 retroreflective markers mounted on the vertical faces of
-~1 inch tall walls built around two adjacent edges of the table — not flat
+~2 inch tall walls built around two adjacent edges of the table — not flat
 tape on the table's top surface.
 
 The table sits on a 3-leg Stewart platform and tilts/heaves during normal
@@ -15,23 +15,25 @@ visible to the camera across the platform's tilt range, which is what makes
 Marker layout (world frame = the table's own body-fixed frame; long wall is
 the X axis, short wall is the Y axis, meeting at the origin corner):
 
-    y2 (0, Ly/2, h)
-    |
-    y1 (0, Ly/4, h)
-    |
-    origin (0, 0, h) ------ x1 (Lx/3, 0, h) ------ x2 (2*Lx/3, 0, h)
+                                                                y2 (0, Ly/2, h)
+                                                                |
+                                                                y1 (0, Ly/4, h)
+                                                                |
+    x2 (-2*Lx/3, 0, h) ------ x1 (-Lx/3, 0, h) ------ origin (0, 0, h)
 
-h = MARKER_HEIGHT_MM (~25.4mm, 1 inch wall height). Lx = TABLE_LONG_SIDE_MM,
+h = MARKER_HEIGHT_MM (~50.8mm, 2 inch wall height). Lx = TABLE_LONG_SIDE_MM,
 Ly = TABLE_SHORT_SIDE_MM (both placeholders below pending the user's actual
 wall measurements — update those two constants once known; everything else
 derives from them).
 
-World-frame convention: +X runs from origin toward the x-wall markers, +Y
-runs from origin toward the y-wall markers, +Z is "up" out of the table via
-the right-hand rule (X cross Y). Getting the physical orientation backwards
-silently mirrors the fitted pose; the Kabsch reflection-guard in
-fit_rigid_transform only corrects the SVD's internal sign ambiguity, it
-cannot detect a wrong physical convention.
+World-frame convention: Z=0 is defined at the table's own play surface, not
+at the markers — the markers sit at Z=h, i.e. h above the table, since
+they're mounted on top of the walls. +X runs from origin *away* from the
+x-wall markers (x1/x2 sit at negative X), +Y runs from origin toward the
+y-wall markers, +Z is "up" out of the table via the right-hand rule (X cross
+Y). Getting the physical orientation backwards silently mirrors the fitted
+pose; the Kabsch reflection-guard in fit_rigid_transform only corrects the
+SVD's internal sign ambiguity, it cannot detect a wrong physical convention.
 
 Point identity is recovered automatically (no operator input) via a
 pairwise-distance-signature match: since all 5 points' relative distances are
@@ -75,20 +77,46 @@ import camera_geometry
 # Table marker geometry — single source of truth for where the 5 permanent
 # wall-mounted markers sit relative to the table's own origin corner.
 # ---------------------------------------------------------------------------
-MARKER_HEIGHT_MM = 25.4  # ~1 inch wall height where markers are mounted
+MARKER_HEIGHT_MM = 50.8  # 2 inch wall height where markers are mounted, above the table (Z=0) surface
 
 TABLE_LONG_SIDE_MM = 832.0   # TODO: replace with measured long/X wall length
 TABLE_SHORT_SIDE_MM = 832.0  # TODO: replace with measured short/Y wall length
 
 TABLE_MARKER_WORLD_POINTS: dict[str, tuple[float, float, float]] = {
     "origin": (0.0, 0.0, MARKER_HEIGHT_MM),
-    "x1": (TABLE_LONG_SIDE_MM / 3.0, 0.0, MARKER_HEIGHT_MM),
-    "x2": (2.0 * TABLE_LONG_SIDE_MM / 3.0, 0.0, MARKER_HEIGHT_MM),
+    "x1": (-TABLE_LONG_SIDE_MM / 3.0, 0.0, MARKER_HEIGHT_MM),
+    "x2": (-2.0 * TABLE_LONG_SIDE_MM / 3.0, 0.0, MARKER_HEIGHT_MM),
     "y1": (0.0, TABLE_SHORT_SIDE_MM / 4.0, MARKER_HEIGHT_MM),
     "y2": (0.0, TABLE_SHORT_SIDE_MM / 2.0, MARKER_HEIGHT_MM),
 }
 
 _EXPECTED_MARKER_COUNT = len(TABLE_MARKER_WORLD_POINTS)
+
+# ---------------------------------------------------------------------------
+# Cell grid — same 12x12 logical grid the LED/servo modules address (see
+# .cursor/rules/module-grid-mapping.mdc), overlaid on the physical table so
+# ball position can be reported as (row, col) instead of just raw mm.
+#
+# Grid (0, 0) is the table corner *diagonal* from the marker "origin" corner
+# (i.e. the far corner along both walls) -- not the marker origin itself.
+# Column increases toward the marker-origin corner along the long/X wall;
+# row increases toward the marker-origin corner along the short/Y wall.
+# World X runs 0 (origin) to -TABLE_LONG_SIDE_MM (x2); world Y runs 0
+# (origin) to +TABLE_SHORT_SIDE_MM (y2).
+# ---------------------------------------------------------------------------
+GRID_ROWS = 12
+GRID_COLS = 12
+
+
+def world_to_cell(x_mm: float, y_mm: float) -> tuple[int, int]:
+    """Convert a table-frame (world) X/Y position in mm to a (row, col) cell
+    index on the GRID_ROWS x GRID_COLS grid. Out-of-bounds positions are
+    clamped to the nearest edge cell rather than raising."""
+    col_frac = (x_mm + TABLE_LONG_SIDE_MM) / TABLE_LONG_SIDE_MM
+    row_frac = (TABLE_SHORT_SIDE_MM - y_mm) / TABLE_SHORT_SIDE_MM
+    col = int(np.clip(np.floor(col_frac * GRID_COLS), 0, GRID_COLS - 1))
+    row = int(np.clip(np.floor(row_frac * GRID_ROWS), 0, GRID_ROWS - 1))
+    return row, col
 
 # Matching tolerances (pairwise-distance-signature match).
 _DISTANCE_MATCH_TOL_MM = 30.0        # max per-pair distance error allowed for the best assignment
@@ -102,10 +130,20 @@ _DISTANCE_MATCH_AMBIGUITY_MM = 15.0  # runner-up assignment must be at least thi
 # ball_tracker.py builds would clip both the bright background and the
 # marker to 255 and lose the distinction entirely.
 # ---------------------------------------------------------------------------
-_MARKER_IR_MIN_COUNTS = 3600.0  # module default; overridden live via UI slider in practice
+_MARKER_IR_MIN_COUNTS = 3800.0  # module default; overridden live via UI slider in practice
 _MIN_MARKER_AREA_PX = 4.0
 _MAX_MARKER_AREA_PX = 4000.0
 _MIN_MARKER_CIRCULARITY = 0.6
+
+# The ball is also IR-reflective (see ball_tracker.py), so a bright, roughly
+# circular blob alone isn't enough to tell it apart from a marker — pixel
+# area alone is ambiguous too, since it conflates real size with distance
+# from the camera. Once we have a depth sample we convert radius_px to a
+# physical radius_mm and reject anything bigger than a marker has any
+# business being. The ball's radius is 20-40mm (ball_tracker.py); markers
+# (retroreflective tape) are much smaller, so this threshold sits well below
+# the ball's minimum radius with margin to spare.
+_MAX_MARKER_RADIUS_MM = 15.0
 
 _DEPTH_SAMPLE_FRACTION = 0.6
 _MIN_VALID_DEPTH_FRACTION = 0.10
@@ -209,6 +247,7 @@ def detect_markers(
     _CLR_AREA = (0, 80, 200)     # red — failed area filter
     _CLR_SHAPE = (200, 0, 200)   # magenta — failed circularity
     _CLR_DEPTH = (0, 165, 255)   # orange — failed depth sample
+    _CLR_TOO_BIG = (255, 255, 0)  # cyan — too large to be a marker (likely the ball)
     _CLR_OK = (0, 200, 80)       # green — accepted
 
     blobs: list[MarkerBlob] = []
@@ -245,6 +284,15 @@ def detect_markers(
             )
         if z_mm is None:
             cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_DEPTH, 1)
+            continue
+
+        # Pixel area alone can't distinguish "small and close" from "big and
+        # far", so re-check size in real-world mm now that depth is known —
+        # this is what actually keeps the (much larger) ball from being
+        # mistaken for a marker.
+        radius_mm = radius_px * z_mm / fx
+        if radius_mm > _MAX_MARKER_RADIUS_MM:
+            cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_TOO_BIG, 1)
             continue
 
         x_mm, y_mm, _ = camera_geometry.unproject_pixel(cx, cy, z_mm, fx, fy, ppx, ppy)

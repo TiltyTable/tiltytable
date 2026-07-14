@@ -43,7 +43,7 @@ _IR_PERCENTILE_HIGH = 99    # scene ceiling for contrast stretch
 # treated as bright candidates.  The retro-reflective ball is significantly
 # brighter than the table surface.  Raise if tiles produce false positives;
 # lower if the ball is dim at large depth or off-axis.
-_BALL_BRIGHT_FRACTION = 0.85
+_BALL_BRIGHT_FRACTION = 0.90
 
 # Inner fraction of the detected radius used when sampling depth.
 # Avoids edge pixels where depth reads the background.
@@ -56,9 +56,10 @@ _MIN_VALID_DEPTH_FRACTION = 0.10
 # Contour shape filters
 _MIN_CIRCULARITY  = 0.82   # 4π·Area/Perimeter²; perfect circle = 1.0
 _MIN_CONTOUR_AREA = 15     # pixels²
+_MAX_CONTOUR_AREA = 4000   # pixels² — rejects merged ball+edge blobs
 _MIN_FILL_FRACTION = 0.60  # contour area / min-enclosing-circle area
 
-_IR_BLUR_SIGMA = 2.0       # Gaussian pre-blur sigma for noise suppression
+_IR_BLUR_SIGMA = 0.0       # disabled — retro-reflective ball doesn't need it; blur merges ball into frame edge
 
 # ---------------------------------------------------------------------------
 # Tracking parameters
@@ -261,7 +262,7 @@ class BallDetector:
         ir8 = np.clip((ir_f - p_lo) / (p_hi - p_lo) * 255.0, 0, 255).astype(np.uint8)
         ir8[~valid] = 0
 
-        ir_blur = cv2.GaussianBlur(ir8, (0, 0), _IR_BLUR_SIGMA)
+        ir_blur = cv2.GaussianBlur(ir8, (0, 0), _IR_BLUR_SIGMA) if _IR_BLUR_SIGMA > 0 else ir8
 
         # Threshold for bright pixels (retro-reflective ball).
         bright_thresh = int(_BALL_BRIGHT_FRACTION * 255)
@@ -288,7 +289,7 @@ class BallDetector:
 
         for c in contours:
             area = float(cv2.contourArea(c))
-            if area < _MIN_CONTOUR_AREA:
+            if area < _MIN_CONTOUR_AREA or area > _MAX_CONTOUR_AREA:
                 continue
 
             perimeter = float(cv2.arcLength(c, closed=True))

@@ -35,6 +35,11 @@ is only ever driven to SAFETY_MARGIN (80%) of the calibrated distance from
 that channel's own neutral point — never the full captured extreme.
 "neutral" itself is unaffected (it's a single point, not an extreme).
 
+SERVO POWER: every named servo move pulses PWM, waits briefly for arrival,
+then RELEASES the channel (`O`). Servos are never left energized across the
+REPL prompt — stalled holds burn them out. Demo mode already ends each
+servo action with a release.
+
 DEMO MODE: `demo` picks ONE random action every `period` seconds (default
 1.2s) — either a servo or an LED, chosen at random — instead of driving
 many cells together. Each servo action is a single self-contained cycle:
@@ -43,14 +48,12 @@ in place a few times, then RELEASE — so a servo is never left energized
 across the sleep between actions, unlike the old module-sweep demo (which
 held whole boards extended for the ~seconds it slept, and left them stuck
 if you Ctrl-C'd mid-hold — that demo has been removed). Servo candidates
-are picked directly from each board's servo_config_0x4X.json, bypassing
-servo_grid_config.json entirely, since that grid's module orientation
-doesn't currently agree with the LED grid's (known issue, fix pending).
-LED actions pick a random TAGGED cell from led_grid_config.json (that
-grid is trustworthy — only the servo grid has the orientation problem),
-set it to a random color, and leave it lit — colors accumulate across the
-table over the demo's run rather than resetting each cycle. Run "all off"
-to clear them when you're done.
+are grid-mapped cells from servo_grid_config.json that also have a
+calibrated envelope in that board's servo_config_0x4X.json. LED actions
+pick a random tagged cell from led_grid_config.json, set it to a random
+color, and leave it lit — colors accumulate across the table over the
+demo's run rather than resetting each cycle. Run "all off" to clear them
+when you're done. Both grids share the same global (row, col) space.
 
 SAFETY: on connect, every mapped LED is forced off and EVERY channel on
 EVERY board is released (not just channels tagged in
@@ -97,6 +100,10 @@ HEARTBEAT_INTERVAL_S = 2.0
 # everywhere this tool moves a servo by named position, including inside
 # the demo. "neutral" is unaffected — it's a single point, not an extreme.
 SAFETY_MARGIN = 0.8
+
+# After commanding a position, wait this long then release (limp). Never
+# leave module servos energized — they stall and burn out under hold.
+SERVO_SETTLE_S = 0.45
 
 
 def margin_target(s, pos_key):
@@ -200,7 +207,7 @@ class TiltTable:
         self.servo_configs = servo_configs   # addr -> {"servos": {...}}
         self._active_addr = None
         self._strip_led_counts = {
-            int(s): int(v.get("led_count", 150))
+            int(s): int(v.get("led_count", 50))
             for s, v in led_cfg.get("strips", {}).items()
         }
 
@@ -250,7 +257,7 @@ class TiltTable:
         strip, idx = loc
         r, g, b = rgb
         self.link.send(f"LP {strip} {idx} {r} {g} {b}")
-        count = self._strip_led_counts.get(strip, 150)
+        count = self._strip_led_counts.get(strip, 50)
         time.sleep(max(0.03, count * 0.0003))   # same show()-collision pacing as led_cal_tool.py
         return True
 
@@ -272,6 +279,8 @@ class TiltTable:
         us = max(HARD_MIN, min(HARD_MAX, int(round(target))))
         self._ensure_board(addr)
         self.link.send(f"P {ch} {us}")
+        time.sleep(SERVO_SETTLE_S)
+        self.link.send(f"O {ch}")   # never leave energized
         return True
 
     def release_servo(self, row, col):
@@ -433,33 +442,38 @@ def print_list(table):
 
 
 def _servo_demo_candidates(table):
-    """(address, channel, servo_dict) for every channel that has BOTH a
-    calibrated neutral (needed as the safety-margin pivot) and at least
-    one of recessed/extended (needed as a destination). Read directly
-    from each board's own servo_config_0x4X.json — bypassing
-    servo_grid_config.json entirely, since that grid's orientation is
-    unresolved right now (see DEMO MODE in this file's docstring)."""
+    """(row, col, address, channel, servo_dict) for every grid-mapped cell
+    whose channel has a calibrated neutral (safety-margin pivot) and at
+    least one of recessed/extended. Uses servo_grid_config.json + the
+    matching servo_config_0x4X.json envelope — same global (row, col)
+    space as the LED map."""
     out = []
-    for addr, cfg in table.servo_configs.items():
-        for ch_s, s in cfg.get("servos", {}).items():
-            if "neutral" in s and ("extended" in s or "recessed" in s):
-                out.append((addr, int(ch_s), s))
+    for row, col in table.all_cells():
+        loc = table.servo_at(row, col)
+        if not loc:
+            continue
+        addr, ch = loc
+        s = table.servo_configs.get(addr, {}).get("servos", {}).get(str(ch))
+        if not s:
+            continue
+        if "neutral" in s and ("extended" in s or "recessed" in s):
+            out.append((row, col, addr, int(ch), s))
     return out
 
 
 def do_random_servo(table):
-    """One self-contained cycle on ONE random calibrated channel: move to
-    a random extreme (margin-limited), jiggle in place a few times so it
-    reads as "alive" on camera, then RELEASE. Nothing is left energized
-    once this function returns — no hold-across-a-sleep like the old
-    module-wave demo had, which is what left servos stuck if interrupted
-    mid-cycle."""
+    """One self-contained cycle on ONE random grid-mapped calibrated cell:
+    move to a random extreme (margin-limited), jiggle in place a few times
+    so it reads as "alive" on camera, then RELEASE. Nothing is left
+    energized once this function returns — no hold-across-a-sleep like the
+    old module-wave demo had, which is what left servos stuck if
+    interrupted mid-cycle."""
     candidates = _servo_demo_candidates(table)
     if not candidates:
-        print("   ! no servo channel has both a calibrated neutral and a recessed/extended "
-              "point yet — run servo_tool.py calibrate on at least one board first.")
+        print("   ! no grid-mapped servo has both a calibrated neutral and a recessed/extended "
+              "point yet — check servo_grid_config.json and run servo_tool.py calibrate.")
         return
-    addr, ch, s = random.choice(candidates)
+    row, col, addr, ch, s = random.choice(candidates)
     pos_key = random.choice([k for k in ("extended", "recessed") if k in s])
     target, _ = margin_target(s, pos_key)
     target = max(HARD_MIN, min(HARD_MAX, int(round(target))))
@@ -475,14 +489,14 @@ def do_random_servo(table):
     table.link.send(f"P {ch} {target}")
     time.sleep(0.15)
     table.link.send(f"O {ch}")               # always released before returning
-    print(f"   servo {addr} ch {ch} -> {pos_key} ({target}us), jiggled, released")
+    print(f"   ({row},{col}) servo {addr} ch {ch} -> {pos_key} ({target}us), jiggled, released")
 
 
 def do_random_led(table):
-    """Light ONE random TAGGED cell (led_grid_config.json — that grid is
-    trustworthy) a random color and leave it lit. Colors accumulate
-    across the table as the demo runs rather than resetting each cycle;
-    run "all off" in the REPL to clear them."""
+    """Light ONE random tagged cell from led_grid_config.json a random
+    color and leave it lit. Colors accumulate across the table as the
+    demo runs rather than resetting each cycle; run "all off" in the REPL
+    to clear them."""
     cells = list(table.led_cfg.get("cells", {}).items())
     if not cells:
         print("   ! led_grid_config.json has no tagged cells — run led_cal_tool.py first.")
@@ -491,7 +505,7 @@ def do_random_led(table):
     strip, idx = val["strip"], val["index"]
     rgb = tuple(random.randint(30, 255) for _ in range(3))
     table.link.send(f"LP {strip} {idx} {rgb[0]} {rgb[1]} {rgb[2]}")
-    count = table._strip_led_counts.get(strip, 150)
+    count = table._strip_led_counts.get(strip, 50)
     time.sleep(max(0.03, count * 0.0003))
     print(f"   cell {key} (strip {strip} idx {idx}) -> {rgb}, stays lit")
 

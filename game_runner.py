@@ -9,10 +9,15 @@ Map format (see maps/): keys A1..L12 → cells with
   value  0 → floor  (servo neutral)
   value -1 → pit    (servo recessed, margin-limited)
   color    → LED (mapped through calibration/led_palette.json +
-             per-tile gains in led_color_cal.json)
+             per-tile direct RGB overrides in led_color_cal.json)
 
   dynamic.intervalSeconds + dynamic.pattern[] → oscillate value/color
   forever (re-pulse each step; firmware auto-limps ~3s after each P).
+
+  dynamic.type = "delayed_trap" → path tile blinks trapColor with accelerating
+  LED cadence, then recesses to value -1 after armDelaySeconds + warnDurationSeconds.
+
+  blinkUntilPlay: true → recessed until host/arcade calls begin_play (arcade only).
 
 Usage:
   .venv/bin/python3 game_runner.py maps/tile-map-….json
@@ -122,7 +127,7 @@ def parse_map(raw: dict):
         value = int(cell["value"])
         if value not in VALUE_TO_POS:
             raise ValueError(f"{key}: value {value} not in {{-1,0,1}}")
-        color = cell.get("color", "#FFFFFF")
+        color = cell.get("color", "#000000")
         rgb = hex_to_rgb(color)
         entry = {
             "key": key,
@@ -134,18 +139,37 @@ def parse_map(raw: dict):
         }
         dyn = cell.get("dynamic")
         if dyn:
+            dyn_type = str(dyn.get("type", "cycle"))
+            if dyn_type == "delayed_trap":
+                entry["dyn_type"] = "delayed_trap"
+                entry["arm_delay_s"] = float(dyn.get("armDelaySeconds", 4.0))
+                entry["warn_duration_s"] = float(dyn.get("warnDurationSeconds", 6.0))
+                entry["interval_s"] = float(dyn.get("initialIntervalSeconds", 1.2))
+                entry["min_interval_s"] = float(dyn.get("minIntervalSeconds", 0.12))
+                entry["trap_color"] = dyn.get("trapColor", "#FF0000")
+                entry["floor_color"] = dyn.get("floorColor", color)
+                entry["trapped"] = False
+                entry["blink_on"] = False
+                entry["next_t"] = 0.0
+                if entry["arm_delay_s"] < 0 or entry["warn_duration_s"] <= 0:
+                    raise ValueError(f"{key}: delayed_trap delays must be positive")
+                if entry["interval_s"] <= 0 or entry["min_interval_s"] <= 0:
+                    raise ValueError(f"{key}: delayed_trap intervals must be > 0")
+                dynamic.append(entry)
+                continue
             interval = float(dyn["intervalSeconds"])
             pattern = []
             for step in dyn["pattern"]:
                 v = int(step["value"])
                 if v not in VALUE_TO_POS:
                     raise ValueError(f"{key} pattern value {v} invalid")
-                c = step.get("color", "#FFFFFF")
+                c = step.get("color", "#000000")
                 pattern.append({"value": v, "color": c, "rgb": hex_to_rgb(c)})
             if not pattern:
                 raise ValueError(f"{key}: empty dynamic pattern")
             if interval <= 0:
                 raise ValueError(f"{key}: intervalSeconds must be > 0")
+            entry["dyn_type"] = "cycle"
             entry["interval_s"] = interval
             entry["pattern"] = pattern
             entry["step"] = 0
@@ -158,6 +182,57 @@ def parse_map(raw: dict):
         else:
             static.append(entry)
     return static, dynamic
+
+
+def tick_dynamic_cells(
+    dynamic: list[dict],
+    now: float,
+    play_started: float | None = None,
+) -> list[dict]:
+    """Advance dynamic tiles; return cells that changed this tick."""
+    updates: list[dict] = []
+    for cell in dynamic:
+        dyn_type = cell.get("dyn_type", "cycle")
+        if dyn_type == "delayed_trap":
+            if cell.get("trapped"):
+                continue
+            if play_started is None:
+                continue
+            elapsed = now - play_started
+            arm_delay = cell["arm_delay_s"]
+            warn_dur = cell["warn_duration_s"]
+            if elapsed < arm_delay:
+                continue
+            if elapsed >= arm_delay + warn_dur:
+                cell["trapped"] = True
+                cell["value"] = -1
+                cell["color"] = cell["trap_color"]
+                cell["rgb"] = hex_to_rgb(cell["trap_color"])
+                updates.append(cell)
+                continue
+            if now < cell.get("next_t", 0.0):
+                continue
+            progress = min(1.0, (elapsed - arm_delay) / warn_dur)
+            interval = cell["interval_s"] - progress * (
+                cell["interval_s"] - cell["min_interval_s"]
+            )
+            cell["blink_on"] = not cell.get("blink_on", False)
+            cell["value"] = 0
+            cell["color"] = cell["trap_color"] if cell["blink_on"] else cell["floor_color"]
+            cell["rgb"] = hex_to_rgb(cell["color"])
+            cell["next_t"] = now + max(cell["min_interval_s"], interval)
+            updates.append(cell)
+            continue
+        if now < cell.get("next_t", 0.0):
+            continue
+        cell["step"] = (cell["step"] + 1) % len(cell["pattern"])
+        step = cell["pattern"][cell["step"]]
+        cell["value"] = step["value"]
+        cell["color"] = step["color"]
+        cell["rgb"] = step["rgb"]
+        cell["next_t"] = now + cell["interval_s"]
+        updates.append(cell)
+    return updates
 
 
 class Link:
@@ -296,27 +371,27 @@ class Table:
         return True
 
     def cell_led_rgb(self, cell):
-        """Map JSON color → LED RGB. Unmarked/white stays off (uncolored)."""
-        color = cell.get("color", "#FFFFFF")
+        """Map JSON color → LED RGB. Black/off stays unlit."""
+        color = cell.get("color", "#000000")
         try:
             raw = hex_to_rgb(color if color.startswith("#") else f"#{color}")
             hex_norm = rgb_to_hex(raw)
         except ValueError:
-            raw = cell.get("rgb", (255, 255, 255))
-            hex_norm = rgb_to_hex(raw) if isinstance(raw, (list, tuple)) else "#FFFFFF"
+            raw = cell.get("rgb", (0, 0, 0))
+            hex_norm = rgb_to_hex(raw) if isinstance(raw, (list, tuple)) else "#000000"
 
         aliases = {
             k.upper(): v
             for k, v in self.palette.get("export_hex_aliases", {}).items()
         }
         name = aliases.get(hex_norm)
-        if name is None and hex_norm == "#FFFFFF":
-            name = "unmarked"
+        if name is None and hex_norm == "#000000":
+            name = "off"
         if name is None:
             name = nearest_palette_name(self.palette, raw)
 
-        # Inactive / unmarked tiles: no LED fill
-        if name == "unmarked" or hex_norm == "#FFFFFF":
+        # Inactive / black tiles: no LED fill
+        if name == "off" or hex_norm == "#000000":
             return (0, 0, 0)
 
         try:
@@ -332,7 +407,7 @@ class Table:
 
         LED colors from the map hex are mapped through the game palette
         (export aliases / nearest name) then per-tile RGB gains so e.g.
-        trap red looks consistent across diffuser tiles. White/unmarked
+        pit red looks consistent across diffuser tiles. Black/off
         tiles are left uncolored (LED off).
         """
         for cell in cells:
@@ -463,24 +538,23 @@ def main():
 
         print(f"Dynamic loop: {len(dynamic)} tile(s). Ctrl-C to stop.")
         now = time.monotonic()
+        play_started = now
         for d in dynamic:
-            d["next_t"] = now + d["interval_s"]
+            if d.get("dyn_type", "cycle") == "cycle":
+                d["next_t"] = now + d["interval_s"]
 
         while True:
             now = time.monotonic()
-            due = [d for d in dynamic if now >= d["next_t"]]
-            if due:
-                updates = []
-                for d in due:
-                    d["step"] = (d["step"] + 1) % len(d["pattern"])
-                    step = d["pattern"][d["step"]]
-                    d["value"] = step["value"]
-                    d["color"] = step["color"]
-                    d["rgb"] = step["rgb"]
-                    d["next_t"] = now + d["interval_s"]
-                    updates.append(d)
-                    print(f"   {d['key']} -> value={d['value']} {d['color']} "
-                          f"(step {d['step'] + 1}/{len(d['pattern'])})")
+            updates = tick_dynamic_cells(dynamic, now, play_started=play_started)
+            if updates:
+                for d in updates:
+                    if d.get("dyn_type") == "delayed_trap":
+                        print(f"   {d['key']} -> delayed_trap value={d['value']} {d['color']}")
+                    else:
+                        print(
+                            f"   {d['key']} -> value={d['value']} {d['color']} "
+                            f"(step {d['step'] + 1}/{len(d['pattern'])})"
+                        )
                 table.apply_cells(updates, leds_only=args.leds_only)
             time.sleep(0.05)
     except KeyboardInterrupt:

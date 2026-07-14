@@ -4,8 +4,8 @@ Jetson-hosted cabinet UI for the 854×480 projector.
 
 ## V1 flow
 
-- Scored gauntlet: initials → Levels 1–3 → leaderboard
-- Practice: title screen → level select; no score saved
+- Scored gauntlet: initials → Chambers 1–2 (gauntlet) → leaderboard
+- Practice: title screen → all 7 chambers; no score saved
 - Module-grid maps, start-tile placement, timers, scoring, retries
 - Keyboard-confirmed finish (`C`) until Azure Kinect tracking is integrated
 - Synthesized arcade music/effects through the projector audio output
@@ -13,6 +13,17 @@ Jetson-hosted cabinet UI for the 854×480 projector.
 Kinect tracking is V2. Stewart and roller-ball tilt are V3.
 
 ## Run
+
+## Parallel dev ports
+
+When Kinect tooling already owns the default HTTP port, run arcade on another:
+
+| Service | Port |
+| --- | --- |
+| Kinect / other stack | `8080` |
+| Arcade | `TILTYTABLE_ARCADE_PORT=8081 ./run_arcade.sh` (default `8080`) |
+
+The kiosk Chromium `--app=` URL uses the same `HTTP_PORT` as the server.
 
 Simulation (no hardware):
 
@@ -37,9 +48,9 @@ when available. On the Jetson, Chromium is launched with `SNAP_REEXEC=0` to
 avoid the stock Tegra kernel's snap-confine capability incompatibility.
 Scores are stored locally in ignored `var/arcade/scores.json`.
 
-Before starting, the launcher verifies the HTTP port, all three level files,
-and—in live mode—the module serial alias plus complete 144-cell LED/servo
-calibration.
+Before starting, the launcher verifies the HTTP port, all level maps referenced
+in `arcade/levels.json`, and—in live mode—the module serial alias plus complete
+144-cell LED/servo calibration.
 
 ## Keyboard
 
@@ -55,12 +66,43 @@ calibration.
 
 ## Levels
 
-Configuration lives in `arcade/levels.json`; physical tile states remain
-ordinary `maps/*.json` files compatible with `game_runner.py`.
+Configuration lives in `arcade/levels.json`; each level points at a
+`maps/arcade-level-N.json` tile map compatible with `game_runner.py`.
 
-- Level 1: neutral surface with illuminated route
-- Level 2: static raised walls
-- Level 3: recessed-pit course
+**Gauntlet (2 chambers, fast booth throughput)**
+
+| Chamber | Map | Teaches |
+| --- | --- | --- |
+| 1 — First Tilt | `maps/arcade-level-1.json` | Table tilt only: gray floor, cyan→magenta, one blue tile recessed until play |
+| 2 — Dungeon Digest | `maps/arcade-level-2.json` | Wall maze (from `tile-map-2026-07-12…`), pits, blue bonuses, cycling green gates, delayed red traps; non-path cells are physical walls |
+
+**Practice-only (chambers 3–7)**
+
+- Pit drill, dynamic gates, blue bonuses, finale combo, Floor is Lava.
+
+Gauntlet runs `gauntletLevelIds` in `levels.json` (currently `level-1`, `level-2`).
+Practice unlocks all seven chambers.
+
+### Tile physics (level design)
+
+Only servo `value` affects traversability — LED color does not.
+
+| Visual | `value` | Rollable? |
+| --- | ---: | --- |
+| Gray floor | `0` | Yes — open play space (Chamber 1 only) |
+| Shrek path | `0` | Yes — intended route |
+| Red lava / pit | `-1` | No |
+| Green wall | `1` | No |
+| OFF LED on neutral | `0` | Yes — unlit ≠ barrier |
+
+Gray or off tiles with `value: 0` outside Chamber 1 create false shortcuts.
+Maze margins must be walls (`1`) or pits (`-1`).
+
+### Map extras
+
+- `blinkUntilPlay: true` — recessed until the player confirms placement; LED blinks until play.
+- `dynamic.type: "delayed_trap"` — path tile blinks red with accelerating cadence, then recesses.
+- `dynamic.pattern` + `intervalSeconds` — cycling walls/gates (see chamber 4).
 
 ## Safety
 

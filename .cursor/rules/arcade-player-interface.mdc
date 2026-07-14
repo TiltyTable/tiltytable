@@ -11,23 +11,61 @@ input, scored gauntlet/practice levels, and synthesized cabinet audio. The
 `arcade/` stack ties game logic, hardware adapters, and the cabinet display
 together.
 
+## Lore & characters
+
+The cabinet tells a light dungeon-escape story:
+
+- **Tilty** — protagonist, escaping to reunite with **Tiltelle**
+- **Ken Jennings** — advisor on the **left**; calm game-show host voice; **only**
+  character who explains mechanics and how to play
+- **Troll** — antagonist on the **right**; taunts Tilty, especially when the
+  timer runs low
+
+Dual dialogue panels (Ken left, Troll right) are required on game-state
+screens. Copy should feel like a game dev wrote it — personality, world-building,
+stakes — not dry system labels like "HAZARD TILE".
+
 ## Cabinet UI copy (hard requirement)
 
 The 854×480 projector kiosk is player-facing — not a marketing page, product
 demo, developer console, or hardware dashboard.
 
 - Every visible word must help the player understand the current state or take
-  the next action.
+  the next action, **through lore-appropriate dialogue and short commands**.
 - Use short commands, essential game rules, timer/score labels, and clear
-  results.
+  results — often voiced by Ken; Troll adds pressure, not instructions.
 - Do not show implementation details, device paths, hardware jargon, developer
   terminology, future integrations, diagnostics, or calibration details.
-- Do not add slogans, promotional claims, decorative subheadings, tile-count
-  branding, or helper copy that repeats an on-screen action.
+- Do not add slogans, promotional claims, or helper copy that merely repeats an
+  on-screen action without adding character or context.
 - Use `TILTYTABLE` as the title unless the project establishes a real game name.
 - Keep level instructions limited to the immediate mechanic; explain ball
-  placement on the placement screen.
+  placement on the placement screen (Ken voice).
 - Optimize every state for immediate legibility at 854×480 from cabinet
   viewing distance.
-- Preserve the old-school arcade visual style without using extra copy as
-  decoration.
+- Preserve the old-school arcade visual style; lore is welcome, decoration for
+  its own sake is not.
+
+## Debug overlay (booth calibration)
+
+An optional **ball-cell debug chip** is allowed when Kinect tracking is active
+(`integrations.tracking.enabled`) or when the URL includes `?debug=1`. It must:
+
+- Use technical labels only (`BALL CELL`, cell key, confidence) — not lore copy.
+- Sit in a corner (top-right) so it does not cover Ken/Troll dialogue panels.
+- Stay hidden in pure simulation runs without Kinect unless `?debug=1` is set.
+
+## Tile colors (LED calibration)
+
+Level maps and UI tile previews use the calibrated palette:
+
+| Role | Color |
+|------|-------|
+| Floor (inactive) | Gray `#567DBB` |
+| Special (point tile) | Blue `#001FFF` |
+| OFF | `#000000` |
+| Pits/hazards | Red `#FF0000` |
+| Walls | Green `#4DFF00` |
+| Start | Cyan `#00FFFF` |
+| End | Magenta `#680056` |
+| Path/neutral floor | Shrek `#F49400` |

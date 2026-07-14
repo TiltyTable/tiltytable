@@ -543,7 +543,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     kinect_grp.add_argument("--ball-radius-min", type=float, default=20.0, metavar="MM")
     kinect_grp.add_argument("--ball-radius-max", type=float, default=40.0, metavar="MM")
     kinect_grp.add_argument("--pose-update-every-n-frames", type=int, default=3, metavar="N")
-    kinect_grp.add_argument("--marker-ir-min-counts", type=float, default=1000.0, metavar="COUNTS")
+    kinect_grp.add_argument("--marker-ir-min-counts", type=float, default=4000.0, metavar="COUNTS")
 
     pid_grp = parser.add_argument_group("Ball-balance PID / setpoint (table-frame mm)")
     pid_grp.add_argument("--setpoint-x", type=float, default=TABLE_LONG_SIDE_MM / 2.0)

@@ -9,7 +9,8 @@ strands), roller ball, and Arducam UVC capture. Kinect ball tracking is V2;
 full Stewart/roller-ball in the game loop is V3.
 
 ## Recent Changes
-- 2026-07-12 | Reworked all arcade screens as a player-facing cabinet UI: minimal action copy, TILTYTABLE title, concise level mechanics and placement/play guidance, no marketing or hardware terminology, and explicit 854×480 tuning. Added persistent arcade copy rule.
+- 2026-07-12 | Floor is Lava (`survival_lava`): per-tile touch timers (yellow on touch → 2s dwell → red blink → sink at value -1); warn/sink continue after ball leaves; Kinect cell stabilized 0.4s before arming touch; dropout does not reset timers.
+- 2026-07-12 | Arcade gauntlet trimmed to 2 explainer chambers: level 1 tilt tutorial (gray floor, blue `blinkUntilPlay` tile), level 2 wall maze + pits/bonuses/gates/delayed traps (`delayed_trap` dynamic schema). Practice keeps chambers 3–7.
 - 2026-07-12 | Added `arcade/` V1: Flask + screen-filling 854×480 pixel-arcade kiosk UI, offline Press Start 2P font, 3-level gauntlet/practice flows, explicit restart/abandon/fault states, timers/scoring, atomic JSON leaderboard export, synthesized browser audio, launch preflight, and async/dry-run module-grid adapter. V1 uses keyboard `C` completion; Kinect is V2 and Stewart/roller-ball is V3.
 - 2026-07-12 | LED remount: 9 independent strands (one per module). `servo_calib` NUM_STRIPS=9; fresh LED calibration established physical layout. Pins: 0x43→D3, 0x45→D8, 0x48→D5, 0x42→A1, 0x44→D9, 0x40→A3, 0x47→A2, 0x46→D7, 0x41→D2. Keep A4/A5 free for I2C.
 - 2026-07-11 | LED color calibration: 9-color palette + per-tile RGB gains (`led_color_cal_tool.py`); `game_runner` resolves map hex via palette aliases/gains.

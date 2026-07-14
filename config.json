@@ -46,11 +46,8 @@
     "ball_radius_max": 40.0,
     "max_ir_brightness": 3600
   },
-  "calibration": {
-    "extrinsics_path": "extrinsics.json",
-    "calibration_max_rms_mm": 10.0,
-    "calibration_max_residual_mm": 15.0,
-    "calibration_avg_frames": 5,
-    "marker_ir_min_counts": 1000.0
+  "table_pose": {
+    "pose_update_every_n_frames": 3,
+    "marker_ir_min_counts": 4000.0
   }
 }

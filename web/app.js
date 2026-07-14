@@ -397,7 +397,8 @@ function renderBall(ball) {
   } else if (ball.detected && ball.position_world) {
     const w = ball.position_world;
     const staleTag = ball.pose_stale ? ` (stale, ${ball.pose_age_s?.toFixed(1)}s)` : '';
-    ballWorld.textContent = `X=${fmtMm(w.x)} Y=${fmtMm(w.y)} Z=${fmtMm(w.z)}${staleTag}`;
+    const cellTag = ball.cell ? ` cell=(${ball.cell.row},${ball.cell.col})` : '';
+    ballWorld.textContent = `X=${fmtMm(w.x)} Y=${fmtMm(w.y)} Z=${fmtMm(w.z)}${cellTag}${staleTag}`;
   } else {
     ballWorld.textContent = 'tracking — ball not detected';
   }

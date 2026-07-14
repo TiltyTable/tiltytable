@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
-"""Run the calibrated servos for green LED cells, one cell at a time.
+"""Run the calibrated servos for green LED cells with staggered sequences.
 
 Cells are visited from (0, 0) in row-major order.  For each eligible cell,
-the servo is commanded to recessed, extended, then neutral, with 100 ms
-between commands.  A cell is eligible when it has both LED and servo-grid
-tags and its persistent LED color is not red or yellow.
+the servo is commanded to recessed, extended, then neutral, with a short
+settle after each pulse and an immediate release (`O`) so nothing is left
+energized (stalled holds burn out SG90s).  Sequences start 0.3 seconds apart;
+each servo retains its normal delay between positions.
+
+A cell is eligible when it has both LED and servo-grid tags and its
+persistent LED color is not red or yellow.
 
 Run from the repository root or from this directory:
 
@@ -15,6 +19,7 @@ servo_tool.py.  Ctrl-C releases all servo channels before exiting.
 """
 
 import argparse
+import heapq
 import json
 import os
 import sys
@@ -51,6 +56,8 @@ except ImportError:
 CALIBRATION_DIR = os.path.dirname(os.path.abspath(__file__))
 POSITION_KEYS = ("recessed", "extended", "neutral")
 STEP_DELAY_S = 0.500
+SERVO_SETTLE_S = 0.45
+SEQUENCE_START_OFFSET_S = 1.0
 
 
 def load_json(path):
@@ -99,7 +106,11 @@ def main():
     parser.add_argument("--port", default=None)
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--delay", type=float, default=STEP_DELAY_S,
-                        help="seconds between positions (default: 0.100)")
+                        help="seconds between positions after release (default: 0.500)")
+    parser.add_argument("--start-offset", type=float, default=SEQUENCE_START_OFFSET_S,
+                        help="seconds between starting each servo sequence (default: 1.000)")
+    parser.add_argument("--settle", type=float, default=SERVO_SETTLE_S,
+                        help="seconds to wait after P before release (default: 0.45)")
     parser.add_argument("--led-config", default=LED_CONFIG_PATH)
     parser.add_argument("--servo-grid-config", default=SERVO_GRID_CONFIG_PATH)
     args = parser.parse_args()
@@ -130,17 +141,42 @@ def main():
     try:
         link.open_wait()
         active_address = None
-        for row, col, address, channel, servo in cells:
+        # A small event queue lets each servo keep its own cadence while the
+        # initial start of each sequence is staggered.  It also avoids holding
+        # up one servo while another servo is settling.
+        events = []
+        event_number = 0
+        start_time = time.monotonic()
+        for cell_number, cell in enumerate(cells):
+            heapq.heappush(events, (start_time + cell_number * args.start_offset,
+                                    event_number, cell_number, 0, "pulse"))
+            event_number += 1
+
+        while events:
+            due, _, cell_number, position_index, action = heapq.heappop(events)
+            wait = due - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+
+            row, col, address, channel, servo = cells[cell_number]
             if address != active_address:
                 link.send(f"A {address}")
                 time.sleep(0.3)
                 active_address = address
-            print(f"({row},{col}) {address} ch {channel}")
-            for position in POSITION_KEYS:
+
+            if action == "pulse":
+                position = POSITION_KEYS[position_index]
                 value = servo[position]
-                print(f"  {position}: {value} us")
+                print(f"({row},{col}) {address} ch {channel} {position}: {value} us")
                 link.send(f"P {channel} {value}")
-                time.sleep(args.delay)
+                heapq.heappush(events, (time.monotonic() + args.settle, event_number,
+                                        cell_number, position_index, "release"))
+            else:
+                link.send(f"O {channel}")  # never leave energized
+                if position_index + 1 < len(POSITION_KEYS):
+                    heapq.heappush(events, (time.monotonic() + args.delay, event_number,
+                                            cell_number, position_index + 1, "pulse"))
+            event_number += 1
     except KeyboardInterrupt:
         print("\nInterrupted; releasing all servo channels.")
     finally:

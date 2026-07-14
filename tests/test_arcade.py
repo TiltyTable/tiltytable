@@ -10,6 +10,7 @@ from pathlib import Path
 
 from arcade.engine import GameEngine, GameState
 from arcade.hardware import HardwareError, ModuleGridHardware, SimulatedTableHardware
+from arcade.ball_adapters import ManualBallAdapter
 from arcade.levels import load_levels
 from arcade.server import create_app
 from arcade.storage import ScoreStore
@@ -32,13 +33,110 @@ class FaultHardware(SimulatedTableHardware):
         raise RuntimeError("controller missing")
 
 
+class LoadingHardware(SimulatedTableHardware):
+    """Simulates a level load that stays busy until cancelled."""
+
+    def load_level(self, map_path: Path, start_cell: str, end_cell: str) -> None:
+        self.level = map_path.name
+        self.busy = True
+        self.playing = False
+
+
+class TrackingHardware(SimulatedTableHardware):
+    def __init__(self) -> None:
+        super().__init__()
+        self.updates: list[dict] = []
+
+    def apply_cell_updates(self, updates: list[dict]) -> None:
+        self.updates.extend(updates)
+
+
+class ArcadeSurvivalTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.clock = FakeClock()
+        self.hardware = TrackingHardware()
+        self.ball = ManualBallAdapter()
+        self.store = ScoreStore(Path(self.temp_dir.name) / "scores.json")
+        self.catalog = load_levels()
+        self.engine = GameEngine(
+            self.catalog,
+            self.hardware,
+            self.store,
+            self.clock,
+            ball_adapter=self.ball,
+        )
+        self.engine.setup()
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def begin_level_seven(self) -> None:
+        self.engine.show_level_select()
+        self.engine.select_practice_level("level-7")
+        self.engine.continue_action()
+        self.engine.tick()
+        self.engine.confirm_placement()
+        self.ball.set_cell("F6")
+        self.assertEqual(self.engine.state, GameState.PLAYING)
+
+    def test_survival_win_after_countdown(self) -> None:
+        self.begin_level_seven()
+        self.ball.set_cell(None)
+        for _ in range(40):
+            self.clock.advance(1.0)
+            self.engine.tick()
+        self.assertEqual(self.engine.state, GameState.LEVEL_CLEAR)
+        result = self.engine.last_level_result
+        self.assertIsNotNone(result)
+        self.assertGreater(result.score, 0)
+
+    def test_survival_lava_fail_restarts(self) -> None:
+        self.begin_level_seven()
+        self.clock.advance(0.15)
+        self.engine.tick()
+        self.clock.advance(4.6)
+        self.engine.tick()
+        self.assertEqual(self.engine.state, GameState.SURVIVAL_FAIL)
+        self.engine.continue_action()
+        self.engine.tick()
+        self.assertEqual(self.engine.state, GameState.PLACEMENT)
+
+    def test_public_state_includes_ball_when_adapter_present(self) -> None:
+        self.ball.set_cell("G7")
+        state = self.engine.public_state()
+        self.assertIn("ball", state)
+        self.assertEqual(state["ball"]["cell"], "G7")
+        self.assertEqual(state["ball"]["row"], 6)
+        self.assertEqual(state["ball"]["col"], 6)
+        self.assertEqual(state["ball"]["confidence"], 1.0)
+        self.assertFalse(state["integrations"]["tracking"]["enabled"])
+
+    def test_gauntlet_ball_tracking_does_not_emit_survival_red(self) -> None:
+        self.engine.start_gauntlet()
+        self.engine.set_initials("AAA")
+        self.engine.continue_action()
+        self.engine.tick()
+        self.engine.confirm_placement()
+        self.ball.set_cell("F6")
+        for _ in range(40):
+            self.clock.advance(0.15)
+            self.engine.tick()
+        red_updates = [
+            u for u in self.hardware.updates if u.get("color") == "#FF0000"
+        ]
+        self.assertEqual(red_updates, [])
+        self.assertEqual(self.engine.state, GameState.PLAYING)
+
+
 class ArcadeEngineTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.clock = FakeClock()
         self.hardware = SimulatedTableHardware()
         self.store = ScoreStore(Path(self.temp_dir.name) / "scores.json")
-        self.engine = GameEngine(load_levels(), self.hardware, self.store, self.clock)
+        self.catalog = load_levels()
+        self.engine = GameEngine(self.catalog, self.hardware, self.store, self.clock)
         self.engine.setup()
 
     def tearDown(self) -> None:
@@ -59,12 +157,12 @@ class ArcadeEngineTests(unittest.TestCase):
         self.engine.complete_level()
         result = self.engine.last_level_result
         self.assertIsNotNone(result)
-        self.assertEqual(result.remaining_seconds, 50)
-        self.assertEqual(result.score, 1500)
+        self.assertEqual(result.remaining_seconds, 35)
+        self.assertEqual(result.score, 1350)
 
     def test_timeout_allows_unlimited_retry_with_penalty(self) -> None:
         self.begin_level_one()
-        self.clock.advance(61)
+        self.clock.advance(46)
         self.engine.tick()
         self.assertEqual(self.engine.state, GameState.TIME_UP)
         self.assertEqual(self.engine.current_restarts, 1)
@@ -73,7 +171,7 @@ class ArcadeEngineTests(unittest.TestCase):
         self.engine.confirm_placement()
         self.clock.advance(10)
         self.engine.complete_level()
-        self.assertEqual(self.engine.last_level_result.score, 1400)
+        self.assertEqual(self.engine.last_level_result.score, 1250)
 
     def test_partial_gauntlet_creates_ranked_entry(self) -> None:
         self.begin_level_one()
@@ -91,10 +189,10 @@ class ArcadeEngineTests(unittest.TestCase):
         self.assertEqual(rows[0]["levelsCleared"], 1)
         self.assertFalse(rows[0]["complete"])
 
-    def test_full_three_level_gauntlet_saves_complete_score(self) -> None:
+    def test_full_two_level_gauntlet_saves_complete_score(self) -> None:
         self.engine.start_gauntlet()
         self.engine.set_initials("WIN")
-        for level_number in (1, 2, 3):
+        for level_number in (1, 2):
             self.engine.continue_action()  # rules -> loading
             self.engine.tick()
             self.engine.confirm_placement()
@@ -102,13 +200,14 @@ class ArcadeEngineTests(unittest.TestCase):
             self.engine.complete_level()
             self.engine.continue_action()  # clear -> score
             self.engine.continue_action()  # next rules or summary
-            if level_number < 3:
+            if level_number < 2:
                 self.assertEqual(self.engine.state, GameState.RULES)
         self.assertEqual(self.engine.state, GameState.RUN_SUMMARY)
         rows = self.store.all()
         self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["levelsCleared"], 3)
+        self.assertEqual(rows[0]["levelsCleared"], 2)
         self.assertTrue(rows[0]["complete"])
+        self.assertEqual(rows[0]["gauntletLevelCount"], 2)
 
     def test_practice_never_writes_score(self) -> None:
         self.engine.show_level_select()
@@ -128,6 +227,19 @@ class ArcadeEngineTests(unittest.TestCase):
         self.engine.abandon()
         self.assertEqual(self.engine.state, GameState.ATTRACT)
 
+    def test_abandon_during_level_loading_clears_hardware_busy(self) -> None:
+        hardware = LoadingHardware()
+        engine = GameEngine(self.catalog, hardware, self.store, self.clock)
+        engine.setup()
+        engine.start_gauntlet()
+        engine.set_initials("AAA")
+        engine.continue_action()
+        self.assertEqual(engine.state, GameState.LEVEL_LOADING)
+        self.assertTrue(hardware.snapshot()["busy"])
+        engine.abandon()
+        self.assertEqual(engine.state, GameState.ABANDONED)
+        self.assertFalse(hardware.snapshot()["busy"])
+
     def test_manual_restart_exposes_restarting_state(self) -> None:
         self.begin_level_one()
         self.engine.restart()
@@ -142,6 +254,10 @@ class ArcadeEngineTests(unittest.TestCase):
         self.assertEqual(first["state"], "playing")
         self.assertEqual(second["state"], "playing")
         self.assertEqual(first["initials"], second["initials"])
+
+    def test_public_state_omits_ball_without_adapter(self) -> None:
+        state = self.engine.public_state()
+        self.assertNotIn("ball", state)
 
     def test_setup_failure_enters_hardware_fault(self) -> None:
         engine = GameEngine(load_levels(), FaultHardware(), self.store, self.clock)
@@ -189,7 +305,7 @@ class ModuleGridHardwareTests(unittest.TestCase):
 
     def test_existing_module_adapter_runs_full_level_in_dry_run(self) -> None:
         hardware = ModuleGridHardware(dry_run=True)
-        level = load_levels()[2]
+        level = load_levels().levels[2]
         with redirect_stdout(io.StringIO()):
             hardware.initialize()
             hardware.load_level(level.map_path, level.start_cell, level.end_cell)
@@ -201,6 +317,21 @@ class ModuleGridHardwareTests(unittest.TestCase):
             hardware.begin_play()
             self.assertTrue(hardware.snapshot()["playing"])
             hardware.pause()
+            hardware.shutdown()
+
+    def test_cancel_load_clears_busy_during_in_flight_load(self) -> None:
+        hardware = ModuleGridHardware(dry_run=True)
+        level = load_levels().levels[2]
+        with redirect_stdout(io.StringIO()):
+            hardware.initialize()
+            hardware.load_level(level.map_path, level.start_cell, level.end_cell)
+            self.assertTrue(hardware.snapshot()["busy"])
+            hardware.cancel_load()
+            self.assertFalse(hardware.snapshot()["busy"])
+            deadline = time.monotonic() + 2
+            while hardware.snapshot()["busy"] and time.monotonic() < deadline:
+                time.sleep(0.01)
+            self.assertFalse(hardware.snapshot()["busy"])
             hardware.shutdown()
 
 

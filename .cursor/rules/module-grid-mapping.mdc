@@ -1,0 +1,57 @@
+---
+description: Trusted global 12x12 LED and servo grid orientation maps
+alwaysApply: true
+---
+
+# Module Grid Global Mapping
+
+The module table is a **12×12** grid addressed by global `(row, col)` with
+`row,col ∈ [0,11]`. LED and servo maps share that coordinate space and
+**are trusted** — do not treat them as mutually inconsistent or invent a
+formula to replace them.
+
+## Origin / axes (physical)
+
+- `(0,0)` = **top-left** corner of the table
+- `row` increases **down** (0 → 11)
+- `col` increases **right** (0 → 11)
+- So `(0,11)` = top-right, `(11,0)` = bottom-left, `(11,11)` = bottom-right
+
+Remapped 2026-07-11 from an older frame where `(0,0)` was top-right
+(`new_row, new_col = old_col, 11 - old_row`). Backups:
+`calibration/*.json.bak-2026-07-11-origin-tl`.
+
+## Config files (`calibration/`)
+
+| File | Maps |
+| --- | --- |
+| `led_grid_config.json` | `"r,c"` → `{ strip, index }` (+ strip wiring / `led_count`) |
+| `servo_grid_config.json` | `"r,c"` → `{ address, channel }` (+ board `row_block`/`col_block`) |
+| `servo_config_0x40.json` … `0x48.json` | per-channel µs envelopes: recessed / neutral / extended |
+
+Join LED ↔ servo on the same `"r,c"` string key.
+
+LED wiring (2026-07-12): **9 independent strands** (one per 4×4 module),
+not 3 daisy chains. Strip index 0–8 is row-major module order:
+
+| strip | addr | pin | where | strip | addr | pin | where | strip | addr | pin | where |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 0 | 0x43 | D3 | top-left | 1 | 0x45 | D8 | **center** | 2 | 0x48 | D5 | top-right |
+| 3 | 0x42 | A1 | left-mid | 4 | 0x44 | D9 | bottom-mid | 5 | 0x40 | A3 | right-mid |
+| 6 | 0x47 | A2 | bottom-left | 7 | 0x46 | D7 | top-mid | 8 | 0x41 | D2 | bottom-right |
+
+Keep NeoPixel data **off A4/A5** (Wire I2C for PCA9685). Backup of the
+3-strip map: `led_grid_config.json.bak-2026-07-12-3strip`.
+
+## Runtime
+
+- Prefer `(row, col)` APIs (`tilt_table_cli.py`, `servo_tool.py` global calibrate, `run_green_cell_sequence.py`).
+- Rebuild maps only with `led_cal_tool.py` / `servo_grid_cal_tool.py` after hardware changes.
+- `cell_colors` in the LED config (green/red/yellow) are **status markers** from calibration sessions, not a second orientation model.
+- Module servo power: see hardware-safety — never leave channels energized after a move.
+
+## Do not
+
+- Bypass `servo_grid_config.json` because of outdated “orientation mismatch” comments (removed; both grids are source of truth).
+- Assume board address alone implies cell location without the grid JSON.
+- Confuse this with Stewart platform pose (`stewart_*`) — different board and coordinate system.

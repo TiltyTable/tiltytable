@@ -159,9 +159,15 @@ def ideal_rgb(palette: dict, name: str) -> RGB:
     return hex_to_rgb(entry["hex"])
 
 
+def calibration_name(palette: dict, name: str) -> str:
+    """Return the visible colour name used as the per-tile override key."""
+    entry = palette.get("colors", {}).get(name, {})
+    return str(entry.get("calibration_name", name))
+
+
 def resolve_name(palette: dict, cal: dict, name: str, row: int, col: int,
                  dim: float = 1.0) -> RGB:
-    override = get_color_override(cal, name, row, col)
+    override = get_color_override(cal, calibration_name(palette, name), row, col)
     if override is not None:
         # Direct overrides are intentionally not passed through legacy gains:
         # the calibration GUI's sliders represent the actual output RGB.
@@ -214,7 +220,7 @@ def resolve_hex_or_name(palette: dict, cal: dict, color: str, row: int, col: int
             if ak.upper() == hex_norm:
                 return resolve_name(palette, cal, av, row, col, dim)
 
-    # Prefer nearest named ideal, then apply gains (so trap-looking orange → trap red)
+    # Prefer the nearest named palette color before applying calibration.
     name = nearest_palette_name(palette, rgb)
     if name is not None:
         return resolve_name(palette, cal, name, row, col, dim)

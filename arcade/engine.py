@@ -7,9 +7,19 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable
 
+from .ball_adapters import HttpKinectBallAdapter
 from .hardware import BaseTableHardware, HardwareError
-from .levels import Level, load_map
+from .integrations import BallTrackingAdapter
+from .levels import Level, LevelCatalog, load_map
 from .storage import ScoreStore
+from .survival_lava import (
+    DEFAULT_PIT_CONFIRM_SECONDS,
+    FLOOR_COLOR,
+    SurvivalLavaSession,
+    SurvivalParams,
+    survival_score,
+    tick_survival_lava,
+)
 
 
 class GameState(str, Enum):
@@ -23,6 +33,7 @@ class GameState(str, Enum):
     PLACEMENT = "placement"
     PLAYING = "playing"
     TIME_UP = "time_up"
+    SURVIVAL_FAIL = "survival_fail"
     LEVEL_CLEAR = "level_clear"
     LEVEL_SCORE = "level_score"
     RUN_SUMMARY = "run_summary"
@@ -54,15 +65,19 @@ class LevelResult:
 class GameEngine:
     def __init__(
         self,
-        levels: list[Level],
+        catalog: LevelCatalog,
         hardware: BaseTableHardware,
         scores: ScoreStore,
         clock: Callable[[], float] = time.monotonic,
+        ball_adapter: BallTrackingAdapter | None = None,
     ) -> None:
-        self.levels = levels
+        self.catalog = catalog
+        self.levels = list(catalog.levels)
+        self.gauntlet_indices = list(catalog.gauntlet_indices())
         self.hardware = hardware
         self.scores = scores
         self.clock = clock
+        self.ball_adapter = ball_adapter
         self.lock = threading.RLock()
 
         self.state = GameState.SETUP
@@ -78,6 +93,12 @@ class GameEngine:
         self.score_saved = False
         self.error = ""
         self.map_cells: list[dict[str, Any]] = []
+        self._row_col_by_key: dict[str, tuple[int, int]] = {}
+        self._survival: SurvivalLavaSession | None = None
+        self._survival_visited = 0
+        self._survival_ball_cell: str | None = None
+        self._survival_heating = False
+        self._last_survival_tick = 0.0
 
     @property
     def current_level(self) -> Level:
@@ -112,7 +133,7 @@ class GameEngine:
             if self.state != GameState.INITIALS:
                 raise ValueError("Initials are not expected right now")
             self.initials = clean
-            self.level_index = 0
+            self.level_index = self.gauntlet_indices[0]
             self.state = GameState.RULES
 
     def show_level_select(self) -> None:
@@ -140,13 +161,14 @@ class GameEngine:
                 self._prepare_level()
             elif state == GameState.TIME_UP:
                 self._prepare_level(restarting=True)
+            elif state == GameState.SURVIVAL_FAIL:
+                self._prepare_level(restarting=True)
             elif state == GameState.LEVEL_CLEAR:
                 self.state = GameState.LEVEL_SCORE
             elif state == GameState.LEVEL_SCORE:
                 if self.mode == "practice":
                     self.state = GameState.RUN_SUMMARY
-                elif self.level_index + 1 < len(self.levels):
-                    self.level_index += 1
+                elif self._advance_gauntlet():
                     self.current_restarts = 0
                     self.state = GameState.RULES
                 else:
@@ -178,6 +200,30 @@ class GameEngine:
                 self._fault(exc)
                 return
             self.attempt_started_at = self.clock()
+            self._last_survival_tick = 0.0
+            if self.current_level.is_survival_lava:
+                self._survival = SurvivalLavaSession(
+                    params=SurvivalParams(
+                        survival_seconds=float(self.current_level.survival_seconds or 0),
+                        dwell_seconds=float(self.current_level.dwell_seconds or 0),
+                        warn_seconds=float(self.current_level.warn_seconds or 0),
+                        points_per_tile=int(self.current_level.points_per_tile or 0),
+                        floor_color=FLOOR_COLOR,
+                        settle_seconds=0.0,
+                        pit_confirm_seconds=float(
+                            self.current_level.pit_confirm_seconds
+                            if self.current_level.pit_confirm_seconds is not None
+                            else DEFAULT_PIT_CONFIRM_SECONDS
+                        ),
+                    ),
+                    started_at=self.attempt_started_at,
+                )
+                self._survival_visited = 0
+                self._survival_ball_cell = None
+                self._survival_heating = False
+                self._neutralize_survival_start_cell()
+            else:
+                self._survival = None
             self.state = GameState.PLAYING
 
     def restart(self) -> None:
@@ -189,16 +235,25 @@ class GameEngine:
             self.hardware.pause()
             self._prepare_level(restarting=True)
 
+    def set_ball_cell(self, cell: str | None) -> None:
+        adapter = self.ball_adapter
+        if adapter is None or not hasattr(adapter, "set_cell"):
+            raise ValueError("Ball cell override is not available")
+        adapter.set_cell(cell)  # type: ignore[attr-defined]
+
     def complete_level(self) -> None:
         with self.lock:
             if self.state != GameState.PLAYING:
                 raise ValueError("A level is not currently running")
+            level = self.current_level
+            if level.is_survival_lava:
+                raise ValueError("Survival chambers clear automatically when the timer ends")
             remaining = max(0, math.floor(self._remaining_seconds()))
             elapsed_ms = self._finish_attempt_elapsed()
             score = max(0, 1000 + remaining * 10 - self.current_restarts * 100)
             result = LevelResult(
-                level_id=self.current_level.id,
-                level_number=self.current_level.number,
+                level_id=level.id,
+                level_number=level.number,
                 score=score,
                 remaining_seconds=remaining,
                 elapsed_ms=elapsed_ms,
@@ -209,17 +264,40 @@ class GameEngine:
             self.hardware.pause()
             self.state = GameState.LEVEL_CLEAR
 
+    def _complete_survival_win(self) -> None:
+        level = self.current_level
+        remaining = max(0, math.floor(self._remaining_seconds()))
+        elapsed_ms = self._finish_attempt_elapsed()
+        visited = self._survival_visited if self._survival else 0
+        points = level.points_per_tile or 0
+        score = survival_score(visited, remaining, self.current_restarts, points)
+        result = LevelResult(
+            level_id=level.id,
+            level_number=level.number,
+            score=score,
+            remaining_seconds=remaining,
+            elapsed_ms=elapsed_ms,
+            restarts=self.current_restarts,
+        )
+        self.results.append(result)
+        self.last_level_result = result
+        self.hardware.pause()
+        self._survival = None
+        self.state = GameState.LEVEL_CLEAR
+
     def abandon(self) -> None:
         with self.lock:
             if self.state == GameState.LEVEL_SELECT:
                 self.mode = None
                 self.state = GameState.ATTRACT
                 return
-            if self.state in (
+            if self.state in (GameState.LEVEL_LOADING, GameState.RESTARTING):
+                self.hardware.cancel_load()
+            elif self.state in (
                 GameState.PLAYING,
                 GameState.PLACEMENT,
-                GameState.LEVEL_LOADING,
                 GameState.TIME_UP,
+                GameState.SURVIVAL_FAIL,
                 GameState.RULES,
             ):
                 if self.state == GameState.PLAYING:
@@ -239,11 +317,109 @@ class GameEngine:
                 return
             if self.state in (GameState.LEVEL_LOADING, GameState.RESTARTING) and not hardware.get("busy"):
                 self.state = GameState.PLACEMENT
-            if self.state == GameState.PLAYING and self._remaining_seconds() <= 0:
-                self._finish_attempt_elapsed()
-                self.current_restarts += 1
-                self.hardware.pause()
-                self.state = GameState.TIME_UP
+            if self.state == GameState.PLAYING:
+                level = self.current_level
+                if level.is_survival_lava and self._survival is not None:
+                    self._tick_survival_lava()
+                elif self._remaining_seconds() <= 0:
+                    self._finish_attempt_elapsed()
+                    self.current_restarts += 1
+                    self.hardware.pause()
+                    self.state = GameState.TIME_UP
+
+    def _tick_survival_lava(self) -> None:
+        level = self.current_level
+        now = self.clock()
+        if now - self._last_survival_tick < 0.12:
+            return
+        self._last_survival_tick = now
+        if self._survival is None:
+            return
+
+        ball_cell = self._current_ball_cell()
+        tracking_confidence: float | None = None
+        if isinstance(self.ball_adapter, HttpKinectBallAdapter):
+            tracking_confidence = self.ball_adapter.tracking_confidence()
+        result = tick_survival_lava(
+            self._survival,
+            ball_cell,
+            now,
+            self._row_col_by_key,
+            tracking_confidence=tracking_confidence,
+        )
+        self._survival_visited = result.visited_count
+        self._survival_ball_cell = ball_cell
+        self._survival_heating = result.ball_cell_heating
+
+        if result.hardware_updates:
+            self.hardware.apply_cell_updates(result.hardware_updates)
+            self._apply_map_cell_updates(result.hardware_updates)
+
+        if result.ball_on_lava:
+            self._finish_attempt_elapsed()
+            self.current_restarts += 1
+            self.hardware.pause()
+            self._survival = None
+            self.state = GameState.SURVIVAL_FAIL
+            return
+
+        if result.survived:
+            self._complete_survival_win()
+
+    def _current_ball_cell(self) -> str | None:
+        if self.ball_adapter is None:
+            return None
+        return self.ball_adapter.current_cell()
+
+    def _ball_public_state(self) -> dict[str, Any] | None:
+        if self.ball_adapter is None:
+            return None
+        cell = self.ball_adapter.current_cell()
+        confidence = self.ball_adapter.tracking_confidence()
+        row: int | None = None
+        col: int | None = None
+        if cell:
+            from game_runner import cell_key_to_row_col
+
+            try:
+                row, col = cell_key_to_row_col(cell)
+            except ValueError:
+                pass
+        return {
+            "cell": cell,
+            "confidence": round(confidence, 2),
+            "row": row,
+            "col": col,
+        }
+
+    def _neutralize_survival_start_cell(self) -> None:
+        """Drop cyan placement tint on the start tile once survival play begins."""
+        level = self.current_level
+        start = level.start_cell
+        if start not in self._row_col_by_key:
+            return
+        row, col = self._row_col_by_key[start]
+        update = {
+            "key": start,
+            "row": row,
+            "col": col,
+            "value": 0,
+            "color": FLOOR_COLOR,
+            "rgb": (0, 0, 0),
+        }
+        self.hardware.apply_cell_updates([update])
+        self._apply_map_cell_updates([update])
+
+    def _apply_map_cell_updates(self, updates: list[dict[str, Any]]) -> None:
+        by_key = {cell["key"]: cell for cell in self.map_cells}
+        for update in updates:
+            key = update["key"]
+            if key not in by_key:
+                continue
+            by_key[key]["value"] = int(update["value"])
+            by_key[key]["color"] = str(update.get("color", by_key[key]["color"]))
+            if int(update["value"]) == -1:
+                by_key[key]["sunk"] = True
 
     def public_state(self) -> dict[str, Any]:
         with self.lock:
@@ -254,16 +430,40 @@ class GameEngine:
                 if self.state == GameState.PLAYING
                 else (level.time_limit_seconds if level else 0)
             )
-            return {
+            survival_payload = None
+            if level and level.is_survival_lava:
+                survival_payload = {
+                    "active": self.state == GameState.PLAYING,
+                    "tilesVisited": self._survival_visited,
+                    "ballCell": self._survival_ball_cell,
+                    "heating": self._survival_heating,
+                    "survivalSeconds": level.survival_seconds,
+                    "dwellSeconds": level.dwell_seconds,
+                    "warnSeconds": level.warn_seconds,
+                    "pointsPerTile": level.points_per_tile,
+                }
+            kinect_tracking = isinstance(self.ball_adapter, HttpKinectBallAdapter)
+            tracking_confidence = (
+                self.ball_adapter.tracking_confidence()
+                if self.ball_adapter is not None
+                else 0.0
+            )
+            ball_payload = self._ball_public_state()
+            gauntlet_cleared = len(self.results) if self.mode == "gauntlet" else 0
+            payload: dict[str, Any] = {
                 "state": self.state.value,
                 "mode": self.mode,
                 "initials": self.initials,
                 "level": level.public_dict() if level else None,
                 "levels": [item.public_dict() for item in self.levels],
+                "catalog": self.catalog.public_dict(),
+                "gauntletLevelCount": self.catalog.gauntlet_level_count,
+                "gauntletLevelsCleared": gauntlet_cleared,
                 "timer": {
                     "remainingSeconds": remaining,
                     "running": self.state == GameState.PLAYING,
                 },
+                "survival": survival_payload,
                 "score": sum(result.score for result in self.results),
                 "levelsCleared": len(self.results),
                 "restarts": self.current_restarts,
@@ -276,29 +476,48 @@ class GameEngine:
                 "leaderboard": self.scores.top(10),
                 "hardware": self.hardware.snapshot(),
                 "integrations": {
-                    "tracking": {"enabled": False, "phase": "V2", "label": "Azure Kinect"},
+                    "tracking": {
+                        "enabled": kinect_tracking,
+                        "phase": "V2",
+                        "label": "Azure Kinect" if kinect_tracking else "Manual",
+                        "confidence": round(tracking_confidence, 2),
+                    },
                     "tilt": {"enabled": False, "phase": "V3", "label": "Stewart + roller ball"},
                 },
                 "error": self.error,
             }
+            if ball_payload is not None:
+                payload["ball"] = ball_payload
+            return payload
 
     def _prepare_level(self, restarting: bool = False) -> None:
         level = self.current_level
         raw = load_map(level)
-        self.map_cells = [
-            {
-                "key": key,
-                "value": int(cell["value"]),
-                "color": cell.get("color", "#000000"),
-                "dynamic": bool(cell.get("dynamic")),
-            }
-            for key, cell in raw.items()
-        ]
+        self.map_cells = []
+        self._row_col_by_key = {}
+        from game_runner import cell_key_to_row_col
+
+        for key, cell in raw.items():
+            if not isinstance(cell, dict) or "value" not in cell:
+                continue
+            row, col = cell_key_to_row_col(key)
+            self._row_col_by_key[key] = (row, col)
+            dyn = cell.get("dynamic") or {}
+            self.map_cells.append(
+                {
+                    "key": key,
+                    "value": int(cell["value"]),
+                    "color": cell.get("color", "#000000"),
+                    "dynamic": bool(dyn),
+                    "dynamicType": str(dyn.get("type", "cycle")) if dyn else None,
+                    "blinkUntilPlay": bool(cell.get("blinkUntilPlay")),
+                }
+            )
         for cell in self.map_cells:
             if cell["key"] == level.start_cell:
-                cell["color"] = "#00E5FF"
+                cell["color"] = "#00FFFF"
             elif cell["key"] == level.end_cell:
-                cell["color"] = "#FF00AA"
+                cell["color"] = "#680056"
         self.state = GameState.RESTARTING if restarting else GameState.LEVEL_LOADING
         try:
             self.hardware.load_level(level.map_path, level.start_cell, level.end_cell)
@@ -307,8 +526,13 @@ class GameEngine:
 
     def _remaining_seconds(self) -> float:
         if self.attempt_started_at is None:
-            return float(self.current_level.time_limit_seconds)
+            limit = self.current_level.time_limit_seconds
+            if self.current_level.is_survival_lava:
+                return float(self.current_level.survival_seconds or limit)
+            return float(limit)
         elapsed = self.clock() - self.attempt_started_at
+        if self.current_level.is_survival_lava:
+            return float(self.current_level.survival_seconds or 0) - elapsed
         return self.current_level.time_limit_seconds - elapsed
 
     def _finish_attempt_elapsed(self) -> int:
@@ -327,6 +551,7 @@ class GameEngine:
                 "initials": self.initials,
                 "score": sum(result.score for result in self.results),
                 "levelsCleared": len(self.results),
+                "gauntletLevelCount": self.catalog.gauntlet_level_count,
                 "elapsedMs": self.run_elapsed_ms,
                 "restarts": sum(result.restarts for result in self.results),
                 "complete": complete,
@@ -342,6 +567,21 @@ class GameEngine:
         except Exception:
             pass
 
+    def _gauntlet_position(self) -> int | None:
+        try:
+            return self.gauntlet_indices.index(self.level_index)
+        except ValueError:
+            return None
+
+    def _advance_gauntlet(self) -> bool:
+        position = self._gauntlet_position()
+        if position is None:
+            return False
+        if position + 1 >= len(self.gauntlet_indices):
+            return False
+        self.level_index = self.gauntlet_indices[position + 1]
+        return True
+
     def _reset_run(self) -> None:
         self.initials = ""
         self.level_index = 0
@@ -354,3 +594,7 @@ class GameEngine:
         self.score_saved = False
         self.error = ""
         self.map_cells = []
+        self._survival = None
+        self._survival_visited = 0
+        self._survival_ball_cell = None
+        self._survival_heating = False

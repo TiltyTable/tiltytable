@@ -15,6 +15,7 @@ from game_runner import (
     load_table_configs,
     normalize_addr,
     parse_map,
+    tick_dynamic_cells,
 )
 
 START_COLOR = "#00E5FF"
@@ -36,6 +37,12 @@ class BaseTableHardware:
         raise NotImplementedError
 
     def pause(self) -> None:
+        raise NotImplementedError
+
+    def cancel_load(self) -> None:
+        raise NotImplementedError
+
+    def apply_cell_updates(self, updates: list[dict[str, Any]]) -> None:
         raise NotImplementedError
 
     def shutdown(self) -> None:
@@ -67,6 +74,13 @@ class SimulatedTableHardware(BaseTableHardware):
 
     def pause(self) -> None:
         self.playing = False
+
+    def cancel_load(self) -> None:
+        self.busy = False
+        self.playing = False
+
+    def apply_cell_updates(self, updates: list[dict[str, Any]]) -> None:
+        return
 
     def shutdown(self) -> None:
         self.ready = False
@@ -113,8 +127,9 @@ class ModuleGridHardware(BaseTableHardware):
         self._stop = threading.Event()
         self._animation_stop = threading.Event()
         self._generation = 0
-        self._start_entry: dict[str, Any] | None = None
+        self._blink_entries: list[dict[str, Any]] = []
         self._dynamic: list[dict[str, Any]] = []
+        self._play_started_at: float | None = None
 
     def initialize(self) -> None:
         with self._state_lock:
@@ -228,16 +243,28 @@ class ModuleGridHardware(BaseTableHardware):
             raw[start_cell]["color"] = START_COLOR
             raw[end_cell]["color"] = END_COLOR
             static, dynamic = parse_map(raw)
-            start = self._entry(start_cell, value=-1, color=START_COLOR)
+            blink_entries = [self._entry(start_cell, value=-1, color=START_COLOR)]
+            for key, cell in raw.items():
+                if not isinstance(cell, dict) or not cell.get("blinkUntilPlay"):
+                    continue
+                if key == start_cell:
+                    continue
+                blink_entries.append(
+                    self._entry(key, value=-1, color=str(cell.get("color", "#001FFF")))
+                )
+            blink_keys = {entry["key"] for entry in blink_entries}
             initial = [
-                cell for cell in (static + dynamic) if cell["key"] != start_cell
-            ] + [start]
+                cell for cell in (static + dynamic) if cell["key"] not in blink_keys
+            ] + blink_entries
+            if generation != self._generation:
+                return
             with self._io_lock:
                 self.table.apply_cells(initial)
             if generation != self._generation:
                 return
-            self._start_entry = start
+            self._blink_entries = blink_entries
             self._dynamic = dynamic
+            self._play_started_at = None
             self._start_blink(generation)
         except Exception as exc:
             with self._state_lock:
@@ -262,40 +289,43 @@ class ModuleGridHardware(BaseTableHardware):
         self._animation_stop.clear()
 
         def blink() -> None:
-            assert self.table is not None and self._start_entry is not None
+            assert self.table is not None
             on = True
-            entry = self._start_entry
             while (
                 not self._stop.is_set()
                 and not self._animation_stop.wait(0.42)
                 and generation == self._generation
                 and not self.playing
             ):
-                rgb = self.table.cell_led_rgb(entry) if on else (0, 0, 0)
                 with self._io_lock:
-                    self.table.set_led(entry["row"], entry["col"], rgb)
+                    for entry in self._blink_entries:
+                        rgb = self.table.cell_led_rgb(entry) if on else (0, 0, 0)
+                        self.table.set_led(entry["row"], entry["col"], rgb)
                 on = not on
 
         threading.Thread(target=blink, name="arcade-start-blink", daemon=True).start()
 
     def begin_play(self) -> None:
-        if not self.table or not self._start_entry:
+        if not self.table or not self._blink_entries:
             raise HardwareError("level is not prepared")
         self._animation_stop.set()
-        neutral_start = {**self._start_entry, "value": 0}
+        neutral_entries = [{**entry, "value": 0} for entry in self._blink_entries]
         with self._io_lock:
-            self.table.apply_cells([neutral_start])
+            self.table.apply_cells(neutral_entries)
         with self._state_lock:
             self.playing = True
+        self._play_started_at = time.monotonic()
         self._start_dynamic_loop(self._generation)
 
     def _start_dynamic_loop(self, generation: int) -> None:
         if not self._dynamic:
             return
         now = time.monotonic()
+        play_started = self._play_started_at or now
         dynamic = copy.deepcopy(self._dynamic)
         for cell in dynamic:
-            cell["next_t"] = now + cell["interval_s"]
+            if cell.get("dyn_type", "cycle") == "cycle":
+                cell["next_t"] = now + cell["interval_s"]
 
         def animate() -> None:
             assert self.table is not None
@@ -305,15 +335,11 @@ class ModuleGridHardware(BaseTableHardware):
                 and self.playing
             ):
                 now_t = time.monotonic()
-                updates = []
-                for cell in dynamic:
-                    if now_t < cell["next_t"]:
-                        continue
-                    cell["step"] = (cell["step"] + 1) % len(cell["pattern"])
-                    step = cell["pattern"][cell["step"]]
-                    cell.update(value=step["value"], color=step["color"], rgb=step["rgb"])
-                    cell["next_t"] = now_t + cell["interval_s"]
-                    updates.append(cell)
+                updates = tick_dynamic_cells(
+                    dynamic,
+                    now_t,
+                    play_started=play_started,
+                )
                 if updates:
                     with self._io_lock:
                         self.table.apply_cells(updates)
@@ -326,6 +352,29 @@ class ModuleGridHardware(BaseTableHardware):
             self.playing = False
         self._animation_stop.set()
         self._release_servos()
+
+    def cancel_load(self) -> None:
+        """Abort an in-flight level load without disturbing an active play session."""
+        with self._state_lock:
+            if not self.busy:
+                return
+            self._generation += 1
+            self.playing = False
+            self.busy = False
+            self._blink_entries = []
+            self._dynamic = []
+            self._play_started_at = None
+        self._animation_stop.set()
+        self._release_servos()
+
+    def apply_cell_updates(self, updates: list[dict[str, Any]]) -> None:
+        if not updates or not self.table:
+            return
+        with self._state_lock:
+            if not self.playing:
+                return
+        with self._io_lock:
+            self.table.apply_cells(updates)
 
     def _release_servos(self) -> None:
         if not self.link:

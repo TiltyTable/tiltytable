@@ -28,7 +28,8 @@ class ScoreStore:
         clean = {
             "initials": str(entry["initials"]).strip().upper(),
             "score": max(0, int(entry["score"])),
-            "levelsCleared": max(0, min(3, int(entry["levelsCleared"]))),
+            "levelsCleared": max(0, int(entry["levelsCleared"])),
+            "gauntletLevelCount": max(1, int(entry.get("gauntletLevelCount", 3))),
             "elapsedMs": max(0, int(entry["elapsedMs"])),
             "restarts": max(0, int(entry.get("restarts", 0))),
             "complete": bool(entry.get("complete", False)),

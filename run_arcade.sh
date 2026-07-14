@@ -37,6 +37,9 @@ fi
 if [[ "$KIOSK" -eq 1 ]]; then
   PREFLIGHT_ARGS+=(--check-browser)
 fi
+if [[ -n "${TILTYTABLE_KINECT_URL:-}" ]]; then
+  SERVER_ARGS+=(--kinect-url "$TILTYTABLE_KINECT_URL")
+fi
 
 ".venv/bin/python3" -m arcade.preflight "${PREFLIGHT_ARGS[@]}"
 

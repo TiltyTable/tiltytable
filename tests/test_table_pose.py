@@ -154,6 +154,80 @@ class MatchPointsTests(unittest.TestCase):
             tp.match_points(blobs)
 
 
+class WorldToCellTests(unittest.TestCase):
+    """Grid (0,0) is the table corner diagonal from the marker "origin"
+    corner: col increases toward origin along the long/X wall (world X runs
+    0..-TABLE_LONG_SIDE_MM), row increases toward origin along the short/Y
+    wall (world Y runs 0..+TABLE_SHORT_SIDE_MM)."""
+
+    def test_far_corner_from_origin_is_grid_zero_zero(self):
+        row, col = tp.world_to_cell(-tp.TABLE_LONG_SIDE_MM, tp.TABLE_SHORT_SIDE_MM)
+        self.assertEqual((row, col), (0, 0))
+
+    def test_marker_origin_corner_is_last_row_and_col(self):
+        row, col = tp.world_to_cell(0.0, 0.0)
+        self.assertEqual((row, col), (tp.GRID_ROWS - 1, tp.GRID_COLS - 1))
+
+    def test_center_of_table_is_middle_cell(self):
+        row, col = tp.world_to_cell(-tp.TABLE_LONG_SIDE_MM / 2.0, tp.TABLE_SHORT_SIDE_MM / 2.0)
+        self.assertEqual((row, col), (tp.GRID_ROWS // 2, tp.GRID_COLS // 2))
+
+    def test_out_of_bounds_positions_are_clamped_not_raised(self):
+        row, col = tp.world_to_cell(1000.0, -1000.0)
+        self.assertEqual((row, col), (tp.GRID_ROWS - 1, tp.GRID_COLS - 1))
+        row, col = tp.world_to_cell(-tp.TABLE_LONG_SIDE_MM - 1000.0, tp.TABLE_SHORT_SIDE_MM + 1000.0)
+        self.assertEqual((row, col), (0, 0))
+
+
+class DetectMarkersBallRejectionTests(unittest.TestCase):
+    """The ball is also IR-reflective, so a bright circular blob alone isn't
+    enough to tell it apart from a marker -- detect_markers must reject it
+    on physical size (mm), not just pixel area, since pixel area conflates
+    size with distance from the camera."""
+
+    def _synthetic_frame(self, blobs_px, depth_mm=900.0, size=400):
+        """blobs_px: list of (cx, cy, radius_px). Draws bright filled circles
+        on a dim background at a uniform depth."""
+        ir = np.full((size, size), 200, dtype=np.uint16)
+        yy, xx = np.ogrid[:size, :size]
+        for cx, cy, r in blobs_px:
+            mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= r * r
+            ir[mask] = 4000
+        depth = np.full((size, size), depth_mm, dtype=np.float32)
+        return ir, depth
+
+    def test_ball_sized_blob_is_excluded_even_though_pixel_area_is_in_range(self):
+        fx = fy = 500.0
+        ppx = ppy = 200.0
+        z_mm = 900.0
+
+        # 5 small marker-sized blobs (radius_mm well under _MAX_MARKER_RADIUS_MM).
+        marker_radius_px = 5.0
+        marker_centers = [(60, 60), (140, 60), (220, 60), (60, 140), (60, 220)]
+        blobs_px = [(cx, cy, marker_radius_px) for cx, cy in marker_centers]
+
+        # One much larger ball-sized blob: its radius in mm exceeds the
+        # marker cutoff, but its pixel *area* alone is still comfortably
+        # inside [_MIN_MARKER_AREA_PX, _MAX_MARKER_AREA_PX], so only the new
+        # physical-size (mm) check catches it.
+        ball_radius_px = 30.0
+        ball_radius_mm = ball_radius_px * z_mm / fx
+        self.assertGreater(ball_radius_mm, tp._MAX_MARKER_RADIUS_MM)
+        ball_area_px = np.pi * ball_radius_px ** 2
+        self.assertLess(ball_area_px, tp._MAX_MARKER_AREA_PX)
+        blobs_px.append((300, 300, ball_radius_px))
+
+        ir, depth = self._synthetic_frame(blobs_px, depth_mm=z_mm)
+
+        found, _debug_frame, _diag = tp.detect_markers(ir, depth, fx, fy, ppx, ppy)
+
+        self.assertEqual(len(found), len(marker_centers))
+        for blob in found:
+            self.assertLess(blob.radius_px, ball_radius_px)
+            dist_to_ball = ((blob.cx - 300) ** 2 + (blob.cy - 300) ** 2) ** 0.5
+            self.assertGreater(dist_to_ball, ball_radius_px)
+
+
 class TablePoseTrackerTests(unittest.TestCase):
     """These test the tracker's state machine (hold-last-pose + stale flag)
     in isolation from real image detection, by mocking run_pose_fit."""

@@ -1,5 +1,100 @@
 const app = document.querySelector("#app");
 
+const PALETTE = {
+  gray: "#567DBB",
+  shrek: "#F49400",
+  blue: "#001FFF",
+  red: "#FF0000",
+  green: "#4DFF00",
+  cyan: "#00FFFF",
+  magenta: "#680056",
+};
+
+const LORE = {
+  setup: {
+    ken: "Systems check. When you're ready, we'll get Tilty moving toward Tiltelle.",
+    troll: "Nobody leaves my dungeon without my say-so.",
+  },
+  fault: {
+    ken: "Something's wrong with the table. Call an attendant — I'll wait right here.",
+    troll: "Broken already? Pathetic.",
+  },
+  attract: {
+    ken: "Don't worry, Tilty — I'll help you escape.",
+    troll: "You will never escape, Tilty!",
+  },
+  initials: {
+    ken: "Three letters for the board. Make Tiltelle proud.",
+    troll: "Carve your failure in neon, prisoner.",
+  },
+  levelSelect: {
+    ken: "Practice any chamber you've unlocked. Learn the routes.",
+    troll: "Train all you want. The gauntlet still waits.",
+  },
+  loading: {
+    ken: "Stand clear while the tiles reset.",
+    troll: "Don't trip on the way in.",
+  },
+  placement: {
+    ken: "Set the ball on cyan, clear your hands, then start the clock.",
+    troll: "Drop it in a pit for me, will you?",
+  },
+  placementTiltTutorial: {
+    ken: "Cyan is home base. When you start, the blue tile rises — tilt across gray stone to magenta.",
+    troll: "Can't find a path? That's the point, Tilty.",
+  },
+  playing: {
+    ken: "Roll steady. Magenta is freedom.",
+    troll: "Tick tock, Tilty. Tiltelle's not getting younger.",
+  },
+  survivalPlaying: {
+    ken: "Tiles you touch heat up and fall behind you — keep moving!",
+    troll: "Every step leaves a trap, Tilty. The floor eats your path!",
+  },
+  survivalFail: {
+    ken: "You rolled onto a sunk tile — stay ahead of the heat!",
+    troll: "Sizzle sizzle! That's one less tile for your feet!",
+  },
+  timeUp: {
+    ken: "Time expired — try again. You've got the route now.",
+    troll: "Too slow! The dungeon keeps you another night.",
+  },
+  levelClear: {
+    ken: "Clean escape! Let's tally your score.",
+    troll: "Lucky roll. It won't happen twice.",
+  },
+  levelScore: {
+    ken: "Every second left is bonus points. Restarts cost you.",
+    troll: "Points won't buy you love, Tilty.",
+  },
+  runSummary: {
+    ken: "Run logged. Tiltelle's door is closer than you think.",
+    troll: "You'll be back. They always come back.",
+  },
+  abandoned: {
+    ken: "Run ended. Cleared levels still count on the board.",
+    troll: "Running away? Typical.",
+  },
+  leaderboard: {
+    ken: "The finest escapes the dungeon has seen.",
+    troll: "None of them beat me. None.",
+  },
+  abandonOverlay: {
+    ken: "Ending now saves cleared levels on a gauntlet run.",
+    troll: "Giving up already? Tiltelle will be thrilled.",
+  },
+  timerLow30: [
+    "Half a minute, Tilty! Half a lifetime in here!",
+    "The clock's hungry and you're the snack!",
+    "Tiltelle can wait — forever!",
+  ],
+  timerLow10: [
+    "TEN SECONDS! Say goodbye to Tiltelle!",
+    "This is your finale, prisoner!",
+    "Ken can't save you now!",
+  ],
+};
+
 let game = null;
 let attractChoice = 0;
 let levelChoice = 0;
@@ -7,7 +102,37 @@ let initialsDraft = "";
 let abandonOpen = false;
 let lastState = "";
 let lastTimerSecond = null;
+let lastTimerBand = null;
 let requestInFlight = false;
+let devBallCell = null;
+const DEBUG_BALL_OVERLAY = new URLSearchParams(location.search).get("debug") === "1";
+
+function isSurvivalLevel(level = game?.level) {
+  return level?.mode === "survival_lava";
+}
+
+function cellKeyToRowCol(key) {
+  return [Number(key.slice(1)) - 1, key.charCodeAt(0) - 65];
+}
+
+function rowColToCellKey(row, col) {
+  if (row < 0 || row > 11 || col < 0 || col > 11) return null;
+  return `${String.fromCharCode(65 + col)}${row + 1}`;
+}
+
+async function postBallCell(key) {
+  if (!key) return;
+  devBallCell = key;
+  try {
+    await fetch("/api/dev/ball-cell", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ key }),
+    });
+  } catch (_) {
+    /* dev fallback — ignore network errors */
+  }
+}
 
 class ArcadeAudio {
   constructor() {
@@ -68,6 +193,7 @@ class ArcadeAudio {
       this.tone(note, 0.1, "square", 0.45, index * 0.07));
   }
   warning() { this.tone(880, 0.045, "square", 0.28); }
+  trollTaunt() { this.tone(140, 0.12, "sawtooth", 0.4); }
 
   setMusic(active) {
     if (!active) {
@@ -95,6 +221,21 @@ function escapeHtml(value) {
     .replaceAll('"', "&quot;");
 }
 
+function gauntletTotal() {
+  return game?.gauntletLevelCount || game?.catalog?.gauntletLevelCount || 2;
+}
+
+function pickLine(pool, seed = 0) {
+  if (!pool?.length) return "";
+  return pool[Math.abs(seed) % pool.length];
+}
+
+function timerTrollLine(remaining) {
+  if (remaining <= 10) return pickLine(LORE.timerLow10, remaining);
+  if (remaining <= 30) return pickLine(LORE.timerLow30, remaining);
+  return game?.level?.trollLine || LORE.playing.troll;
+}
+
 function brand() {
   return `<span class="brand"><span class="brand-bars"><i></i><i></i><i></i></span>TILTYTABLE</span>`;
 }
@@ -102,21 +243,57 @@ function brand() {
 function hardwareStatus() {
   const hw = game?.hardware || {};
   const css = hw.error ? "error" : hw.busy ? "busy" : "";
-  const label = hw.error ? "HELP NEEDED" : hw.busy ? "PLEASE WAIT" : hw.ready ? "READY" : "NOT READY";
+  const label = hw.error ? "CALL ATTENDANT" : hw.busy ? "TILES MOVING" : hw.ready ? "READY" : "STANDBY";
   return `<span class="status"><i class="status-dot ${css}"></i>${label}</span>`;
 }
 
-function shell(content, controls = "") {
+function ballTrackOverlay() {
+  const tracking = game?.integrations?.tracking;
+  const kinectActive = Boolean(tracking?.enabled);
+  if (!DEBUG_BALL_OVERLAY && !kinectActive) return "";
+  if (!game?.ball) return "";
+
+  const ball = game.ball;
+  const cell = ball.cell || "—";
+  const conf = Number(ball.confidence ?? 0);
+  const dimmed = !kinectActive;
+  const confClass = conf >= 0.75 ? "ok" : conf >= 0.4 ? "warn" : "low";
+
+  return `
+    <aside class="ball-track-overlay ${dimmed ? "dimmed" : ""}" aria-hidden="true">
+      <span class="ball-track-label">BALL CELL</span>
+      <span class="ball-track-cell">${escapeHtml(cell)}</span>
+      <span class="ball-track-conf ${confClass}">${conf.toFixed(1)}</span>
+    </aside>`;
+}
+
+function dialogue(kenText, trollText, compact = false) {
+  return `
+    <div class="dialogue ${compact ? "dialogue-compact" : ""}">
+      <article class="dialogue-panel ken">
+        <p class="dialogue-name">KEN</p>
+        <p class="dialogue-text">${escapeHtml(kenText)}</p>
+      </article>
+      <article class="dialogue-panel troll">
+        <p class="dialogue-name">TROLL</p>
+        <p class="dialogue-text">${escapeHtml(trollText)}</p>
+      </article>
+    </div>`;
+}
+
+function shell(content, controls = "", dialogueHtml = "") {
   return `
     <section class="scene">
       <header class="topbar">${brand()}${hardwareStatus()}</header>
       <div class="scene-center">${content}</div>
+      ${dialogueHtml}
       <footer class="footer">
         <span>${controls}</span>
         <span>${audio.muted ? "AUDIO OFF" : "AUDIO ON"} <span class="key">M</span></span>
       </footer>
     </section>
     ${abandonOpen ? abandonOverlay() : ""}
+    ${ballTrackOverlay()}
   `;
 }
 
@@ -125,7 +302,7 @@ function abandonOverlay() {
     <div class="overlay">
       <article class="message-card">
         <h1>END RUN?</h1>
-        <p class="decision-copy">CLEARED LEVELS WILL BE SAVED</p>
+        ${dialogue(LORE.abandonOverlay.ken, LORE.abandonOverlay.troll, true)}
         <p class="prompt"><span class="key">ENTER</span> END &nbsp; <span class="key">ESC</span> KEEP PLAYING</p>
       </article>
     </div>`;
@@ -133,32 +310,39 @@ function abandonOverlay() {
 
 function renderSetup() {
   const fault = game.state === "hardware_fault";
+  const lore = fault ? LORE.fault : LORE.setup;
   return shell(`
     <article class="setup-card">
       <h1>${fault ? "GAME PAUSED" : "TILTYTABLE"}</h1>
-      ${fault ? `<p class="decision-copy">CALL AN ATTENDANT</p>` : ""}
+      <p class="hero-sub">${fault ? "Dungeon systems need an attendant." : "Tilty's escape begins here."}</p>
       <p class="prompt"><span class="key">ENTER</span> ${fault ? "TRY AGAIN" : "START"}</p>
-    </article>`, `<span class="key">ENTER</span> ${fault ? "TRY AGAIN" : "START"}`);
+    </article>`,
+    `<span class="key">ENTER</span> ${fault ? "TRY AGAIN" : "START"}`,
+    dialogue(lore.ken, lore.troll, true));
 }
 
 function leaderboardRows(limit = 8) {
   const rows = (game.leaderboard || []).slice(0, limit);
-  if (!rows.length) return `<p class="empty-score">NO SCORES YET — BE THE FIRST.</p>`;
+  const total = gauntletTotal();
+  if (!rows.length) {
+    return `<p class="empty-score">No scores yet — be the first to free Tilty.</p>`;
+  }
   return rows.map((row, index) => `
     <div class="score-row">
       <span class="rank">${String(index + 1).padStart(2, "0")}</span>
       <span class="initials">${escapeHtml(row.initials)}</span>
       <span class="points">${Number(row.score).toLocaleString()}</span>
-      <span class="cleared">${row.levelsCleared}/3</span>
+      <span class="cleared">${row.levelsCleared}/${row.gauntletLevelCount || total}</span>
     </div>`).join("");
 }
 
 function renderAttract() {
-  const choices = ["START RUN", "PRACTICE"];
+  const choices = ["ESCAPE RUN", "PRACTICE"];
   return shell(`
     <div class="attract-layout">
       <div class="attract-copy">
         <h1 class="hero-title">TILTY<br>TABLE</h1>
+        <p class="hero-sub">Help Tilty reach Tiltelle</p>
         <div class="menu">
           ${choices.map((choice, index) => `
             <div class="menu-item ${attractChoice === index ? "selected" : ""}">
@@ -167,76 +351,88 @@ function renderAttract() {
         </div>
       </div>
       <aside class="leader-card">
-        <h2>High scores</h2>
+        <h2>Escape board</h2>
         ${leaderboardRows(8)}
       </aside>
     </div>`,
-    `<span class="key">↑↓</span> CHOOSE <span class="key">ENTER</span> SELECT`);
+    `<span class="key">↑↓</span> CHOOSE <span class="key">ENTER</span> SELECT`,
+    dialogue(LORE.attract.ken, LORE.attract.troll));
 }
 
 function renderInitials() {
   const chars = initialsDraft.padEnd(3, " ").slice(0, 3).split("");
   return shell(`
     <div>
-      <h1>ENTER INITIALS</h1>
+      <h1>YOUR MARK</h1>
+      <p class="hero-sub">Three letters for the escape board</p>
       <div class="initials-boxes">
         ${chars.map((char, index) =>
           `<div class="initial-box ${index === Math.min(initialsDraft.length, 2) ? "active" : ""}">${escapeHtml(char)}</div>`
         ).join("")}
       </div>
     </div>`,
-    `<span class="key">A-Z</span> TYPE <span class="key">⌫</span> ERASE <span class="key">ENTER</span> CONFIRM`);
+    `<span class="key">A-Z</span> TYPE <span class="key">⌫</span> ERASE <span class="key">ENTER</span> CONFIRM`,
+    dialogue(LORE.initials.ken, LORE.initials.troll, true));
 }
 
 function renderLevelSelect() {
   return shell(`
     <div style="width:100%">
       <h1 class="screen-title">PRACTICE</h1>
-      <div class="menu" style="margin:20px auto 0;max-width:610px">
+      <p class="hero-sub">All ${game.levels.length} chambers — no score saved</p>
+      <div class="menu" style="margin:16px auto 0;max-width:680px">
         ${game.levels.map((level, index) => `
           <div class="menu-item ${levelChoice === index ? "selected" : ""}">
             <strong>0${level.number} ${escapeHtml(level.title)}</strong>
+            <span class="menu-sub">${escapeHtml(level.subtitle)}</span>
           </div>`).join("")}
       </div>
     </div>`,
-    `<span class="key">↑↓</span> CHOOSE <span class="key">ENTER</span> SELECT <span class="key">ESC</span> TITLE`);
+    `<span class="key">↑↓</span> CHOOSE <span class="key">ENTER</span> SELECT <span class="key">ESC</span> TITLE`,
+    dialogue(LORE.levelSelect.ken, LORE.levelSelect.troll, true));
 }
 
 function renderRules() {
   const level = game.level;
   return shell(`
     <div class="rules-layout">
-      <div class="level-stamp"><strong>${level.number}</strong><span>LEVEL</span></div>
+      <div class="level-stamp"><strong>${level.number}</strong><span>CHAMBER</span></div>
       <div class="rules-copy">
         <h1>${escapeHtml(level.title)}</h1>
         <p class="feature">${escapeHtml(level.feature)}</p>
         ${level.rules.map((rule, index) =>
           `<div class="rule"><b>0${index + 1}</b><span>${escapeHtml(rule)}</span></div>`
         ).join("")}
-        <p class="prompt"><span class="key">ENTER</span> BUILD LEVEL</p>
+        <p class="prompt"><span class="key">ENTER</span> BUILD CHAMBER</p>
       </div>
-    </div>`, `<span class="key">ENTER</span> CONTINUE <span class="key">ESC</span> END RUN`);
+    </div>`,
+    `<span class="key">ENTER</span> CONTINUE <span class="key">ESC</span> END RUN`,
+    dialogue(level.kenLine || LORE.playing.ken, level.trollLine || LORE.playing.troll));
 }
 
 function renderLoading() {
   const restarting = game.state === "restarting";
   return shell(`
     <div>
-      <p class="kicker">LEVEL ${game.level.number}</p>
+      <p class="kicker">CHAMBER ${game.level.number}</p>
       <h1 class="screen-title">${restarting ? "RESETTING" : "GET READY"}</h1>
       <div class="loading-bars"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <p class="decision-copy">STAND CLEAR</p>
-    </div>`, `STAND CLEAR`);
+      <p class="decision-copy">${escapeHtml(game.level.title)}</p>
+    </div>`,
+    `STAND CLEAR`,
+    dialogue(LORE.loading.ken, game.level?.trollLine || LORE.loading.troll, true));
 }
 
 function tileClass(cell) {
   if (cell.key === game.level.startCell) return "start";
-  if (cell.key === game.level.endCell) return "finish";
+  if (!isSurvivalLevel() && cell.key === game.level.endCell) return "finish";
+  if (cell.sunk || (isSurvivalLevel() && cell.value === -1)) return "trap";
   const color = String(cell.color || "").toUpperCase();
-  if (color === "#FF8C00") return "path";
-  if (color === "#3366FF") return "points";
-  if (cell.value === 1) return "wall";
-  if (cell.value === -1) return "trap";
+  if (color === PALETTE.shrek || color === "#FF8C00" || color === "#F49400") return "path";
+  if (color === PALETTE.blue || color === "#3366FF") return "points";
+  if (color === PALETTE.gray || color === "#C8D0D8") return "floor";
+  if (cell.value === 1 || color === PALETTE.green || color === "#00E050") return "wall";
+  if (cell.value === -1 || color === PALETTE.red || color === "#FF1A1A") return "trap";
   return "";
 }
 
@@ -254,111 +450,209 @@ function boardMarkup(waiting = false) {
     sortedCells().map(cell => {
       const classes = ["tile", tileClass(cell)];
       if (cell.dynamic) classes.push("dynamic");
+      if (cell.dynamicType === "delayed_trap") classes.push("delayed-trap");
       if (waiting && cell.key === game.level.startCell) classes.push("waiting");
+      if (waiting && cell.blinkUntilPlay) classes.push("waiting", "points");
       return `<i class="${classes.join(" ")}" title="${cell.key}"></i>`;
     }).join("")
   }</div></div>`;
 }
 
+function placementDialogue(level) {
+  const hasBlinkFloor = (game.mapCells || []).some(cell => cell.blinkUntilPlay);
+  if (level.number === 1 && hasBlinkFloor) {
+    return dialogue(
+      level.kenLine || LORE.placementTiltTutorial.ken,
+      level.trollLine || LORE.placementTiltTutorial.troll,
+      true,
+    );
+  }
+  return dialogue(LORE.placement.ken, level.trollLine || LORE.placement.troll, true);
+}
+
 function renderPlacement() {
+  const level = game.level;
+  const hasBlinkFloor = (game.mapCells || []).some(cell => cell.blinkUntilPlay);
+  const instruction = hasBlinkFloor
+    ? `Cyan <strong>${level.startCell}</strong> — blue tile rises on start`
+    : `Cyan tile <strong>${level.startCell}</strong> — then press enter`;
   return shell(`
     <div class="game-layout">
       ${boardMarkup(true)}
       <div class="hud">
-        <p class="hud-level">LEVEL ${game.level.number} · ${escapeHtml(game.level.title)}</p>
+        <p class="hud-level">CHAMBER ${level.number} · ${escapeHtml(level.title)}</p>
         <h1>PLACE<br>THE BALL</h1>
-        <p class="hud-instruction">BALL ON CYAN <strong>${game.level.startCell}</strong><br>CLEAR HANDS, THEN ENTER</p>
+        <p class="hud-instruction">${instruction}</p>
         <div class="hud-stats">
-          <div class="hud-stat"><span>TIME LIMIT</span><strong>${game.level.timeLimitSeconds}s</strong></div>
+          <div class="hud-stat"><span>TIME LIMIT</span><strong>${level.timeLimitSeconds}s</strong></div>
           <div class="hud-stat"><span>RESTARTS</span><strong>${game.restarts}</strong></div>
         </div>
         <p class="prompt"><span class="key">ENTER</span> START</p>
       </div>
-    </div>`, `<span class="key">ENTER</span> START <span class="key">ESC</span> END RUN`);
+    </div>`,
+    `<span class="key">ENTER</span> START <span class="key">ESC</span> END RUN`,
+    placementDialogue(level));
 }
 
 function renderPlaying() {
   const remaining = game.timer.remainingSeconds;
+  const level = game.level;
+  const survival = isSurvivalLevel();
+  const visited = game.survival?.tilesVisited ?? 0;
+  const heating = Boolean(game.survival?.heating);
+  const kenLine = survival
+    ? (heating
+      ? "Red flash behind you — that tile is about to sink!"
+      : (remaining <= 10
+        ? "Ten seconds — don't stop rolling!"
+        : (remaining <= 20 ? "Tiles you touched are heating up — stay mobile!" : (level.kenLine || LORE.survivalPlaying.ken))))
+    : (remaining <= 30
+      ? (remaining <= 10 ? "Ten seconds — magenta or bust!" : "Under thirty seconds. Stay calm, stay on path.")
+      : (level.kenLine || LORE.playing.ken));
+  const trollLine = survival
+    ? (heating
+      ? "Feel that heat, Tilty? Your feet are cooking!"
+      : (remaining <= 10 ? "BURN, TILTY, BURN!" : (level.trollLine || LORE.survivalPlaying.troll)))
+    : timerTrollLine(remaining);
+  const timerLabel = survival ? (heating ? "HEATING" : "SURVIVE") : null;
+  const instruction = survival
+    ? `Tiles touched <strong>${visited}</strong> · +${level.pointsPerTile || 0} each`
+    : `Reach magenta <strong>${level.endCell}</strong>`;
+  const footer = survival
+    ? `<span class="key">ARROWS</span> DEV BALL <span class="key">R</span> RESTART <span class="key">ESC</span> END RUN`
+    : `<span class="key">C</span> FINISH <span class="key">R</span> RESTART <span class="key">ESC</span> END RUN`;
   return shell(`
     <div class="game-layout">
       ${boardMarkup(false)}
       <div class="hud">
-        <p class="hud-level">LEVEL ${game.level.number} · ${escapeHtml(game.level.title)}</p>
-        <div class="timer ${remaining <= 10 ? "danger" : ""}">${String(remaining).padStart(2, "0")}</div>
+        <p class="hud-level">CHAMBER ${level.number} · ${escapeHtml(level.title)}</p>
+        ${timerLabel ? `<p class="hud-kicker ${heating ? "danger" : ""}">${timerLabel}</p>` : ""}
+        <div class="timer ${remaining <= 10 ? "danger" : remaining <= 20 ? "warn" : ""}">${String(remaining).padStart(2, "0")}</div>
         <div class="hud-stats">
           <div class="hud-stat"><span>RUN SCORE</span><strong>${Number(game.score).toLocaleString()}</strong></div>
           <div class="hud-stat"><span>RESTARTS</span><strong>${game.restarts}</strong></div>
+          ${survival ? `<div class="hud-stat"><span>TILES</span><strong>${visited}</strong></div>` : ""}
         </div>
-        <p class="hud-instruction">REACH MAGENTA <strong>${game.level.endCell}</strong></p>
+        <p class="hud-instruction">${instruction}</p>
       </div>
     </div>`,
-    `<span class="key">C</span> FINISH <span class="key">R</span> RESTART <span class="key">ESC</span> END RUN`);
+    footer,
+    dialogue(kenLine, trollLine, true));
+}
+
+function renderSurvivalFail() {
+  return shell(`
+    <article class="message-card">
+      <p class="kicker">Chamber ${game.level.number}</p>
+      <h1 style="color:var(--red)">SUNK!</h1>
+      <p class="decision-copy">You rolled onto a sunk tile — the heat caught up.</p>
+      <p class="result-number">−100</p>
+      <p class="prompt"><span class="key">ENTER</span> TRY AGAIN</p>
+    </article>`,
+    `<span class="key">ENTER</span> RETRY <span class="key">ESC</span> END RUN`,
+    dialogue(LORE.survivalFail.ken, game.level?.trollLine || LORE.survivalFail.troll, true));
 }
 
 function renderTimeUp() {
   return shell(`
     <article class="message-card">
-      <p class="kicker">Level ${game.level.number}</p>
+      <p class="kicker">Chamber ${game.level.number}</p>
       <h1 style="color:var(--red)">TIME UP</h1>
       <p class="result-number">−100</p>
       <p class="prompt"><span class="key">ENTER</span> TRY AGAIN</p>
-    </article>`, `<span class="key">ENTER</span> RETRY <span class="key">ESC</span> END RUN`);
+    </article>`,
+    `<span class="key">ENTER</span> RETRY <span class="key">ESC</span> END RUN`,
+    dialogue(LORE.timeUp.ken, game.level?.trollLine || LORE.timeUp.troll, true));
 }
 
 function renderLevelClear() {
+  const survival = isSurvivalLevel();
+  const sub = survival
+    ? "You outlasted the lava — Tiltelle grows nearer"
+    : `${game.lastLevelResult.remainingSeconds}s left — Tiltelle grows nearer`;
   return shell(`
     <article class="message-card">
-      <p class="kicker">LEVEL ${game.level.number}</p>
-      <h1>CLEAR!</h1>
+      <p class="kicker">CHAMBER ${game.level.number}</p>
+      <h1>${survival ? "SURVIVED!" : "CLEAR!"}</h1>
       <p class="result-number">+${Number(game.lastLevelResult.score).toLocaleString()}</p>
-      <p class="decision-copy">${game.lastLevelResult.remainingSeconds}s LEFT</p>
+      <p class="decision-copy">${sub}</p>
       <p class="prompt"><span class="key">ENTER</span> SCORE</p>
-    </article>`, `<span class="key">ENTER</span> CONTINUE`);
+    </article>`,
+    `<span class="key">ENTER</span> CONTINUE`,
+    dialogue(LORE.levelClear.ken, LORE.levelClear.troll, true));
 }
 
 function renderLevelScore() {
   const result = game.lastLevelResult;
-  return shell(`
-    <article class="message-card">
-      <p class="kicker">Level ${result.levelNumber} score</p>
-      <h1>${Number(result.score).toLocaleString()} PTS</h1>
-      <div class="result-grid">
+  const total = gauntletTotal();
+  const isLastGauntlet = game.mode === "gauntlet" && result.levelNumber >= total;
+  const nextLabel = game.mode === "practice"
+    ? "FINISH PRACTICE"
+    : (isLastGauntlet ? "FINAL SCORE" : "NEXT CHAMBER");
+  const survival = isSurvivalLevel(game.levels.find(l => l.id === result.levelId));
+  const breakdown = survival
+    ? `<div class="result-grid">
+        <div><span>Survival</span><strong>500</strong></div>
+        <div><span>Tile bonus</span><strong>+tiles</strong></div>
+        <div><span>Restart penalty</span><strong>−${result.restarts * 100}</strong></div>
+      </div>`
+    : `<div class="result-grid">
         <div><span>Clear</span><strong>1,000</strong></div>
         <div><span>Time bonus</span><strong>+${result.remainingSeconds * 10}</strong></div>
         <div><span>Restart penalty</span><strong>−${result.restarts * 100}</strong></div>
-      </div>
-      <p class="prompt"><span class="key">ENTER</span> ${game.mode === "practice" ? "FINISH PRACTICE" : (game.level.number < 3 ? "NEXT LEVEL" : "FINAL SCORE")}</p>
-    </article>`, `<span class="key">ENTER</span> CONTINUE`);
+      </div>`;
+  return shell(`
+    <article class="message-card">
+      <p class="kicker">Chamber ${result.levelNumber} score</p>
+      <h1>${Number(result.score).toLocaleString()} PTS</h1>
+      ${breakdown}
+      <p class="prompt"><span class="key">ENTER</span> ${nextLabel}</p>
+    </article>`,
+    `<span class="key">ENTER</span> CONTINUE`,
+    dialogue(LORE.levelScore.ken, LORE.levelScore.troll, true));
 }
 
 function renderSummary() {
+  const total = gauntletTotal();
+  const headline = game.mode === "practice"
+    ? game.level.title
+    : `${game.levelsCleared}/${total} CHAMBERS`;
+  const next = game.mode === "practice" ? "LEVEL SELECT" : "LEADERBOARD";
   return shell(`
     <article class="message-card">
-      <p class="kicker">${game.mode === "practice" ? "PRACTICE COMPLETE" : (game.endedEarly ? "RUN ENDED" : "RUN COMPLETE")}</p>
-      <h1>${game.mode === "practice" ? game.level.title : `${game.levelsCleared}/3 CLEARED`}</h1>
+      <p class="kicker">${game.mode === "practice" ? "PRACTICE COMPLETE" : (game.endedEarly ? "RUN CUT SHORT" : "ESCAPE COMPLETE")}</p>
+      <h1>${headline}</h1>
       <p class="result-number">${game.mode === "practice" ? "—" : Number(game.score).toLocaleString()}</p>
-      <p class="prompt"><span class="key">ENTER</span> ${game.mode === "practice" ? "LEVEL SELECT" : "LEADERBOARD"}</p>
-    </article>`, `<span class="key">ENTER</span> CONTINUE`);
+      <p class="decision-copy">${game.mode === "practice" ? "Tilty knows the route now." : "Tiltelle's light flickers ahead."}</p>
+      <p class="prompt"><span class="key">ENTER</span> ${next}</p>
+    </article>`,
+    `<span class="key">ENTER</span> CONTINUE`,
+    dialogue(LORE.runSummary.ken, LORE.runSummary.troll, true));
 }
 
 function renderAbandoned() {
   const saved = game.mode === "gauntlet" && game.levelsCleared > 0;
+  const total = gauntletTotal();
   return shell(`
     <article class="message-card">
       <h1>RUN ENDED</h1>
-      <p class="result-number">${saved ? `${game.levelsCleared}/3` : "—"}</p>
+      <p class="result-number">${saved ? `${game.levelsCleared}/${total}` : "—"}</p>
       ${saved ? `<p class="decision-copy">${Number(game.score).toLocaleString()} PTS SAVED</p>` : ""}
       <p class="prompt"><span class="key">ENTER</span> CONTINUE</p>
-    </article>`, `<span class="key">ENTER</span> CONTINUE`);
+    </article>`,
+    `<span class="key">ENTER</span> CONTINUE`,
+    dialogue(LORE.abandoned.ken, LORE.abandoned.troll, true));
 }
 
 function renderLeaderboard() {
   return shell(`
     <div style="width:min(670px,90vw)">
-      <h1 class="screen-title">HIGH SCORES</h1>
+      <h1 class="screen-title">ESCAPE BOARD</h1>
       <aside class="leader-card" style="margin-top:16px">${leaderboardRows(10)}</aside>
       <p class="prompt"><span class="key">ENTER</span> TITLE SCREEN</p>
-    </div>`, `<span class="key">ENTER</span> TITLE`);
+    </div>`,
+    `<span class="key">ENTER</span> TITLE`,
+    dialogue(LORE.leaderboard.ken, LORE.leaderboard.troll, true));
 }
 
 function render() {
@@ -375,6 +669,7 @@ function render() {
     placement: renderPlacement,
     playing: renderPlaying,
     time_up: renderTimeUp,
+    survival_fail: renderSurvivalFail,
     level_clear: renderLevelClear,
     level_score: renderLevelScore,
     abandoned: renderAbandoned,
@@ -422,20 +717,35 @@ function handleStateAudio() {
   if (!game) return;
   if (game.state !== lastState) {
     if (game.state === "initials") initialsDraft = "";
-    if (game.state === "playing") audio.start();
+    if (game.state === "playing") {
+      audio.start();
+      if (isSurvivalLevel()) {
+        devBallCell = game.level.startCell;
+        postBallCell(devBallCell);
+      }
+    }
     else if (game.state === "level_clear") audio.success();
-    else if (game.state === "time_up" || game.state === "abandoned") audio.fail();
+    else if (game.state === "time_up" || game.state === "survival_fail" || game.state === "abandoned") audio.fail();
     else if (game.state === "hardware_fault") audio.fail();
     else if (lastState) audio.confirm();
     lastState = game.state;
+    lastTimerBand = null;
   }
   audio.setMusic(["attract", "initials", "rules", "leaderboard"].includes(game.state));
   if (game.state === "playing") {
     const second = game.timer.remainingSeconds;
     if (second !== lastTimerSecond && second <= 10) audio.warning();
+    if (second !== lastTimerSecond) {
+      const band = second <= 10 ? 10 : second <= 30 ? 30 : null;
+      if (band && band !== lastTimerBand) {
+        audio.trollTaunt();
+        lastTimerBand = band;
+      }
+    }
     lastTimerSecond = second;
   } else {
     lastTimerSecond = null;
+    lastTimerBand = null;
   }
 }
 
@@ -520,6 +830,7 @@ document.addEventListener("keydown", event => {
       break;
     case "rules":
     case "time_up":
+    case "survival_fail":
     case "level_clear":
     case "level_score":
     case "run_summary":
@@ -531,8 +842,26 @@ document.addEventListener("keydown", event => {
       if (key === "Enter" || key === " ") postAction("confirm-placement");
       break;
     case "playing":
-      if (key.toLowerCase() === "r") postAction("restart");
-      else if (key.toLowerCase() === "c") postAction("complete");
+      if (isSurvivalLevel()) {
+        const current = devBallCell || game.survival?.ballCell || game.level.startCell;
+        const [row, col] = cellKeyToRowCol(current);
+        let next = null;
+        if (key === "ArrowUp") next = rowColToCellKey(row - 1, col);
+        else if (key === "ArrowDown") next = rowColToCellKey(row + 1, col);
+        else if (key === "ArrowLeft") next = rowColToCellKey(row, col - 1);
+        else if (key === "ArrowRight") next = rowColToCellKey(row, col + 1);
+        if (next) {
+          audio.click();
+          postBallCell(next);
+          render();
+        } else if (key.toLowerCase() === "r") {
+          postAction("restart");
+        }
+      } else if (key.toLowerCase() === "r") {
+        postAction("restart");
+      } else if (key.toLowerCase() === "c") {
+        postAction("complete");
+      }
       break;
   }
 });

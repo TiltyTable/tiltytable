@@ -9,11 +9,21 @@
 ## Key Paths
 - Repo root: `~/tiltytable` (Jetson) / this workspace (Mac)
 - Calibration suite: `calibration/`
+- Tile maps + game runner: `maps/`, `game_runner.py`
 - Stewart firmware: `arduino/uim5756pm_stewart/`
 - Module servos+LEDs firmware: `arduino/servo_calib/`
+- Archived obsolete sketches: `arduino/archive/`
 - Camera (MindVision): `camera/`
 - Design / memory bank: `design/`, `design/memory-bank/`
 - Cursor rules: `.cursor/rules/`
+
+## Module-grid global orientation (trusted)
+- Shared 12×12 `(row, col)` space for LEDs and servos.
+- Origin: `(0,0)` = top-left; row↓, col→.
+- `calibration/led_grid_config.json` — cell → strip+pixel.
+- `calibration/servo_grid_config.json` — cell → PCA9685 address+channel.
+- `calibration/servo_config_0x4X.json` — per-servo rec/neu/ext µs.
+- Join on `"r,c"` keys; see `.cursor/rules/module-grid-mapping.mdc`.
 
 ## Serial Aliases
 - `/dev/arduino-stewart` — Uno R3 (tilt)

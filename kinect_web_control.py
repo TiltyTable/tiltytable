@@ -34,6 +34,7 @@ from depth_servo_control import (
 from table_pose import (
     PoseFitAttempt,
     TablePoseTracker,
+    world_to_cell,
 )
 from live_capture_viewer import (
     COLOR_RESOLUTIONS,
@@ -595,15 +596,19 @@ class KinectFrameHub:
             return {
                 "enabled": True, "detected": False, "position": None, "position_world": None,
                 "table_tracking": self.table_pose.is_tracking, "pose_stale": None, "pose_age_s": None,
+                "cell": None,
                 "pixel": None, "radius_mm": None,
                 "ir_brightness": ir_brightness, "reject_counts": reject_counts,
             }
 
         world, stale, age_s = self.table_pose.apply(pos)
         position_world = None
+        cell = None
         if world is not None:
             wx, wy, wz = world
             position_world = {"x": round(wx, 1), "y": round(wy, 1), "z": round(wz, 1)}
+            row, col = world_to_cell(wx, wy)
+            cell = {"row": row, "col": col}
 
         return {
             "enabled": True,
@@ -613,6 +618,7 @@ class KinectFrameHub:
             "table_tracking": self.table_pose.is_tracking,
             "pose_stale": stale,
             "pose_age_s": round(age_s, 1) if age_s is not None else None,
+            "cell": cell,
             "pixel": {"cx": round(det.cx), "cy": round(det.cy), "radius": round(det.radius_px)} if det else None,
             "radius_mm": round(det.radius_mm, 1) if det else None,
             "ir_brightness": ir_brightness,
@@ -1044,7 +1050,7 @@ def parse_args(argv=None):
     calib = parser.add_argument_group("Table Pose Tracking")
     calib.add_argument("--pose-update-every-n-frames", type=int, default=3, metavar="N",
                        help="recompute the camera-to-table pose every N camera frames")
-    calib.add_argument("--marker-ir-min-counts", type=float, default=1000.0, metavar="COUNTS")
+    calib.add_argument("--marker-ir-min-counts", type=float, default=3800.0, metavar="COUNTS")
 
     # Config file values override argparse defaults; CLI args override everything.
     parser.set_defaults(auto_reverse=True)

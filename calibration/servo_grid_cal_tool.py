@@ -2,40 +2,35 @@
 """
 servo_grid_cal_tool.py — interactive calibration tool that maps each
 PCA9685 board+channel to a global (row, col) coordinate on the 12x12
-tilt-table grid, ALIGNED against the already-trustworthy LED grid
-(led_grid_config.json) instead of computed from an unverified formula.
+tilt-table grid, ALIGNED against the LED grid (led_grid_config.json).
 
-WHY ALIGN AGAINST THE LEDS (not just guess and tag): the LED grid's
-module orientation is confirmed correct — it was tagged by watching real
-LEDs light up. The servo grid's assumed orientation was NOT: it rested on
-an unverified assumption (that each PCA9685 board shares its physical
-module's orientation with the LED strip segment at the same address), and
-that assumption turned out to be wrong — the user confirmed the servo
-modules are rotated -90 degrees relative to their seating position
-compared to what was assumed. Rather than re-guess a new formula and risk
-being wrong again, this tool now uses the LED grid as ground truth: for
-each servo channel, it lights up a candidate cell's LED (a bright white
-"crosshair") while you wiggle that channel, so you directly SEE whether
-the lit LED lines up with the tile that physically moved — no formula to
-trust, no orientation to re-derive, just visual confirmation against
-hardware you already know is correctly mapped.
+CURRENT SOURCE OF TRUTH: the saved `servo_grid_config.json` (with
+`led_grid_config.json`) IS the trusted global orientation map. Both share
+the same (row, col) keys. Runtime tools should join on those keys — do
+not invent a formula or assume the grids disagree.
+
+HOW THIS FILE WAS BUILT: an early formula that assumed each PCA9685
+shared its module's orientation with the co-located LED strip segment
+was wrong (servos were rotated ~-90° relative to that seating). This
+tool therefore tags by visual confirm: light a candidate cell's LED
+("crosshair") while wiggling the channel, and tag only when they match.
+Seeds still use BOARD_BLOCKS (+ optional SERVO_SEED_ROTATION_DEG) as a starting guess only.
 
 SEEDING (a hypothesis, not ground truth): to avoid needing 144 manual
-full-grid searches, each channel starts with a SEEDED guess computed the
-old way (BOARD_BLOCKS module co-location + the confirmed column-grouping
-from the servo layout diagram) and then rotated -90 degrees — the
-correction the user reported. This seed is usually close, sometimes
-already correct, but it is ONLY a starting point: always confirm against
-the lit LED (or, if that cell has no LED tag, by counting modules on the
-physical table) before tagging, and freely move the guess anywhere on the
-full 12x12 grid with the arrow keys if the seed looks wrong.
+full-grid searches, each channel starts with a SEEDED guess from
+BOARD_BLOCKS + column-grouping (+ optional SERVO_SEED_ROTATION_DEG).
+This seed is usually close, sometimes already correct, but it is ONLY a
+starting point: always confirm against the lit LED (or, if that cell has
+no LED tag, by counting modules on the physical table) before tagging,
+and freely move the guess anywhere on the full 12x12 grid with the arrow
+keys if the seed looks wrong.
 
 SANITY CHECK ON FIRST USE: watch the very first channel you wiggle. If
 the lit LED is nowhere near the tile that moved — e.g. roughly the
-OPPOSITE side of the table — the rotation sign is backwards. Quit without
-saving, flip SERVO_SEED_ROTATION_DEG below from -90 to +90 (or vice
-versa), and restart. If it's close but off by one module, the seed is
-still useful — just nudge with arrows before tagging.
+OPPOSITE side of the table — quit without saving, adjust
+SERVO_SEED_ROTATION_DEG (try ±90), and restart. If it's close but off by
+one module, the seed is still useful — just nudge with arrows before
+tagging.
 
 IDENTIFYING A CHANNEL: pressing 'g' (go/wiggle) jogs the currently
 selected channel around its calibrated NEUTRAL point — up to neutral +
@@ -46,13 +41,13 @@ small, symmetric default nudge around a generic center for channels with
 no calibration yet.
 
 Requires servo_calib.ino already flashed (same "A"/"P"/"O"/"E"/"LP"/"LN"
-protocol as servo_tool.py / led_cal_tool.py). Resizes all 3 LED strips to
-their real led_count on connect — the Uno resets on serial open (DTR
-auto-reset), so strips come back at the firmware's 8-pixel default and
-LP commands to any higher index would otherwise silently do nothing (the
-exact bug already found and fixed in tilt_table_cli.py). Also runs the
-same background heartbeat servo_tool.py uses, so the firmware's 5s
-stuck-on watchdog never fires during normal use.
+protocol as servo_tool.py / led_cal_tool.py). Resizes every LED strand in
+led_grid_config.json (9 module strips) to its real led_count on connect —
+the Uno resets on serial open (DTR auto-reset), so strips come back at the
+firmware's 8-pixel default and LP commands to any higher index would
+otherwise silently do nothing (the exact bug already found and fixed in
+tilt_table_cli.py). Also runs the same background heartbeat servo_tool.py
+uses, so the firmware's 5s stuck-on watchdog never fires during normal use.
 
 PERSISTENT STATUS COLORS: beyond the one white "crosshair" LED that
 tracks your current guess, every cell keeps a standing color visible on
@@ -107,14 +102,13 @@ POSITION_KEYS = ("recessed", "neutral", "extended")
 
 HEARTBEAT_INTERVAL_S = 2.0   # keep servo_calib.ino's 5s stuck-on watchdog from ever firing
 
-# Board -> (row_block, col_block) BEFORE rotation — the co-location
-# assumption (board 0x43 shares a module with LED module 0x43) is still
-# believed correct; it's the ORIENTATION that was wrong, corrected below
-# by SERVO_SEED_ROTATION_DEG.
+# Board -> (row_block, col_block) in the trusted global frame
+# ((0,0)=top-left, row↓, col→). Derived from servo_grid_config.json after
+# the 2026-07-11 origin remap. Seed only — cells JSON is ground truth.
 BOARD_BLOCKS = {
-    "0x43": (0, 0),  "0x42": (0, 4),  "0x47": (0, 8),    # Strip A block
-    "0x46": (4, 0),  "0x45": (4, 4),  "0x44": (4, 8),    # Strip B block
-    "0x48": (8, 0),  "0x40": (8, 4),  "0x41": (8, 8),    # Strip C block
+    "0x43": (0, 0),  "0x46": (0, 4),  "0x48": (0, 8),
+    "0x42": (4, 0),  "0x45": (4, 4),  "0x40": (4, 8),
+    "0x47": (8, 0),  "0x44": (8, 4),  "0x41": (8, 8),
 }
 BOARD_ORDER = ["0x40", "0x41", "0x42", "0x43", "0x44", "0x45", "0x46", "0x47", "0x48"]
 
@@ -123,12 +117,10 @@ BOARD_ORDER = ["0x40", "0x41", "0x42", "0x43", "0x44", "0x45", "0x46", "0x47", "
 def guessed_local_col(ch):
     return 3 - (ch // 4)
 
-# User-reported correction (2026-07): the servo modules, relative to the
-# user's seating position, are rotated this many degrees from what the
-# LED grid's coordinate frame assumes. See the SANITY CHECK note above —
-# if the very first seed lights up on the wrong side of the table, flip
-# this sign and restart before tagging anything.
-SERVO_SEED_ROTATION_DEG = -90
+# Extra seed rotation inside BOARD_BLOCKS. Kept at 0 after the origin remap
+# (blocks already match tagged cells). If a fresh re-seed is clearly mirrored,
+# try ±90 here before retagging.
+SERVO_SEED_ROTATION_DEG = 0
 
 CONFIG_PATH_DEFAULT = "servo_grid_config.json"
 LED_CONFIG_DEFAULT = "led_grid_config.json"
@@ -306,7 +298,7 @@ class ServoGridCalTUI:
         self.servo_cfg = servo_cfg
         self.led_cfg = led_cfg
         self._strip_led_counts = {
-            int(s): int(v.get("led_count", 150))
+            int(s): int(v.get("led_count", 50))
             for s, v in led_cfg.get("strips", {}).items()
         }
 
@@ -373,7 +365,7 @@ class ServoGridCalTUI:
         strip, idx = ref
         r, g, b = self._status_color(row, col) or (0, 0, 0)
         self.link.send(f"LP {strip} {idx} {r} {g} {b}")
-        time.sleep(max(0.03, self._strip_led_counts.get(strip, 150) * 0.0003))
+        time.sleep(max(0.03, self._strip_led_counts.get(strip, 50) * 0.0003))
 
     def _repaint(self, row, col):
         """Refresh (row,col)'s LED right now, UNLESS it's the currently
@@ -407,7 +399,7 @@ class ServoGridCalTUI:
             return False
         strip, idx = ref
         self.link.send(f"LP {strip} {idx} 255 255 255")
-        time.sleep(max(0.03, self._strip_led_counts.get(strip, 150) * 0.0003))
+        time.sleep(max(0.03, self._strip_led_counts.get(strip, 50) * 0.0003))
         self._lit_cell = (self.guess_row, self.guess_col)
         return True
 
@@ -747,7 +739,7 @@ def main():
     # the firmware's 8-pixel-per-strip default, so LP confirmation
     # commands to most tagged cells would otherwise silently do nothing
     # (the exact bug already found and fixed in tilt_table_cli.py).
-    for strip, count in {int(s): int(v.get("led_count", 150))
+    for strip, count in {int(s): int(v.get("led_count", 50))
                           for s, v in led_cfg.get("strips", {}).items()}.items():
         link.send(f"LN {strip} {count}")
         time.sleep(0.05)

@@ -47,7 +47,7 @@ DEPTH_PIXEL_WINDOW = 1
 MIN_VALID_DEPTH_PIXELS = 1
 
 
-SERVO_DIR = Path(__file__).resolve().parent / "arduino" / "pca9685_serial_servo"
+SERVO_DIR = Path(__file__).resolve().parent / "arduino" / "archive" / "pca9685_serial_servo"
 sys.path.insert(0, str(SERVO_DIR))
 
 from servo_write import BAUD_RATES, configure_serial, wait_for_ready  # noqa: E402

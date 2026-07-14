@@ -46,11 +46,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check-browser", action="store_true")
     args = parser.parse_args(argv)
 
-    levels = load_levels()
+    catalog = load_levels()
     check_port(args.port)
     if args.hardware:
         check_hardware(args.module_port)
-    print(f"preflight: {len(levels)} levels valid")
+    print(f"preflight: {len(catalog.levels)} levels valid ({catalog.gauntlet_level_count} gauntlet)")
     print("preflight: module calibration valid" if args.hardware else "preflight: simulation mode")
     if args.check_browser:
         browser = find_browser()
