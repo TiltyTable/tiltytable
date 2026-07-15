@@ -22,7 +22,18 @@ def _rotation_from_euler_deg(x_deg: float, y_deg: float, z_deg: float) -> np.nda
 
 
 def _world_points_array() -> np.ndarray:
-    return np.array([tp.TABLE_MARKER_WORLD_POINTS[k] for k in tp.TABLE_MARKER_WORLD_POINTS], dtype=np.float64)
+    return np.array(list(tp.TABLE_MARKER_WORLD_POINTS.values()), dtype=np.float64)
+
+
+def _camera_points_from_pose(R: np.ndarray, t: np.ndarray) -> dict[str, np.ndarray]:
+    """Inverse of world = R @ camera + t: camera = R.T @ (world - t), for
+    each of the known named table marker points. Shared by every test class
+    below that needs to synthesize "detected" camera-frame points for a
+    given ground-truth pose."""
+    return {
+        name: R.T @ (np.array(world_pt, dtype=np.float64) - t)
+        for name, world_pt in tp.TABLE_MARKER_WORLD_POINTS.items()
+    }
 
 
 class _FakeBlob:
@@ -94,9 +105,7 @@ class MatchPointsTests(unittest.TestCase):
             R0 = _rotation_from_euler_deg(5.0, -10.0, 20.0)
         if t0 is None:
             t0 = np.array([15.0, -8.0, 870.0])
-        world_pts = _world_points_array()
-        camera_pts = (np.linalg.inv(R0) @ (world_pts - t0).T).T
-        return camera_pts
+        return np.array(list(_camera_points_from_pose(R0, t0).values()))
 
     def test_recovers_correct_assignment_regardless_of_input_order(self):
         camera_pts = self._camera_points()
@@ -235,17 +244,10 @@ class SelectInlierMarkersTests(unittest.TestCase):
     rest (e.g. a stray reflection) are dropped rather than failing the
     whole frame."""
 
-    def _camera_points_for_pose(self, R: np.ndarray, t: np.ndarray) -> dict:
-        """camera = R.T @ (world - t) is the inverse of world = R @ camera + t."""
-        return {
-            name: R.T @ (np.array(world_pt, dtype=np.float64) - t)
-            for name, world_pt in tp.TABLE_MARKER_WORLD_POINTS.items()
-        }
-
     def test_extra_spurious_blob_is_dropped(self):
         R0 = _rotation_from_euler_deg(3.0, -5.0, 8.0)
         t0 = np.array([50.0, -30.0, 900.0])
-        cam_pts = self._camera_points_for_pose(R0, t0)
+        cam_pts = _camera_points_from_pose(R0, t0)
 
         blobs = [_FakeBlob(*cam_pts[name]) for name in cam_pts]
         # A spurious blob nowhere near any predicted marker position.
@@ -263,7 +265,7 @@ class SelectInlierMarkersTests(unittest.TestCase):
     def test_multiple_extra_blobs_still_selects_the_five_closest(self):
         R0 = _rotation_from_euler_deg(0.0, 0.0, 0.0)
         t0 = np.array([0.0, 0.0, 900.0])
-        cam_pts = self._camera_points_for_pose(R0, t0)
+        cam_pts = _camera_points_from_pose(R0, t0)
 
         blobs = [_FakeBlob(*cam_pts[name]) for name in cam_pts]
         spurious_a = _FakeBlob(cam_pts["x1"][0] + 300.0, cam_pts["x1"][1], cam_pts["x1"][2])
@@ -283,10 +285,7 @@ class RunPoseFitPriorPoseTests(unittest.TestCase):
     rather than guessing."""
 
     def _blobs_with_one_spurious(self, R0, t0):
-        cam_pts = {
-            name: R0.T @ (np.array(world_pt, dtype=np.float64) - t0)
-            for name, world_pt in tp.TABLE_MARKER_WORLD_POINTS.items()
-        }
+        cam_pts = _camera_points_from_pose(R0, t0)
         blobs = [_FakeBlob(*cam_pts[name]) for name in cam_pts]
         blobs.append(_FakeBlob(cam_pts["origin"][0] + 500.0, cam_pts["origin"][1] + 500.0, cam_pts["origin"][2]))
         return blobs
