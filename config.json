@@ -6,7 +6,7 @@
   "kinect": {
     "device_id": 0,
     "color_resolution": "720p",
-    "depth_mode": "nfov_unbinned",
+    "depth_mode": "wfov_2x2binned",
     "fps": "30",
     "timeout_ms": 1000,
     "max_depth": 4000,
@@ -44,10 +44,14 @@
     "ball_tracking": true,
     "ball_radius_min": 20.0,
     "ball_radius_max": 40.0,
-    "max_ir_brightness": 3600
+    "max_ir_brightness": 1200.0
   },
   "table_pose": {
     "pose_update_every_n_frames": 3,
-    "marker_ir_min_counts": 4000.0
+    "marker_ir_min_counts": 1000.0,
+    "marker_height_mm": 50.8,
+    "marker_mount_radius_mm": 12.7,
+    "wall_thickness_mm": 4.7625,
+    "max_marker_radius_mm": 15.0
   }
 }

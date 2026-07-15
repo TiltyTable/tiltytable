@@ -31,11 +31,18 @@
 
 #include <AccelStepper.h>
 #include <Arduino.h>
+#include <EEPROM.h>
+#include <avr/wdt.h>
 #include <math.h>
 #include <ctype.h>
 #include <stdlib.h>
 
 const uint8_t AXES = 3;
+
+// Capture reset cause before Arduino/libc initialization clears context.
+// External reset (USB DTR / reset button) may restore a saved live position;
+// power-on/brown-out/watchdog resets always require calibration.
+uint8_t resetCause __attribute__((section(".noinit")));
 
 // ------------------------- Wiring -------------------------
 // Per-axis pin groups on the Uno R3 (2026-07-09 harness):
@@ -59,12 +66,13 @@ const bool LIMIT_ACTIVE_LOW = true;
 // --------------------- Motion calibration ---------------------
 // Pulses per crank revolution as configured on these motors (do not change
 // motor MCS to match firmware — match firmware to the motors).
-// Empirically: 1600 pulses ≈ 15–18° ⇒ ~32000 pulses/rev (e.g. MCS≈160).
+// MCS=8: 200 full steps/rev × 8 microsteps × 20:1 MGL23-G20-D8.
+// All three motors MUST be configured to MCS=8 before running this firmware.
 const float STEPS_PER_CRANK_REV[AXES] = {32000.0, 32000.0, 32000.0};
 
 // Maximum crank speed in deg/s and acceleration in deg/s².
 // Quieter profile (was 90 / 180): lower peak + softer ramp reduces
-// gearbox/table noise with high microstepping (~32000 pulses/rev).
+// gearbox/table noise while keeping direction changes responsive.
 const float MAX_CRANK_SPEED_DEG_S = 25.0;
 const float MAX_CRANK_ACCEL_DEG_S2 = 40.0;
 
@@ -114,6 +122,32 @@ Vec3 topRodNeutral[AXES];
 bool axisEnabled[AXES] = {false, false, false};
 long desiredTarget[AXES] = {0, 0, 0};
 bool calibrated = false;
+// Interactive per-axis calibration (host TUI jogs each crank to vertical).
+bool benchCalMode = false;
+bool axisMarked[AXES] = {false, false, false};
+float configuredMaxSpeed[AXES] = {-1.0, -1.0, -1.0};
+float configuredAcceleration[AXES] = {-1.0, -1.0, -1.0};
+bool restoredPosition = false;
+bool persistentSnapshotValid = false;
+
+const uint32_t PERSIST_MAGIC = 0x54545950UL;  // "TTYP"
+const uint16_t PERSIST_VERSION = 1;
+struct PersistedPosition {
+  uint32_t magic;
+  uint16_t version;
+  int32_t steps[AXES];
+  float rollDeg;
+  float pitchDeg;
+  float heaveMm;
+  uint16_t checksum;
+};
+
+void captureResetCause(void) __attribute__((naked, section(".init3")));
+void captureResetCause(void) {
+  resetCause = MCUSR;
+  MCUSR = 0;
+  wdt_disable();
+}
 
 String line;
 float currentRollDeg = 0.0;
@@ -143,6 +177,99 @@ float fullSpeedStepsPerSec(uint8_t i) {
 
 float fullAccelStepsPerSec2(uint8_t i) {
   return MAX_CRANK_ACCEL_DEG_S2 * STEPS_PER_CRANK_REV[i] / 360.0;
+}
+
+bool profileValueChanged(float current, float requested) {
+  if (current < 0.0) return true;
+  // AccelStepper recomputes a square root when acceleration changes. Ignore
+  // tiny ratio noise from 30 Hz live pose retargeting while preserving
+  // coordinated motion to within 2%.
+  float tolerance = max(1.0, fabs(current) * 0.02);
+  return fabs(current - requested) > tolerance;
+}
+
+void setMotionProfile(uint8_t i, float maxSpeed, float acceleration) {
+  if (profileValueChanged(configuredMaxSpeed[i], maxSpeed)) {
+    stepper[i].setMaxSpeed(maxSpeed);
+    configuredMaxSpeed[i] = maxSpeed;
+  }
+  if (profileValueChanged(configuredAcceleration[i], acceleration)) {
+    stepper[i].setAcceleration(acceleration);
+    configuredAcceleration[i] = acceleration;
+  }
+}
+
+uint16_t persistedChecksum(const PersistedPosition &state) {
+  const uint8_t *bytes = reinterpret_cast<const uint8_t *>(&state);
+  uint16_t value = 0x5A5A;
+  for (size_t i = 0; i < sizeof(PersistedPosition) - sizeof(state.checksum); i++) {
+    value = (uint16_t)((value << 5) | (value >> 11));
+    value ^= bytes[i];
+  }
+  return value;
+}
+
+bool validPersistedPosition(PersistedPosition &state) {
+  if (state.magic != PERSIST_MAGIC || state.version != PERSIST_VERSION) return false;
+  if (state.checksum != persistedChecksum(state)) return false;
+  if (!isfinite(state.rollDeg) || !isfinite(state.pitchDeg) || !isfinite(state.heaveMm)) return false;
+  if (fabs(state.rollDeg) > 20.0 || fabs(state.pitchDeg) > 20.0) return false;
+  if (state.heaveMm < MIN_HEAVE_MM || state.heaveMm > MAX_HEAVE_MM) return false;
+  for (uint8_t i = 0; i < AXES; i++) {
+    if (labs(state.steps[i]) > 10000000L) return false;
+  }
+  return true;
+}
+
+void clearPersistedPosition() {
+  if (!persistentSnapshotValid) return;
+  PersistedPosition empty = {};
+  EEPROM.put(0, empty);
+  restoredPosition = false;
+  persistentSnapshotValid = false;
+}
+
+bool savePersistentPosition() {
+  if (!calibrated || benchCalMode || moving()) return false;
+  PersistedPosition state = {};
+  state.magic = PERSIST_MAGIC;
+  state.version = PERSIST_VERSION;
+  for (uint8_t i = 0; i < AXES; i++) {
+    state.steps[i] = stepper[i].currentPosition();
+  }
+  state.rollDeg = currentRollDeg;
+  state.pitchDeg = currentPitchDeg;
+  state.heaveMm = currentHeaveMm;
+  state.checksum = persistedChecksum(state);
+  EEPROM.put(0, state);
+  persistentSnapshotValid = true;
+  return true;
+}
+
+bool loadPersistentPosition() {
+  PersistedPosition state;
+  EEPROM.get(0, state);
+  if (!validPersistedPosition(state)) return false;
+  persistentSnapshotValid = true;
+
+  // Never trust saved motor coordinates after a controller power-cycle.
+  bool externalReset = (resetCause & _BV(EXTRF)) != 0;
+  bool unsafeReset = (resetCause & (_BV(PORF) | _BV(BORF) | _BV(WDRF))) != 0;
+  if (!externalReset || unsafeReset) return false;
+
+  for (uint8_t i = 0; i < AXES; i++) {
+    stepper[i].setCurrentPosition(state.steps[i]);
+    desiredTarget[i] = state.steps[i];
+    axisMarked[i] = true;
+  }
+  currentRollDeg = state.rollDeg;
+  currentPitchDeg = state.pitchDeg;
+  currentHeaveMm = state.heaveMm;
+  benchCalMode = false;
+  calibrated = true;
+  restoredPosition = true;
+  persistentSnapshotValid = true;
+  return true;
 }
 
 bool anyAxisEnabled() {
@@ -270,8 +397,11 @@ void applyCoordinatedTargets(long target[AXES]) {
                   ? (float)abs(target[i] - stepper[i].currentPosition()) / (float)maxDelta
                   : 1.0;
     if (scale < 0.001) scale = 0.001;
-    stepper[i].setMaxSpeed(fullSpeedStepsPerSec(i) * scale);
-    stepper[i].setAcceleration(fullAccelStepsPerSec2(i) * scale);
+    setMotionProfile(
+      i,
+      fullSpeedStepsPerSec(i) * scale,
+      fullAccelStepsPerSec2(i) * scale
+    );
     stepper[i].moveTo(target[i]);
   }
 }
@@ -299,9 +429,9 @@ bool moving() {
 bool jogAxis(uint8_t i, long pulses) {
   if (!axisEnabled[i]) { Serial.println(F("ERR enable axis first")); return false; }
   if (pulses < 0 && limitHit(i)) { Serial.println(F("ERR limit hit")); return false; }
+  clearPersistedPosition();
   desiredTarget[i] = stepper[i].currentPosition() + pulses;
-  stepper[i].setMaxSpeed(fullSpeedStepsPerSec(i));
-  stepper[i].setAcceleration(fullAccelStepsPerSec2(i));
+  setMotionProfile(i, fullSpeedStepsPerSec(i), fullAccelStepsPerSec2(i));
   stepper[i].move(pulses);
   return true;
 }
@@ -326,6 +456,7 @@ bool solvePoseTargets(float roll, float pitch, float heave, long target[AXES]) {
 bool moveToPose(float roll, float pitch, float heave) {
   long target[AXES];
   if (!solvePoseTargets(roll, pitch, heave, target)) return false;
+  clearPersistedPosition();
   setTargets(target[0], target[1], target[2]);
   currentRollDeg = roll; currentPitchDeg = pitch; currentHeaveMm = heave;
   return true;
@@ -334,6 +465,7 @@ bool moveToPose(float roll, float pitch, float heave) {
 bool setPoseTarget(float roll, float pitch, float heave) {
   long target[AXES];
   if (!solvePoseTargets(roll, pitch, heave, target)) return false;
+  clearPersistedPosition();
   applyCoordinatedTargets(target);
   currentRollDeg = roll; currentPitchDeg = pitch; currentHeaveMm = heave;
   return true;
@@ -353,22 +485,32 @@ void zeroPosition() {
   calibratePosition();
 }
 
-void calibratePosition() {
-  // Human has manually placed all cranks STRAIGHT UP (CALIBRATE_CRANK_DEG).
-  // That physical pose is max heave at roll=pitch=0. Record step counters so
-  // IK targets (relative to NEUTRAL_CRANK_DEG) match reality.
-  stopVelocityMode();
-  setEnable(false);
-  long calibSteps = crankDeltaToSteps(0, normalizeDeg(CALIBRATE_CRANK_DEG - NEUTRAL_CRANK_DEG));
-  for (uint8_t i = 0; i < AXES; i++) {
-    long s = crankDeltaToSteps(i, normalizeDeg(CALIBRATE_CRANK_DEG - NEUTRAL_CRANK_DEG));
-    stepper[i].setCurrentPosition(s);
-    desiredTarget[i] = s;
-  }
+long calibrateStepCount(uint8_t i) {
+  return crankDeltaToSteps(i, normalizeDeg(CALIBRATE_CRANK_DEG - NEUTRAL_CRANK_DEG));
+}
+
+void applyCalibratedPlatformState() {
   currentRollDeg = 0.0;
   currentPitchDeg = 0.0;
   currentHeaveMm = CALIBRATE_HEAVE_MM;
+}
+
+void calibratePosition() {
+  // Legacy: human has manually placed all cranks STRAIGHT UP, then one-shot calibrate.
+  stopVelocityMode();
+  setEnable(false);
+  benchCalMode = false;
+  long calibSteps = calibrateStepCount(0);
+  for (uint8_t i = 0; i < AXES; i++) {
+    long s = calibrateStepCount(i);
+    stepper[i].setCurrentPosition(s);
+    desiredTarget[i] = s;
+    axisMarked[i] = true;
+  }
+  applyCalibratedPlatformState();
   calibrated = true;
+  restoredPosition = false;
+  savePersistentPosition();
   Serial.print(F("OK calibrate heave "));
   Serial.print(CALIBRATE_HEAVE_MM, 3);
   Serial.print(F(" crank_deg "));
@@ -377,9 +519,78 @@ void calibratePosition() {
   Serial.println(calibSteps);
 }
 
+void calBegin() {
+  stopVelocityMode();
+  setEnable(false);
+  clearPersistedPosition();
+  calibrated = false;
+  benchCalMode = true;
+  for (uint8_t i = 0; i < AXES; i++) {
+    axisMarked[i] = false;
+    stepper[i].setCurrentPosition(0);
+    desiredTarget[i] = 0;
+  }
+  Serial.println(F("OK cal_begin — enable one axis, jog to vertical, cal_axis N, cal_finish"));
+}
+
+void calibrateAxis(uint8_t i) {
+  if (!benchCalMode) {
+    Serial.println(F("ERR cal_axis — send cal_begin first"));
+    return;
+  }
+  stopVelocityMode();
+  setAxisEnable(i, false);
+  long calibSteps = calibrateStepCount(i);
+  stepper[i].setCurrentPosition(calibSteps);
+  desiredTarget[i] = calibSteps;
+  axisMarked[i] = true;
+  Serial.print(F("OK cal_axis "));
+  Serial.print(i);
+  Serial.print(F(" steps "));
+  Serial.print(calibSteps);
+  Serial.print(F(" deg "));
+  Serial.println(stepsToCrankDelta(i, calibSteps), 3);
+}
+
+void calFinish() {
+  if (!benchCalMode) {
+    Serial.println(F("ERR cal_finish — send cal_begin first"));
+    return;
+  }
+  for (uint8_t i = 0; i < AXES; i++) {
+    if (!axisMarked[i]) {
+      Serial.print(F("ERR cal_finish — axis "));
+      Serial.print(i);
+      Serial.println(F(" not marked; use cal_axis after jogging vertical"));
+      return;
+    }
+  }
+  stopVelocityMode();
+  setEnable(false);
+  benchCalMode = false;
+  applyCalibratedPlatformState();
+  calibrated = true;
+  restoredPosition = false;
+  savePersistentPosition();
+  Serial.print(F("OK cal_finish heave "));
+  Serial.print(CALIBRATE_HEAVE_MM, 3);
+  Serial.print(F(" crank_deg "));
+  Serial.println(CALIBRATE_CRANK_DEG, 1);
+}
+
+bool motionAllowedWithoutFullCal() {
+  return calibrated || benchCalMode;
+}
+
 bool requireCalibrated() {
   if (calibrated) return true;
-  Serial.println(F("ERR not calibrated — move cranks straight up, then send: calibrate"));
+  Serial.println(F("ERR not calibrated — run cal_begin + cal_axis per leg, or legacy calibrate"));
+  return false;
+}
+
+bool requireMotionAllowed() {
+  if (motionAllowedWithoutFullCal()) return true;
+  Serial.println(F("ERR not calibrated — send cal_begin for interactive setup, or calibrate"));
   return false;
 }
 
@@ -413,9 +624,12 @@ void updateVelocityMotion() {
 
 void printStatus() {
   Serial.print(F("OK calibrated ")); Serial.print(calibrated ? F("1") : F("0"));
+  Serial.print(F(" restored ")); Serial.print(restoredPosition ? F("1") : F("0"));
+  Serial.print(F(" bench ")); Serial.print(benchCalMode ? F("1") : F("0"));
   Serial.print(F(" enabled ")); Serial.print(anyAxisEnabled() ? F("1") : F("0"));
   Serial.print(F(" moving "));   Serial.print(moving() ? F("1") : F("0"));
   for (uint8_t i = 0; i < AXES; i++) {
+    Serial.print(F(" axis")); Serial.print(i); Serial.print(F("_marked ")); Serial.print(axisMarked[i] ? F("1") : F("0"));
     Serial.print(F(" axis")); Serial.print(i); Serial.print(F("_enabled ")); Serial.print(axisEnabled[i] ? F("1") : F("0"));
     Serial.print(F(" axis")); Serial.print(i); Serial.print(F("_steps "));   Serial.print(stepper[i].currentPosition());
     Serial.print(F(" axis")); Serial.print(i); Serial.print(F("_target "));  Serial.print(desiredTarget[i]);
@@ -432,9 +646,10 @@ void printStatus() {
 
 void printHelp() {
   Serial.println(F("UIM5756PM 3-axis Stewart controller"));
-  Serial.println(F("Calibration: manually point ALL cranks STRAIGHT UP (max heave), then:"));
-  Serial.println(F("  calibrate   (alias: zero)"));
-  Serial.println(F("Commands (require calibrate first, except disable/status/help):"));
+  Serial.println(F("Interactive calibration (jog each crank to vertical by eye):"));
+  Serial.println(F("  cal_begin | cal_axis <0-2> | cal_finish"));
+  Serial.println(F("Legacy: all cranks manually straight up, then calibrate (alias: zero)"));
+  Serial.println(F("Commands (pose/vel need full calibrate; enable/jog OK in cal_begin):"));
   Serial.println(F("  pose <roll_deg> <pitch_deg> <heave_mm>"));
   Serial.println(F("  vel <roll_deg_s> <pitch_deg_s> <heave_mm_s>"));
   Serial.println(F("  angle <a0_deg> <a1_deg> <a2_deg>"));
@@ -442,6 +657,8 @@ void printHelp() {
   Serial.println(F("  jog <axis> <pulses>"));
   Serial.println(F("  enable [axis] | disable [axis]"));
   Serial.println(F("  hold   (enable all drivers, hold current positions)"));
+  Serial.println(F("  persist   (save settled calibrated position for USB-reset restore)"));
+  Serial.println(F("  forget    (disable and require calibration; use before motor power-cycle)"));
   Serial.println(F("  status"));
   Serial.println(F("  help"));
 }
@@ -491,6 +708,7 @@ bool parseAngles(char *tokens[], int count) {
   stopVelocityMode();
   long target[AXES];
   for (uint8_t i = 0; i < AXES; i++) target[i] = crankDeltaToSteps(i, atof(tokens[i + 1]));
+  clearPersistedPosition();
   setTargets(target[0], target[1], target[2]);
   Serial.print(F("OK angle targets"));
   for (uint8_t i = 0; i < AXES; i++) {
@@ -505,6 +723,7 @@ bool parseSteps(char *tokens[], int count) {
   if (!requireCalibrated()) return false;
   if (count != 4) { Serial.println(F("ERR steps needs three step targets")); return false; }
   stopVelocityMode();
+  clearPersistedPosition();
   setTargets(atol(tokens[1]), atol(tokens[2]), atol(tokens[3]));
   Serial.print(F("OK steps targets"));
   for (uint8_t i = 0; i < AXES; i++) {
@@ -515,7 +734,7 @@ bool parseSteps(char *tokens[], int count) {
 }
 
 bool parseJog(char *tokens[], int count) {
-  if (!requireCalibrated()) return false;
+  if (!requireMotionAllowed()) return false;
   if (count != 3) { Serial.println(F("ERR jog needs axis pulses")); return false; }
   long axisIndex = atol(tokens[1]);
   if (axisIndex < 0 || axisIndex >= AXES) { Serial.println(F("ERR jog axis must be 0, 1, or 2")); return false; }
@@ -538,7 +757,7 @@ bool parseAxisIndex(char *token, uint8_t *out) {
 }
 
 bool parseEnableCommand(char *tokens[], int count, bool on) {
-  if (on && !requireCalibrated()) return false;
+  if (on && !requireMotionAllowed()) return false;
   if (count == 1) {
     setEnable(on);
     if (!on) stopVelocityMode();
@@ -567,6 +786,20 @@ void handleCommand(String command) {
 
   String cmd = tokens[0]; cmd.toLowerCase();
   if      (cmd == "calibrate" || cmd == "calib" || cmd == "zero") calibratePosition();
+  else if (cmd == "cal_begin" || cmd == "calbegin") {
+    if (count != 1) Serial.println(F("ERR cal_begin takes no arguments"));
+    else calBegin();
+  }
+  else if (cmd == "cal_axis" || cmd == "calaxis") {
+    if (count != 2) { Serial.println(F("ERR cal_axis needs axis 0/1/2")); return; }
+    uint8_t i;
+    if (!parseAxisIndex(tokens[1], &i)) return;
+    calibrateAxis(i);
+  }
+  else if (cmd == "cal_finish" || cmd == "calfinish") {
+    if (count != 1) Serial.println(F("ERR cal_finish takes no arguments"));
+    else calFinish();
+  }
   else if (cmd == "pose"  || cmd == "p") parsePose(tokens, count);
   else if (cmd == "vel"   || cmd == "v") parseVelocity(tokens, count);
   else if (cmd == "angle" || cmd == "a") parseAngles(tokens, count);
@@ -579,6 +812,26 @@ void handleCommand(String command) {
     else {
       holdCurrentPosition();
       Serial.println(F("OK holding current positions"));
+    }
+  }
+  else if (cmd == "persist") {
+    if (count != 1) Serial.println(F("ERR persist takes no arguments"));
+    else if (savePersistentPosition()) {
+      restoredPosition = false;
+      Serial.println(F("OK persist saved"));
+    } else {
+      Serial.println(F("ERR persist requires calibrated, settled motion"));
+    }
+  }
+  else if (cmd == "forget") {
+    if (count != 1) Serial.println(F("ERR forget takes no arguments"));
+    else {
+      stopVelocityMode();
+      setEnable(false);
+      clearPersistedPosition();
+      calibrated = false;
+      benchCalMode = false;
+      Serial.println(F("OK forget; calibration required"));
     }
   }
   else if (cmd == "status")              printStatus();
@@ -606,12 +859,10 @@ void setup() {
     // Active-low wiring: COM→5V, Arduino pins sink current.
     // Invert STEP so idle is HIGH (inactive). DIR_INVERT[i] flips direction per axis.
     stepper[i].setPinsInverted(DIR_INVERT[i], true, false);
-    // UIM344 / UIM5756PM opto inputs need pulse width > 4 µs (manual).
-    // AccelStepper default is 1 µs — too short; driver stays enabled but never steps.
-    // Use 20 µs for margin (opto + cable).
-    stepper[i].setMinPulseWidth(20);
-    stepper[i].setMaxSpeed(fullSpeedStepsPerSec(i));
-    stepper[i].setAcceleration(fullAccelStepsPerSec2(i));
+    // UIM344 / UIM5756PM inputs need pulse width > 4 µs (manual).
+    // Use 5 µs: above the documented minimum without wasting AVR step time.
+    stepper[i].setMinPulseWidth(5);
+    setMotionProfile(i, fullSpeedStepsPerSec(i), fullAccelStepsPerSec2(i));
 
     // Unknown physical pose until the human runs `calibrate`.
     // Leave step counters at 0; do not pretend we are at a known crank angle.
@@ -625,7 +876,12 @@ void setup() {
   setEnable(false);
   calibrated = false;
   buildGeometry();
-  Serial.println(F("UIM5756PM Stewart ready. Move cranks STRAIGHT UP, then send: calibrate"));
+  bool restored = loadPersistentPosition();
+  if (restored) {
+    Serial.println(F("UIM5756PM Stewart ready. Position restored after external reset; motors disabled."));
+  } else {
+    Serial.println(F("UIM5756PM Stewart ready. Calibration required (power/reset cause not restorable)."));
+  }
   Serial.println(F("Send 'help' for commands."));
 }
 

@@ -54,7 +54,7 @@ _DEPTH_SAMPLE_FRACTION = 0.40
 _MIN_VALID_DEPTH_FRACTION = 0.10
 
 # Contour shape filters
-_MIN_CIRCULARITY  = 0.82   # 4π·Area/Perimeter²; perfect circle = 1.0
+_MIN_CIRCULARITY  = 0.75   # 4π·Area/Perimeter²; perfect circle = 1.0
 _MIN_CONTOUR_AREA = 15     # pixels²
 _MAX_CONTOUR_AREA = 4000   # pixels² — rejects merged ball+edge blobs
 _MIN_FILL_FRACTION = 0.60  # contour area / min-enclosing-circle area

@@ -300,7 +300,7 @@ class BallTrackerRegressionTests(unittest.TestCase):
     """Confirm extracting camera_geometry.py didn't change BallTracker's output."""
 
     def test_ball_detection_unaffected_by_extraction(self):
-        from ball_tracker import BallTracker
+        from ball_tracker import BallDetector, BallTracker
 
         h, w = 200, 200
         ir = np.full((h, w), 200, dtype=np.uint16)
@@ -311,12 +311,13 @@ class BallTrackerRegressionTests(unittest.TestCase):
 
         depth = np.full((h, w), 1000.0, dtype=np.float32)
 
-        tracker = BallTracker(
-            fx=500.0, fy=500.0, ppx=100.0, ppy=100.0,
-            ball_radius_min_mm=5.0, ball_radius_max_mm=60.0,
-        )
+        intrinsics = dict(fx=500.0, fy=500.0, ppx=100.0, ppy=100.0)
+        detector = BallDetector(**intrinsics, ball_radius_min_mm=5.0, ball_radius_max_mm=60.0)
+        tracker = BallTracker(**intrinsics)
         try:
-            pos, det = tracker.update(ir, depth)
+            detection = detector.detect(ir, depth)
+            self.assertIsNotNone(detection)
+            pos, det = tracker.update(detection)
             self.assertIsNotNone(pos)
             self.assertIsNotNone(det)
             self.assertAlmostEqual(det.cx, cx, delta=2.0)

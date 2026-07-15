@@ -34,6 +34,7 @@ from depth_servo_control import (
 from table_pose import (
     PoseFitAttempt,
     TablePoseTracker,
+    configure_table_geometry,
     world_to_cell,
 )
 from live_capture_viewer import (
@@ -1051,6 +1052,16 @@ def parse_args(argv=None):
     calib.add_argument("--pose-update-every-n-frames", type=int, default=3, metavar="N",
                        help="recompute the camera-to-table pose every N camera frames")
     calib.add_argument("--marker-ir-min-counts", type=float, default=3800.0, metavar="COUNTS")
+    calib.add_argument("--marker-height-mm", type=float, default=50.8, metavar="MM",
+                       help="height of the wall-mounted markers above the table surface")
+    calib.add_argument("--marker-mount-radius-mm", type=float, default=12.7, metavar="MM",
+                       help="physical marker disc radius; offsets each marker's mounted "
+                            "position off the nominal wall line by this much")
+    calib.add_argument("--wall-thickness-mm", type=float, default=4.7625, metavar="MM",
+                       help="thickness of the foam wall the markers are mounted on; "
+                            "adds to --marker-mount-radius-mm for the total mounting offset")
+    calib.add_argument("--max-marker-radius-mm", type=float, default=15.0, metavar="MM",
+                       help="reject IR blobs larger than this physical radius (excludes the ball)")
 
     # Config file values override argparse defaults; CLI args override everything.
     parser.set_defaults(auto_reverse=True)
@@ -1088,6 +1099,14 @@ def parse_args(argv=None):
         parser.error("--pose-update-every-n-frames must be greater than 0")
     if args.marker_ir_min_counts < 0:
         parser.error("--marker-ir-min-counts cannot be negative")
+    if args.marker_height_mm < 0:
+        parser.error("--marker-height-mm cannot be negative")
+    if args.marker_mount_radius_mm < 0:
+        parser.error("--marker-mount-radius-mm cannot be negative")
+    if args.wall_thickness_mm < 0:
+        parser.error("--wall-thickness-mm cannot be negative")
+    if args.max_marker_radius_mm <= 0:
+        parser.error("--max-marker-radius-mm must be greater than 0")
 
     return args
 
@@ -1098,6 +1117,12 @@ def parse_args(argv=None):
 
 def main():
     args = parse_args()
+    configure_table_geometry(
+        marker_height_mm=args.marker_height_mm,
+        marker_mount_radius_mm=args.marker_mount_radius_mm,
+        wall_thickness_mm=args.wall_thickness_mm,
+        max_marker_radius_mm=args.max_marker_radius_mm,
+    )
     state = WebState(args.servo_config, args.default_box_size)
     camera = KinectFrameHub(args)
     control = ServoControlRunner(state, camera, args)

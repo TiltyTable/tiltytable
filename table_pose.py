@@ -13,27 +13,39 @@ visible to the camera across the platform's tilt range, which is what makes
 *continuous* re-tracking (rather than a one-time calibration) practical.
 
 Marker layout (world frame = the table's own body-fixed frame; long wall is
-the X axis, short wall is the Y axis, meeting at the origin corner):
+the X axis, short wall is the Y axis, meeting at the origin corner). Each
+marker is a physical disc mounted flush against the *outside* face of a foam
+wall, so its center sits r = (wall thickness + marker radius) off the nominal
+wall line, perpendicular to that wall — the origin marker touches both walls
+and so is offset on both axes, split evenly between them (45 degrees):
 
-                                                                y2 (0, Ly/2, h)
-                                                                |
-                                                                y1 (0, Ly/4, h)
-                                                                |
-    x2 (-2*Lx/3, 0, h) ------ x1 (-Lx/3, 0, h) ------ origin (0, 0, h)
+                                              y2 (r, measured, h)
+                                                |
+                                              y1 (r, measured, h)
+                                                |
+    x2 (-measured, -r, h) ------ x1 (-measured, -r, h) ------ origin (r/sqrt2, -r/sqrt2, h)
 
-h = MARKER_HEIGHT_MM (~50.8mm, 2 inch wall height). Lx = TABLE_LONG_SIDE_MM,
-Ly = TABLE_SHORT_SIDE_MM (both placeholders below pending the user's actual
-wall measurements — update those two constants once known; everything else
-derives from them).
+h = MARKER_HEIGHT_MM (~50.8mm, 2 inch wall height). x1/x2/y1/y2's along-wall
+distance from origin is hardcoded directly in _build_geometry() from measured
+tape-measure readings (not derived from an overall wall length or assumed
+fractional spacing) — update those literals there when remeasured. r =
+MARKER_MOUNT_RADIUS_MM + WALL_THICKNESS_MM. TABLE_LONG_SIDE_MM/
+TABLE_SHORT_SIDE_MM are a separate measurement (the table's overall play-
+surface extent) used only by world_to_cell()'s grid mapping below, not by
+the marker geometry. marker_height_mm/marker_mount_radius_mm/
+wall_thickness_mm/max_marker_radius_mm are set from config.json's
+"table_pose" section via configure_table_geometry() at startup; everything
+else derives from them.
 
 World-frame convention: Z=0 is defined at the table's own play surface, not
 at the markers — the markers sit at Z=h, i.e. h above the table, since
 they're mounted on top of the walls. +X runs from origin *away* from the
-x-wall markers (x1/x2 sit at negative X), +Y runs from origin toward the
-y-wall markers, +Z is "up" out of the table via the right-hand rule (X cross
-Y). Getting the physical orientation backwards silently mirrors the fitted
-pose; the Kabsch reflection-guard in fit_rigid_transform only corrects the
-SVD's internal sign ambiguity, it cannot detect a wrong physical convention.
+x-wall markers (x1/x2 sit at negative X), +Y runs from origin *toward*
+the y-wall markers (y1/y2 sit at positive Y), +Z is "up" out of the table
+via the right-hand rule (X cross Y). Getting the physical orientation
+backwards silently mirrors the fitted pose; the Kabsch reflection-guard in
+fit_rigid_transform only corrects the SVD's internal sign ambiguity, it
+cannot detect a wrong physical convention.
 
 Point identity is recovered automatically (no operator input) via a
 pairwise-distance-signature match: since all 5 points' relative distances are
@@ -76,21 +88,98 @@ import camera_geometry
 # ---------------------------------------------------------------------------
 # Table marker geometry — single source of truth for where the 5 permanent
 # wall-mounted markers sit relative to the table's own origin corner.
+#
+# Each marker is a physical disc of radius MARKER_MOUNT_RADIUS_MM mounted
+# flush against the *outside* face of a foam wall of thickness
+# WALL_THICKNESS_MM built up around the table's edge, so its center isn't on
+# the nominal wall/corner line — it's pushed out by r = (wall thickness +
+# marker radius), perpendicular to whichever wall(s) it's mounted against:
+#   - x1/x2 sit only against the X wall (whose outward normal is -Y, since
+#     the table's short arm runs toward +Y) -> shifted -r in Y.
+#   - y1/y2 sit only against the Y wall (whose outward normal is +X, since
+#     the table's long arm runs toward -X) -> shifted +r in X.
+#   - origin sits at the corner shared by both walls, at 45 degrees, so its
+#     total displacement is r but split evenly between the two axes:
+#     (r/sqrt(2) in X, -r/sqrt(2) in Y), i.e. each component is sqrt(r^2/2).
 # ---------------------------------------------------------------------------
+def _build_geometry(
+    marker_height_mm: float,
+    marker_mount_radius_mm: float,
+    wall_thickness_mm: float,
+):
+    """Derive the named marker world points (and the lookup tables built from
+    them) from the physical measurements. Split out so the geometry can be
+    reconfigured at startup from config.json via configure_table_geometry()
+    instead of only ever matching the module-load-time defaults below."""
+    IN_TO_MM = 25.4
+    r = marker_mount_radius_mm + wall_thickness_mm
+    world_points: dict[str, tuple[float, float, float]] = {
+        "origin": (0.625 * IN_TO_MM, -0.625 * IN_TO_MM, marker_height_mm),   # 5/8"
+        "x1": (-10.9375 * IN_TO_MM, -r, marker_height_mm),                   # 10 15/16"
+        "x2": (-21.75 * IN_TO_MM, -r, marker_height_mm),                    # 21 3/4"
+        "y1": (r, 8.375 * IN_TO_MM, marker_height_mm),                      # 8 3/8"
+        "y2": (r, 16.5625 * IN_TO_MM, marker_height_mm),                   # 16 9/16"
+    }
+    names = list(world_points.keys())
+    pts = np.array([world_points[name] for name in names], dtype=np.float64)
+    dist_matrix = np.linalg.norm(pts[:, None, :] - pts[None, :, :], axis=-1)
+    return world_points, names, pts, dist_matrix
+
+
 MARKER_HEIGHT_MM = 50.8  # 2 inch wall height where markers are mounted, above the table (Z=0) surface
 
-TABLE_LONG_SIDE_MM = 832.0   # TODO: replace with measured long/X wall length
-TABLE_SHORT_SIDE_MM = 832.0  # TODO: replace with measured short/Y wall length
+MARKER_MOUNT_RADIUS_MM = 12.7  # 0.5 inch physical marker disc radius
+WALL_THICKNESS_MM = 4.7625     # 3/16 inch foam wall thickness
 
-TABLE_MARKER_WORLD_POINTS: dict[str, tuple[float, float, float]] = {
-    "origin": (0.0, 0.0, MARKER_HEIGHT_MM),
-    "x1": (-TABLE_LONG_SIDE_MM / 3.0, 0.0, MARKER_HEIGHT_MM),
-    "x2": (-2.0 * TABLE_LONG_SIDE_MM / 3.0, 0.0, MARKER_HEIGHT_MM),
-    "y1": (0.0, TABLE_SHORT_SIDE_MM / 4.0, MARKER_HEIGHT_MM),
-    "y2": (0.0, TABLE_SHORT_SIDE_MM / 2.0, MARKER_HEIGHT_MM),
-}
+# The table's own physical extent (distinct from where markers happen to be
+# mounted along the walls, which are hardcoded measured positions above) —
+# used only by world_to_cell() below to normalize a ball position into the
+# GRID_ROWS x GRID_COLS grid.
+TABLE_LONG_SIDE_MM = 831.85   # measured: 32 3/4 inches
+TABLE_SHORT_SIDE_MM = 831.85  # measured: 32 3/4 inches
+
+(
+    TABLE_MARKER_WORLD_POINTS,
+    _KNOWN_POINT_NAMES,
+    _KNOWN_WORLD_PTS,
+    _KNOWN_DIST_MATRIX,
+) = _build_geometry(MARKER_HEIGHT_MM, MARKER_MOUNT_RADIUS_MM, WALL_THICKNESS_MM)
 
 _EXPECTED_MARKER_COUNT = len(TABLE_MARKER_WORLD_POINTS)
+
+
+def configure_table_geometry(
+    marker_height_mm: Optional[float] = None,
+    marker_mount_radius_mm: Optional[float] = None,
+    wall_thickness_mm: Optional[float] = None,
+    max_marker_radius_mm: Optional[float] = None,
+) -> None:
+    """Override the physical marker measurements (normally sourced from
+    config.json) and rebuild every lookup table derived from them. Intended
+    to be called once at startup, before tracking begins. Does not touch
+    TABLE_LONG_SIDE_MM/TABLE_SHORT_SIDE_MM (world_to_cell's grid extent) —
+    those are independent of marker mounting and edited directly above."""
+    global MARKER_HEIGHT_MM, MARKER_MOUNT_RADIUS_MM, WALL_THICKNESS_MM, _MAX_MARKER_RADIUS_MM
+    global TABLE_MARKER_WORLD_POINTS, _KNOWN_POINT_NAMES, _KNOWN_WORLD_PTS, _KNOWN_DIST_MATRIX
+    global _EXPECTED_MARKER_COUNT
+
+    if marker_height_mm is not None:
+        MARKER_HEIGHT_MM = marker_height_mm
+    if marker_mount_radius_mm is not None:
+        MARKER_MOUNT_RADIUS_MM = marker_mount_radius_mm
+    if wall_thickness_mm is not None:
+        WALL_THICKNESS_MM = wall_thickness_mm
+    if max_marker_radius_mm is not None:
+        _MAX_MARKER_RADIUS_MM = max_marker_radius_mm
+
+    (
+        TABLE_MARKER_WORLD_POINTS,
+        _KNOWN_POINT_NAMES,
+        _KNOWN_WORLD_PTS,
+        _KNOWN_DIST_MATRIX,
+    ) = _build_geometry(MARKER_HEIGHT_MM, MARKER_MOUNT_RADIUS_MM, WALL_THICKNESS_MM)
+    _EXPECTED_MARKER_COUNT = len(TABLE_MARKER_WORLD_POINTS)
+
 
 # ---------------------------------------------------------------------------
 # Cell grid — same 12x12 logical grid the LED/servo modules address (see
@@ -101,8 +190,8 @@ _EXPECTED_MARKER_COUNT = len(TABLE_MARKER_WORLD_POINTS)
 # (i.e. the far corner along both walls) -- not the marker origin itself.
 # Column increases toward the marker-origin corner along the long/X wall;
 # row increases toward the marker-origin corner along the short/Y wall.
-# World X runs 0 (origin) to -TABLE_LONG_SIDE_MM (x2); world Y runs 0
-# (origin) to +TABLE_SHORT_SIDE_MM (y2).
+# World X runs 0 (origin) to -TABLE_LONG_SIDE_MM (far corner, x2 side); world
+# Y runs 0 (origin) to +TABLE_SHORT_SIDE_MM (far corner, y2 side).
 # ---------------------------------------------------------------------------
 GRID_ROWS = 12
 GRID_COLS = 12
@@ -119,7 +208,7 @@ def world_to_cell(x_mm: float, y_mm: float) -> tuple[int, int]:
     return row, col
 
 # Matching tolerances (pairwise-distance-signature match).
-_DISTANCE_MATCH_TOL_MM = 30.0        # max per-pair distance error allowed for the best assignment
+_DISTANCE_MATCH_TOL_MM = 50.0        # max per-pair distance error allowed for the best assignment
 _DISTANCE_MATCH_AMBIGUITY_MM = 15.0  # runner-up assignment must be at least this much worse
 
 # ---------------------------------------------------------------------------
@@ -311,14 +400,10 @@ def detect_markers(
 
 # ---------------------------------------------------------------------------
 # Point-identity matching — pure, camera-free, independently unit-testable.
+# _KNOWN_POINT_NAMES/_KNOWN_WORLD_PTS/_KNOWN_DIST_MATRIX are built above by
+# _build_geometry() and kept in sync with TABLE_MARKER_WORLD_POINTS by
+# configure_table_geometry().
 # ---------------------------------------------------------------------------
-
-_KNOWN_POINT_NAMES = list(TABLE_MARKER_WORLD_POINTS.keys())
-_KNOWN_WORLD_PTS = np.array([TABLE_MARKER_WORLD_POINTS[name] for name in _KNOWN_POINT_NAMES], dtype=np.float64)
-_KNOWN_DIST_MATRIX = np.linalg.norm(
-    _KNOWN_WORLD_PTS[:, None, :] - _KNOWN_WORLD_PTS[None, :, :], axis=-1
-)
-
 
 def match_points(blobs: list) -> dict:
     """

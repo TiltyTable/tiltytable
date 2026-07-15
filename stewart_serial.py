@@ -2,12 +2,14 @@
 """Open the Stewart Uno serial port (best-effort DTR/RTS handling).
 
 On Jetson + Uno R3 CDC-ACM, opening `/dev/ttyACM*` typically resets the board
-once (kernel asserts DTR → RESET). That clears firmware `calibrated` / enable.
+once (kernel asserts DTR → RESET). The firmware always disables motor outputs
+during boot; after a clean hold+persist shutdown it may restore calibrated
+step coordinates for this external reset.
 We do **not** use a hardware autoreset disable (no RESET–GND capacitor).
 
-Host tools must therefore re-send `calibrate` after open when motion is needed
-(cranks must still be in the physical reference pose). This helper still
-deasserts DTR/RTS and clears HUPCL to reduce extra pulses on close.
+Host tools inspect `status`: `calibrated 1 restored 1` can resume without a
+calibration move; otherwise they must calibrate. This helper still deasserts
+DTR/RTS and clears HUPCL to reduce extra pulses on close.
 """
 
 from __future__ import annotations

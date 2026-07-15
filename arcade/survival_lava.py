@@ -41,6 +41,7 @@ class CellSurvivalState:
     touched_at: float | None = None
     warning_started_at: float | None = None
     warn_blink_on: bool = False
+    sunk_at: float | None = None
 
 
 @dataclass
@@ -186,7 +187,10 @@ def _update_pit_confirm(
         assert ball_cell is not None
         if session._pit_cell != ball_cell:
             session._pit_cell = ball_cell
-            session._pit_since = now
+            cell = session.cells.get(ball_cell)
+            session._pit_since = (
+                cell.sunk_at if cell is not None and cell.sunk_at is not None else now
+            )
         session._pit_last_qualify = now
         if (
             session._pit_since is not None
@@ -258,7 +262,11 @@ def _advance_cell(
 
     if now - cell.warning_started_at >= params.warn_seconds:
         cell.phase = PHASE_SUNK
+        cell.sunk_at = now
         updates.append(_entry(key, row, col, -1, LAVA_COLOR))
+        if session.dwell_cell == key:
+            session._pit_cell = key
+            session._pit_since = now
         return
 
     color = LAVA_COLOR if cell.warn_blink_on else WARN_OFF_COLOR

@@ -11,7 +11,10 @@ firmware commands directly at a prompt.
 FIRMWARE COMMANDS (typed verbatim at the prompt)
     status                              board state (always allowed)
     help                               firmware command list
-    calibrate            (alias: zero) cranks STRAIGHT UP = max heave zero
+    calibrate            (alias: zero)  legacy: all cranks already straight up
+    cal_begin            start interactive per-axis calibration
+    cal_axis <0-2>       mark jogged axis as straight up (vertical)
+    cal_finish           finish interactive cal (after all cal_axis)
     enable [axis]                      energize all axes (or one: 0/1/2)
     disable [axis]                     release all axes (or one)
     pose <roll> <pitch> <heave_mm>     IK move (needs calibrate)
@@ -27,10 +30,10 @@ LOCAL COMMANDS (handled by this tool, not sent to the board)
     q / quit / exit                    disable all axes, then quit
 
 SAFETY
-    calibrate / status / help / disable never move motors. enable / pose /
-    vel / angle / steps / jog DO move motors and are rejected by the
-    firmware until you calibrate. On exit (or Ctrl-C) this tool sends
-    "disable" so no axis is left energized.
+    calibrate / status / help / disable never move motors. enable / jog work
+    during cal_begin (interactive setup). enable / pose / vel / angle / steps /
+    jog for normal motion need full calibration (cal_finish or legacy calibrate).
+    On exit (or Ctrl-C) this tool sends "disable" so no axis is left energized.
 """
 
 from __future__ import annotations

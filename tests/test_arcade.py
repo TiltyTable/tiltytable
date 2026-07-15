@@ -93,10 +93,11 @@ class ArcadeSurvivalTests(unittest.TestCase):
 
     def test_survival_lava_fail_restarts(self) -> None:
         self.begin_level_seven()
-        self.clock.advance(0.15)
-        self.engine.tick()
-        self.clock.advance(4.6)
-        self.engine.tick()
+        for _ in range(60):
+            self.clock.advance(0.12)
+            self.engine.tick()
+            if self.engine.state == GameState.SURVIVAL_FAIL:
+                break
         self.assertEqual(self.engine.state, GameState.SURVIVAL_FAIL)
         self.engine.continue_action()
         self.engine.tick()

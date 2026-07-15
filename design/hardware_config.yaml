@@ -1,5 +1,5 @@
 # Marble Maze - 3-Motor Tilt Table Source of Truth
-# Motors: UIROBOT NEMA 23 Integrated Smart Stepper (UIM5756CM) + StepperOnline MGL23-G5-D8 Planetary Gearbox
+# Motors: UIROBOT NEMA 23 Integrated Smart Stepper (UIM5756CM) + StepperOnline MGL23-G20-D8 Planetary Gearbox
 # Mounting: TBD (Optimized for minimum Z-height, crank floor clearance no longer required)
 
 table:
@@ -19,21 +19,21 @@ motors:
   encoder: "Incremental, closed-loop"
 
 gearbox:
-  type: "StepperOnline MGL23-G5-D8 Planetary"
-  ratio: 5.0
-  efficiency_percent: 90.0
-  backlash_arcmin: 30
-  max_permissible_torque_nm: 10.0
-  moment_permissible_torque_nm: 20.0
+  type: "StepperOnline MGL23-G20-D8 Planetary"
+  ratio: 20.0
+  efficiency_percent: 80.0
+  backlash_arcmin: 45
+  max_permissible_torque_nm: 25.0
+  moment_permissible_torque_nm: 50.0
   shaft_diameter_mm: 14.0
   shaft_length_mm: 34.0
-  gearbox_length_mm: 66.3
+  gearbox_length_mm: 78.8
 
 system_performance:
-  theoretical_stall_torque_nm: 6.3    # 1.26 Nm * 5 ratio (ignoring efficiency drop at stall)
-  rated_output_torque_nm: 5.67        # 1.26 Nm * 5 ratio * 0.9 efficiency
-  max_output_speed_rpm: 400           # 2000 rpm / 5
-  backlash_deg: 0.5                   # 30 arc-min = 0.5 degrees at the crank
+  theoretical_stall_torque_nm: 25.2   # 1.26 Nm * 20 ratio (ignoring efficiency drop at stall)
+  rated_output_torque_nm: 20.16       # 1.26 Nm * 20 ratio * 0.8 efficiency
+  max_output_speed_rpm: 100           # 2000 rpm / 20
+  backlash_deg: 0.75                  # 45 arc-min at the crank
 
 mounting:
   mounting_style: "flat to base plate"

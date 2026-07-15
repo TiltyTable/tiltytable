@@ -9,23 +9,44 @@ servos and WS2812 LEDs (`arduino/servo_calib/`).
 
 ## Calibration (required)
 
-On boot the controller does **not** know where the cranks are. Motion
-commands (`enable`, `pose`, `vel`, `jog`, …) are rejected until you calibrate.
+Two methods:
 
-1. Leave motors **disabled** (default after boot / after `disable`).
-2. Manually turn all three cranks so they point **straight up**
-   (crank pin at maximum height = **max heave**).
-3. Send:
+### Interactive (recommended)
 
-```text
-calibrate
+Jog each crank under power until vertical by eye:
+
+```bash
+.venv/bin/python3 stewart_calibrate.py
 ```
 
-(`zero` is kept as an alias for the same command.)
+Per axis: **←/→** fine jog, **↑/↓** coarse jog, **Enter** when straight up.
 
-That pose is recorded as heave ≈ `+25.831 mm` at roll=pitch=0, with crank
+Firmware commands: `cal_begin` → `enable N` → `jog` → `cal_axis N` → `cal_finish`.
+
+### Legacy (all cranks manually up first)
+
+```bash
+.venv/bin/python3 stewart_calibrate.py --legacy --yes
+```
+
+Or send `calibrate` after manually pointing all cranks straight up.
+
+That pose is recorded as heave `+30 mm` at roll=pitch=0, with crank
 angle `90°` relative to the IK model (`NEUTRAL_CRANK_DEG = 180°` is
 horizontal).
+
+### Calibration persistence across app restarts
+
+`roller_ball.py --hold-on-exit` now sends `hold` followed by `persist`.
+Firmware stores the settled step counters and logical pose in EEPROM. On the
+next **external reset** (USB serial DTR / reset button), it restores that
+position with motors initially disabled; `roller_ball.py` detects
+`calibrated 1 restored 1`, enables at the same target, and skips the TUI.
+
+Power-on, brown-out, and watchdog resets never trust EEPROM and require
+calibration. If motor power is cycled without also resetting the Uno, send
+`forget` before restarting motion—the Uno cannot electrically detect a
+separate motor-supply power cycle.
 
 Host helpers:
 
@@ -77,9 +98,9 @@ with the cranks still in the physical reference pose (straight up), then
 `enable`. Roller ball: always use `--calibrate-on-start`.
 
 UIM344 / UIM5756PM require step pulse width **> 4 µs** (manual). The sketch
-sets AccelStepper `setMinPulseWidth(20)`. These motors are configured for
-**~32000 pulses / crank revolution** (do not retune MCS on the motor to match
-firmware — keep `STEPS_PER_CRANK_REV` aligned with the motors).
+uses `setMinPulseWidth(5)`. All three motors are configured to **MCS=8**:
+200 × 8 × 20:1 = **32000 pulses / crank revolution**. Use the dedicated
+`arduino/uim5756pm_config/` sketch to query/set one motor at a time.
 
 Keep grounds common: Arduino `GND`, each signal-black `GND`, and the motor
 power supply negative. Do not power the motors from the Arduino.
@@ -88,7 +109,7 @@ power supply negative. Do not power the motors from the Arduino.
 
 Edit these constants near the top of `uim5756pm_stewart.ino`:
 
-- `STEPS_PER_CRANK_REV`: motor pulses per crank revolution (6400 at MCS=32).
+- `STEPS_PER_CRANK_REV`: motor pulses per crank revolution (32000 at MCS=8, 20:1).
 - Platform geometry (`TABLE_ROD_RADIUS_MM`, `CRANK_RADIUS_MM`, `ARM_LENGTH_MM`, …).
 - `CALIBRATE_CRANK_DEG` / `CALIBRATE_HEAVE_MM` (must stay consistent with geometry).
 - `MAX_ROLL_DEG`, `MAX_PITCH_DEG`, and heave limits.
@@ -111,6 +132,8 @@ angle <a0_deg> <a1_deg> <a2_deg>
 steps <s0> <s1> <s2>
 jog <axis> <pulses>
 status
+persist
+forget
 help
 ```
 

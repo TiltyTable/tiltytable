@@ -18,7 +18,7 @@ MECHANISM (per leg, 3 legs at 120 deg)
 
   - The crank rotates in the vertical plane that contains the leg's azimuth
     (a radial-vertical plane).
-  - At the NEUTRAL pose the design intent is:
+  - In the arm-vertical design variant, the NEUTRAL pose intent is:
         * crank horizontal  (crank pin at z = 0)
         * arm perfectly vertical
     Those two facts FORCE two geometric relationships:
@@ -27,6 +27,9 @@ MECHANISM (per leg, 3 legs at 120 deg)
     => You cannot change ARM_LENGTH while keeping BOTH "crank horizontal" and
        "arm vertical" unless you also move the platform neutral height to match.
        This coupling is the key to the "shorter arm" question (see report).
+    The as-built firmware geometry is different: BASE_MOTOR_RADIUS =
+    PLATFORM_ROD_RADIUS = 119 mm after the motors moved inward. At its fixed
+    20 mm operating heave, the crank and arm are intentionally diagonal.
 
   - The spherical bearing (GE8C) has a hard articulation limit. The firmware
     uses ROD_END_LIMIT_DEG = 14 deg; the SKF GE8C datasheet allows 15 deg.
@@ -44,7 +47,7 @@ All lengths in mm, angles in degrees unless noted.
 """
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 # --------------------------------------------------------------------------
@@ -59,13 +62,8 @@ class Geometry:
     rod_end_limit_deg: float = 14.0
     neutral_crank_deg: float = 180.0
     leg_azimuth_deg: tuple = (0.0, 120.0, 240.0)
-
-    # Derived so the neutral pose keeps crank horizontal + arm vertical.
-    base_motor_radius_mm: float = field(init=False)
-
-    def __post_init__(self):
-        # Arm vertical at neutral => crank pin radius == platform rod radius.
-        self.base_motor_radius_mm = self.platform_rod_radius_mm + self.crank_radius_mm
+    # As built 2026-07-09: motors moved inward so BASE == TABLE.
+    base_motor_radius_mm: float = 119.0
 
     @classmethod
     def arm_vertical(cls, platform_rod_radius_mm, crank_radius_mm, arm_length_mm,
@@ -80,6 +78,7 @@ class Geometry:
             arm_length_mm=arm_length_mm,
             neutral_top_z_mm=arm_length_mm,
             rod_end_limit_deg=rod_end_limit_deg,
+            base_motor_radius_mm=platform_rod_radius_mm + crank_radius_mm,
         )
 
 
@@ -213,17 +212,18 @@ def _report():
     print("TILT ENVELOPE ANALYSIS")
     print("=" * 72)
 
-    base = Geometry()  # firmware defaults (119 mm radius)
+    base = Geometry()
     print("\n[1] Firmware geometry (as built in the .ino)")
     print(f"    platform rod radius = {base.platform_rod_radius_mm:.1f} mm "
           f"(= {2*base.platform_rod_radius_mm:.0f} mm diameter)")
-    print(f"    base motor radius   = {base.base_motor_radius_mm:.1f} mm "
-          f"(derived: R_platform + crank)")
+    print(f"    base motor radius   = {base.base_motor_radius_mm:.1f} mm")
     print(f"    crank radius        = {base.crank_radius_mm:.1f} mm")
     print(f"    arm length          = {base.arm_length_mm:.1f} mm")
     print(f"    neutral top height  = {base.neutral_top_z_mm:.1f} mm")
     print(f"    rod-end limit       = {base.rod_end_limit_deg:.1f} deg")
-    worst, best, reason = max_tilt(base)
+    operating_heave = 20.0
+    worst, best, reason = max_tilt(base, heave_mm=operating_heave)
+    print(f"    operating heave                    : {operating_heave:.1f} mm")
     print(f"    --> guaranteed tilt (any direction): {worst:.2f} deg")
     print(f"    --> best-direction tilt            : {best:.2f} deg")
     print(f"    --> limited by                     : {reason}")

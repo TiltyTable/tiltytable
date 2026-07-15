@@ -3,14 +3,14 @@
 
 Intended use
 ------------
-1. Manually set ALL three cranks STRAIGHT UP (max heave).
-2. Run this script once.
+1. Run this script (serial open resets the Uno — calibration runs every time).
+2. Interactive cal: jog each crank to vertical by eye (default).
 3. Roll the arcade ball — the table pitches and rolls.
 
-Opening /dev/arduino-stewart resets the Uno (CDC-ACM DTR). This script always
-waits for reboot, recalibrates from the physical max-heave pose, enables the
-drives, moves to mid-stroke heave (default 20 mm — needed for tilt workspace),
-then maps ball motion to absolute roll/pitch at that heave.
+Opening /dev/arduino-stewart resets the Uno (CDC-ACM DTR). After a clean
+``--hold-on-exit`` shutdown, firmware restores the persisted position and this
+script resumes without calibration. Otherwise it calibrates, enables, moves
+to mid-stroke heave (default 20 mm), and maps ball motion to roll/pitch.
 
 Examples
 --------
@@ -24,7 +24,9 @@ Examples
 from __future__ import annotations
 
 import argparse
+import math
 import os
+import re
 import select
 import struct
 import sys
@@ -39,6 +41,7 @@ if str(_ROOT) not in sys.path:
 import serial
 
 from stewart_serial import open_stewart_serial, wait_if_reset
+from stewart_calibrate import run_interactive_calibration, run_legacy_calibration
 
 EVENT_ROOT = Path("/dev/input")
 DEFAULT_MOUSE = EVENT_ROOT / "by-id/usb-13ba_Barcode_Reader-if01-event-mouse"
@@ -48,8 +51,9 @@ EV_SYN = 0x00
 EV_REL = 0x02
 INPUT_EVENT = struct.Struct("llHHI")
 
-# Firmware software caps (uim5756pm_stewart.ino).
-MAX_TILT_DEG = 5.0
+# Guaranteed all-direction envelope at heave=20 for the as-built geometry.
+# Keep a small margin inside the modeled 4.8° limit.
+MAX_TILT_DEG = 4.6
 CALIBRATE_HEAVE_MM = 30.0  # max heave = cranks straight up (calibrate pose)
 # Mid-stroke operating height: maximizes roll/pitch workspace with BASE=119.
 # At heave 30, IK tilt envelope ≈ 0°. At heave 12 (rod-end floor) ≈ 0.75°.
@@ -57,6 +61,8 @@ CALIBRATE_HEAVE_MM = 30.0  # max heave = cranks straight up (calibrate pose)
 OPERATING_HEAVE_MM = 20.0
 # Don't spam identical poses; firmware already interpolates.
 POSE_EPS_DEG = 0.02
+DEFAULT_SCALE = 0.04
+DEFAULT_SMOOTH = 1.0
 
 
 def signed32(value: int) -> int:
@@ -65,6 +71,56 @@ def signed32(value: int) -> int:
 
 def clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def clamp_tilt_vector(roll: float, pitch: float, max_tilt: float) -> tuple[float, float]:
+    """Clamp roll/pitch to a circular all-direction tilt envelope."""
+    magnitude = math.hypot(roll, pitch)
+    if magnitude <= max_tilt or magnitude == 0.0:
+        return roll, pitch
+    scale = max_tilt / magnitude
+    return roll * scale, pitch * scale
+
+
+def apply_trackball_counts(
+    roll: float,
+    pitch: float,
+    dx: int,
+    dy: int,
+    *,
+    scale: float,
+    roll_sign: float,
+    pitch_sign: float,
+    max_tilt: float,
+) -> tuple[float, float]:
+    """Apply relative ball motion to an absolute, radially bounded tilt target."""
+    pitch += dx * scale * pitch_sign
+    roll += -dy * scale * roll_sign
+    return clamp_tilt_vector(roll, pitch, max_tilt)
+
+
+def smooth_tilt(
+    current_roll: float,
+    current_pitch: float,
+    target_roll: float,
+    target_pitch: float,
+    alpha: float,
+    max_tilt: float,
+) -> tuple[float, float]:
+    """Blend toward a position target, preserving the circular envelope."""
+    roll = current_roll + (target_roll - current_roll) * alpha
+    pitch = current_pitch + (target_pitch - current_pitch) * alpha
+    return clamp_tilt_vector(roll, pitch, max_tilt)
+
+
+def parse_status_pose(status: str) -> tuple[float, float, float] | None:
+    values: list[float] = []
+    for name in ("roll", "pitch", "heave"):
+        match = re.search(rf"(?:^|\s){name}\s+([-0-9.]+)", status)
+        if match is None:
+            return None
+        values.append(float(match.group(1)))
+    return values[0], values[1], values[2]
 
 
 def find_roller_ball() -> Path | None:
@@ -124,18 +180,20 @@ class Stewart:
                 print(f"  < {line}")
         return text
 
-    def _drain_input(self) -> None:
-        """Drop firmware chatter so the ACM TX path does not stall."""
+    def _drain_input(self) -> str:
+        """Read firmware chatter so the ACM TX path does not stall."""
         assert self.ser is not None
+        chunks: list[bytes] = []
         try:
             while self.ser.in_waiting:
-                self.ser.read(self.ser.in_waiting)
+                chunks.append(self.ser.read(self.ser.in_waiting))
         except Exception:
             pass
+        return b"".join(chunks).decode("utf-8", "replace").strip()
 
-    def _fire(self, command: str) -> None:
+    def _fire(self, command: str) -> str:
         assert self.ser is not None
-        self._drain_input()
+        previous_reply = self._drain_input()
         payload = (command.rstrip() + "\n").encode("ascii")
         try:
             self.ser.write(payload)
@@ -150,6 +208,7 @@ class Stewart:
             time.sleep(0.05)
             self.ser.write(payload)
             self.ser.flush()
+        return previous_reply
 
     def wait_idle(self, timeout_s: float = 45.0) -> None:
         """Block until firmware reports moving 0 (or timeout)."""
@@ -161,28 +220,48 @@ class Stewart:
             time.sleep(0.2)
         print("  (warning: move still active after timeout — continuing)")
 
-    def bring_up(self, heave_mm: float) -> None:
-        """calibrate at max heave → enable → mid-stroke heave. Raises on failure."""
-        print("Calibrating (physical cranks = max heave / straight up) …")
-        reply = self._exchange("calibrate", wait_s=1.0)
-        if "OK calibrate" not in reply:
-            time.sleep(0.5)
-            reply = self._exchange("calibrate", wait_s=1.0)
+    def bring_up(
+        self,
+        heave_mm: float,
+        *,
+        legacy_cal: bool = False,
+    ) -> tuple[float, float, float]:
+        """Restore a saved live pose, or calibrate and move to operating heave."""
         status = self._exchange("status", wait_s=0.8)
-        if "calibrated 1" not in status:
-            raise RuntimeError(
-                "calibrate failed after serial open. "
-                "Confirm ALL cranks are straight up, then retry.\n"
-                f"  calibrate reply: {reply!r}\n"
-                f"  status: {status!r}"
+        restored_pose = (
+            parse_status_pose(status)
+            if "calibrated 1" in status and "restored 1" in status
+            else None
+        )
+
+        if restored_pose is not None:
+            print(
+                "  restored prior live position "
+                f"(roll={restored_pose[0]:+.2f}°, pitch={restored_pose[1]:+.2f}°, "
+                f"heave={restored_pose[2]:g} mm)"
             )
-        print("  calibrated OK")
+        else:
+            if legacy_cal:
+                print("Calibrating (legacy — all cranks must already be straight up) …")
+                ok = run_legacy_calibration(self.ser, skip_prompt=True)  # type: ignore[arg-type]
+            else:
+                ok = run_interactive_calibration(self.ser, skip_intro=True)  # type: ignore[arg-type]
+            if not ok:
+                raise RuntimeError(
+                    "Calibration failed after serial open. "
+                    "Re-run stewart_calibrate.py or check firmware."
+                )
 
         print("Enabling motors …")
         en = self._exchange("enable", wait_s=0.8)
         if "ERR" in en:
             raise RuntimeError(f"enable failed: {en!r}")
         print("  enabled OK")
+
+        if restored_pose is not None:
+            self.wait_idle()
+            print("  ready for roller ball (no calibration move)\n")
+            return restored_pose
 
         # Max heave has almost no tilt workspace; drop to mid-stroke first.
         print(f"Moving to operating heave={heave_mm:g} mm (mid-stroke for tilt) …")
@@ -191,10 +270,11 @@ class Stewart:
             raise RuntimeError(f"pose to operating heave failed: {pose!r}")
         self.wait_idle()
         print("  ready for roller ball\n")
+        return 0.0, 0.0, heave_mm
 
-    def pose(self, roll: float, pitch: float, heave: float) -> None:
-        # Non-blocking on firmware; don't wait for OK every frame.
-        self._fire(f"pose {roll:.3f} {pitch:.3f} {heave:.3f}")
+    def pose(self, roll: float, pitch: float, heave: float) -> str:
+        """Send a non-blocking pose and return feedback for the prior pose."""
+        return self._fire(f"pose {roll:.3f} {pitch:.3f} {heave:.3f}")
 
     def disable(self) -> None:
         try:
@@ -202,6 +282,16 @@ class Stewart:
             self._exchange("disable", wait_s=0.5)
         except Exception:
             pass
+
+    def hold(self) -> None:
+        """Stop at the current position and leave all motor drivers enabled."""
+        self._drain_input()
+        reply = self._exchange("hold", wait_s=0.5)
+        if "ERR" in reply:
+            raise RuntimeError(f"hold failed: {reply!r}")
+        saved = self._exchange("persist", wait_s=0.8)
+        if "OK persist saved" not in saved:
+            raise RuntimeError(f"persist failed: {saved!r}")
 
 
 def open_mouse(path: Path) -> int:
@@ -219,7 +309,7 @@ def open_mouse(path: Path) -> int:
         ) from exc
 
 
-def confirm_max_heave(skip: bool) -> None:
+def confirm_setup(skip: bool, *, legacy_cal: bool) -> None:
     print()
     print("=" * 60)
     print("  ROLLER BALL → STEWART TILT")
@@ -227,16 +317,19 @@ def confirm_max_heave(skip: bool) -> None:
     print()
     print("Before continuing:")
     print("  1. Power the UIM motors.")
-    print("  2. Manually set ALL THREE cranks STRAIGHT UP (max heave).")
-    print("  3. Clear the table / keep hands clear of the mechanism.")
+    print("  2. Clear the table / keep hands clear of the mechanism.")
+    if legacy_cal:
+        print("  3. Manually set ALL THREE cranks STRAIGHT UP (max heave).")
+    else:
+        print("  3. Full-screen cal TUI: jog each crank vertical (↑↓←→), Enter to confirm.")
     print()
     if skip:
         print("(--yes: skipping confirmation)")
         return
     try:
-        input("Press Enter when cranks are straight up (Ctrl-C to abort) … ")
+        input("Press Enter to start calibration (Ctrl-C to abort) … ")
     except EOFError:
-        print("No TTY — re-run with --yes once cranks are up.", file=sys.stderr)
+        print("No TTY — re-run with --yes.", file=sys.stderr)
         raise SystemExit(2)
 
 
@@ -247,7 +340,7 @@ def run(args: argparse.Namespace) -> int:
         print("  python3 capture_usb_mouse.py --list", file=sys.stderr)
         return 2
 
-    confirm_max_heave(args.yes)
+    confirm_setup(args.yes, legacy_cal=args.legacy_cal)
 
     heave = float(args.heave)
     max_tilt = float(args.max_tilt)
@@ -265,6 +358,8 @@ def run(args: argparse.Namespace) -> int:
     pitch_out = 0.0
     last_sent_roll = None
     last_sent_pitch = None
+    pending_pose: tuple[float, float] | None = None
+    last_accepted_pose = (0.0, 0.0)
     pending_dx = 0
     pending_dy = 0
     interval = 1.0 / rate_hz
@@ -273,12 +368,19 @@ def run(args: argparse.Namespace) -> int:
 
     try:
         stewart.open()
-        stewart.bring_up(heave)
+        roll_cmd, pitch_cmd, heave = stewart.bring_up(
+            heave, legacy_cal=args.legacy_cal
+        )
+        roll_out, pitch_out = roll_cmd, pitch_cmd
+        last_accepted_pose = (roll_cmd, pitch_cmd)
 
-        print("Roll the ball to tilt. Ctrl-C stops and disables motors.")
+        exit_behavior = (
+            "holds the current pose" if args.hold_on_exit else "centers and disables motors"
+        )
+        print(f"Roll the ball to tilt. Ctrl-C {exit_behavior}.")
         print(
-            f"  map: Y→roll  X→pitch  |  scale={scale:g}°/count  "
-            f"limit=±{max_tilt:g}°  heave={heave:g} mm  rate={rate_hz:g} Hz"
+            f"  map: Y→roll  X→pitch  |  gain={scale:g}°/count  "
+            f"radial limit={max_tilt:g}°  heave={heave:g} mm  rate={rate_hz:g} Hz"
         )
         print()
 
@@ -306,19 +408,28 @@ def run(args: argparse.Namespace) -> int:
                 continue
 
             if abs(pending_dx) > args.deadband or abs(pending_dy) > args.deadband:
-                # Trackball: +X right, +Y typically "away"/down in HID — map so
-                # rolling "forward" (negative Y on many balls) increases roll.
-                pitch_cmd += pending_dx * scale * args.pitch_sign
-                roll_cmd += -pending_dy * scale * args.roll_sign
+                roll_cmd, pitch_cmd = apply_trackball_counts(
+                    roll_cmd,
+                    pitch_cmd,
+                    pending_dx,
+                    pending_dy,
+                    scale=scale,
+                    roll_sign=args.roll_sign,
+                    pitch_sign=args.pitch_sign,
+                    max_tilt=max_tilt,
+                )
                 pending_dx = 0
                 pending_dy = 0
 
-            roll_cmd = clamp(roll_cmd, -max_tilt, max_tilt)
-            pitch_cmd = clamp(pitch_cmd, -max_tilt, max_tilt)
-
             # Exponential smooth toward command (quieter, less jerky).
-            roll_out += (roll_cmd - roll_out) * alpha
-            pitch_out += (pitch_cmd - pitch_out) * alpha
+            roll_out, pitch_out = smooth_tilt(
+                roll_out,
+                pitch_out,
+                roll_cmd,
+                pitch_cmd,
+                alpha,
+                max_tilt,
+            )
 
             moved = (
                 last_sent_roll is None
@@ -327,7 +438,14 @@ def run(args: argparse.Namespace) -> int:
             )
             if moved:
                 try:
-                    stewart.pose(roll_out, pitch_out, heave)
+                    feedback = stewart.pose(roll_out, pitch_out, heave)
+                    if "ERR pose" in feedback:
+                        print(f"\n  firmware rejected prior pose: {feedback}")
+                        roll_cmd, pitch_cmd = last_accepted_pose
+                        roll_out, pitch_out = last_accepted_pose
+                    elif "OK pose" in feedback and pending_pose is not None:
+                        last_accepted_pose = pending_pose
+                    pending_pose = (roll_out, pitch_out)
                     last_sent_roll = roll_out
                     last_sent_pitch = pitch_out
                 except serial.SerialException as exc:
@@ -348,13 +466,20 @@ def run(args: argparse.Namespace) -> int:
     except serial.SerialException as exc:
         print(f"\n\nSerial error: {exc}")
     finally:
-        print("\nDisabling motors …")
-        try:
-            stewart.pose(0.0, 0.0, heave)
-            time.sleep(0.3)
-        except Exception:
-            pass
-        stewart.disable()
+        if args.hold_on_exit:
+            print("\nHolding current position; motors remain energized …")
+            try:
+                stewart.hold()
+            except Exception as exc:
+                print(f"WARNING: hold command failed: {exc}")
+        else:
+            print("\nDisabling motors …")
+            try:
+                stewart.pose(0.0, 0.0, heave)
+                time.sleep(0.3)
+            except Exception:
+                pass
+            stewart.disable()
         stewart.close()
         os.close(mouse_fd)
         print("Done.")
@@ -378,24 +503,42 @@ def main() -> int:
             f"calibrate pose is {CALIBRATE_HEAVE_MM:g})"
         ),
     )
-    parser.add_argument("--max-tilt", type=float, default=MAX_TILT_DEG, help="Clamp |roll|/|pitch| degrees")
+    parser.add_argument(
+        "--max-tilt",
+        type=float,
+        default=MAX_TILT_DEG,
+        help="Clamp total roll/pitch vector magnitude in degrees",
+    )
     parser.add_argument(
         "--scale",
         type=float,
-        default=0.04,
-        help="Degrees of tilt per HID motion count (higher = more sensitive)",
+        default=DEFAULT_SCALE,
+        help="Degrees of tilt per HID count",
     )
     parser.add_argument("--rate-hz", type=float, default=30.0, help="Pose command rate")
     parser.add_argument(
         "--smooth",
         type=float,
-        default=0.35,
+        default=DEFAULT_SMOOTH,
         help="EMA blend toward target each frame (0–1; lower = smoother/slower)",
     )
     parser.add_argument("--deadband", type=int, default=1, help="Ignore tiny HID counts")
     parser.add_argument("--roll-sign", type=float, choices=(-1.0, 1.0), default=1.0)
-    parser.add_argument("--pitch-sign", type=float, choices=(-1.0, 1.0), default=1.0)
-    parser.add_argument("--yes", "-y", action="store_true", help="Skip Enter confirmation")
+    parser.add_argument("--pitch-sign", type=float, choices=(-1.0, 1.0), default=-1.0)
+    parser.add_argument("--yes", "-y", action="store_true", help="Skip startup confirmation")
+    parser.add_argument(
+        "--legacy-cal",
+        action="store_true",
+        help="Legacy calibrate (all cranks manually straight up before enable)",
+    )
+    parser.add_argument(
+        "--hold-on-exit",
+        action="store_true",
+        help=(
+            "Stop at the current pose and leave motors energized on exit; "
+            "opening the Uno serial port again will still reset and disable it"
+        ),
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Print raw Arduino replies")
     args = parser.parse_args()
 
@@ -403,7 +546,11 @@ def main() -> int:
         parser.error(f"--heave must be in [12, {CALIBRATE_HEAVE_MM:g}] for this geometry")
     if not 0.0 < args.smooth <= 1.0:
         parser.error("--smooth must be in (0, 1]")
-    if args.rate_hz <= 0 or args.scale <= 0 or args.max_tilt <= 0:
+    if (
+        args.rate_hz <= 0
+        or args.scale <= 0
+        or args.max_tilt <= 0
+    ):
         parser.error("--rate-hz, --scale, and --max-tilt must be > 0")
 
     try:

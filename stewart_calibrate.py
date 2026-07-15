@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-"""Stewart platform calibration helper.
+"""Stewart platform calibration — interactive per-axis TUI (recommended).
 
-Physical procedure
-------------------
-1. Motors must be free (firmware disables them during calibrate).
-2. Manually rotate all three cranks so they point STRAIGHT UP
-   (maximum heave / highest platform).
-3. Run this script (or send `calibrate` over serial).
+Opens a full-screen terminal UI. For each leg (axis 0 → 1 → 2):
 
-That pose becomes the firmware's step + heave reference. Until then,
-enable / pose / jog / etc. are rejected.
+1. Enable that axis
+2. Jog with arrow keys until the crank is **straight up / vertical by eye**
+3. **Enter** records ``cal_axis N``
+4. After all three: ``cal_finish``
+
+Requires firmware with ``cal_begin`` / ``cal_axis`` / ``cal_finish``.
+Opening serial resets the Uno — run after every reconnect.
+
+Legacy one-shot (all cranks manually up first): ``--legacy``
 """
 
 from __future__ import annotations
@@ -20,10 +22,14 @@ import time
 
 import serial
 
-from stewart_serial import open_stewart_serial
+from stewart_cal_tui import run_interactive_calibration_tui
+from stewart_serial import open_stewart_serial, wait_if_reset
+
+DEFAULT_JOG_FINE = 200
+DEFAULT_JOG_COARSE = 1600
 
 
-def read_lines(ser: serial.Serial, seconds: float = 1.0) -> list[str]:
+def read_lines(ser: serial.Serial, seconds: float = 0.8) -> list[str]:
     end = time.time() + seconds
     lines: list[str] = []
     while time.time() < end:
@@ -33,6 +39,7 @@ def read_lines(ser: serial.Serial, seconds: float = 1.0) -> list[str]:
         line = raw.decode("utf-8", "replace").strip()
         if line:
             lines.append(line)
+            end = time.time() + 0.12
     return lines
 
 
@@ -40,68 +47,99 @@ def send(ser: serial.Serial, cmd: str, wait: float = 0.8) -> list[str]:
     ser.reset_input_buffer()
     ser.write((cmd + "\n").encode())
     ser.flush()
-    return read_lines(ser, wait)
+    lines = read_lines(ser, wait)
+    for line in lines:
+        print(f"  < {line}")
+    return lines
+
+
+def _ok(lines: list[str], prefix: str) -> bool:
+    return any(line.startswith(prefix) for line in lines)
+
+
+def run_legacy_calibration(ser: serial.Serial, *, skip_prompt: bool = False) -> bool:
+    if not skip_prompt:
+        print()
+        print("Legacy calibrate: motors free, ALL cranks straight up manually.")
+        print("Press Enter to send calibrate, Ctrl-C to abort.")
+        try:
+            input()
+        except EOFError:
+            print("No TTY — use --yes or interactive mode.", file=sys.stderr)
+            return False
+
+    lines = send(ser, "calibrate", wait=1.0)
+    if not _ok(lines, "OK calibrate"):
+        return False
+    status = send(ser, "status", wait=0.6)
+    return any("calibrated 1" in line for line in status)
+
+
+def run_interactive_calibration(
+    ser: serial.Serial,
+    *,
+    jog_fine: int = DEFAULT_JOG_FINE,
+    jog_coarse: int = DEFAULT_JOG_COARSE,
+    skip_intro: bool = False,
+) -> bool:
+    return run_interactive_calibration_tui(
+        ser,
+        jog_fine=jog_fine,
+        jog_coarse=jog_coarse,
+        skip_intro=skip_intro,
+    )
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--port",
-        default="/dev/arduino-stewart",
-        help="Stewart Uno R3 serial port",
-    )
+    parser.add_argument("--port", default="/dev/arduino-stewart")
     parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument(
-        "--yes",
+        "--legacy",
         action="store_true",
-        help="skip interactive confirmation (cranks already straight up)",
+        help="legacy one-shot calibrate (all cranks manually up first)",
     )
+    parser.add_argument("--yes", "-y", action="store_true", help="skip intro screen")
+    parser.add_argument("--jog-fine", type=int, default=DEFAULT_JOG_FINE)
+    parser.add_argument("--jog-coarse", type=int, default=DEFAULT_JOG_COARSE)
     args = parser.parse_args()
 
-    print(f"Opening {args.port} (no DTR reset) …")
+    print(f"Opening {args.port} …")
     try:
         ser = open_stewart_serial(args.port, args.baud, timeout=0.3)
     except serial.SerialException as exc:
         print(f"Cannot open port: {exc}", file=sys.stderr)
         return 1
 
-    boot = read_lines(ser, 0.5)
-    for line in boot:
-        print(f"  < {line}")
+    if wait_if_reset(ser):
+        print("Board rebooted on serial open — waiting for firmware …")
+        time.sleep(0.5)
 
-    status = send(ser, "status")
-    for line in status:
-        print(f"  < {line}")
+    if args.legacy:
+        send(ser, "status", wait=0.5)
+        ok = run_legacy_calibration(ser, skip_prompt=args.yes)
+        send(ser, "disable", wait=0.4)
+        ser.close()
+        if ok:
+            print("\nCalibrated. enable / pose / roller_ball may proceed.")
+            return 0
+        print("\nCalibration did not complete.", file=sys.stderr)
+        return 2
 
-    if not args.yes:
-        print()
-        print("1. Confirm motors are free / disabled.")
-        print("2. Manually point ALL three cranks STRAIGHT UP (max heave).")
-        print("3. Press Enter to send: calibrate")
-        try:
-            input()
-        except EOFError:
-            print("No TTY — re-run with --yes once cranks are up.", file=sys.stderr)
-            ser.close()
-            return 2
-
-    print("> calibrate")
-    replies = send(ser, "calibrate")
-    for line in replies:
-        print(f"  < {line}")
-
-    ok = any(line.startswith("OK calibrate") for line in replies)
-    status2 = send(ser, "status")
-    for line in status2:
-        print(f"  < {line}")
-    calibrated = any("calibrated 1" in line for line in status2)
-
+    # TUI takes over the terminal; minimal prints before wrapper.
+    ok = run_interactive_calibration(
+        ser,
+        jog_fine=args.jog_fine,
+        jog_coarse=args.jog_coarse,
+        skip_intro=args.yes,
+    )
+    send(ser, "disable", wait=0.4)
     ser.close()
-    if ok and calibrated:
-        print("Calibrated. You can now enable / pose (motors will hold).")
+    if ok:
+        print("Calibrated. enable / pose / roller_ball may proceed.")
         return 0
-    print("Calibration did not confirm — check firmware / serial.", file=sys.stderr)
-    return 3
+    print("Calibration did not complete.", file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":
