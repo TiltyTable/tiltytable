@@ -49,7 +49,7 @@ class KabschFitTests(unittest.TestCase):
         t0 = np.array([40.0, -25.0, 950.0])
 
         world_pts = _world_points_array()
-        camera_pts = (np.linalg.inv(R0) @ (world_pts - t0).T).T
+        camera_pts = np.array(list(_camera_points_from_pose(R0, t0).values()))
 
         fit = tp.fit_rigid_transform(camera_pts, world_pts)
 
@@ -59,21 +59,22 @@ class KabschFitTests(unittest.TestCase):
         self.assertLess(fit.max_residual_mm, 1e-6)
 
     def test_noise_tolerance_stays_bounded(self):
-        # NOTE: the current marker layout spans only ~277-416mm (vs. a full
-        # ~832mm table wall), so it's a compact, weakly-conditioned point
-        # cluster for estimating rotation. A small rotation error is nearly
-        # free in residual terms at the cluster itself, but couples with the
-        # ~900mm camera-to-table distance to produce a much larger *raw* R/t
-        # deviation from ground truth than the fit residual alone suggests.
-        # So this test checks the residual (what TablePoseTracker actually
-        # exposes as rms/max_residual_mm), not raw R/t vs. ground truth,
-        # which would be misleadingly strict for this geometry.
+        # Checks the *residual* (what TablePoseTracker actually exposes as
+        # rms/max_residual_mm), not raw R/t vs. ground truth -- a small
+        # rotation error is nearly free in residual terms at the marker
+        # cluster itself, but couples with the ~900mm camera-to-table
+        # distance to produce a much larger raw R/t deviation than the fit
+        # residual alone suggests, which would make a raw-R/t assertion
+        # misleadingly strict. Bounds here are deliberately generous
+        # (observed residuals for this scale of noise are ~1-2mm); they're
+        # a regression guard against gross conditioning breakage, not a
+        # tight characterization of current marker geometry.
         rng = np.random.default_rng(42)
         R0 = _rotation_from_euler_deg(3.0, 8.0, -5.0)
         t0 = np.array([10.0, 5.0, 900.0])
 
         world_pts = _world_points_array()
-        camera_pts = (np.linalg.inv(R0) @ (world_pts - t0).T).T
+        camera_pts = np.array(list(_camera_points_from_pose(R0, t0).values()))
         camera_pts += rng.normal(scale=1.0, size=camera_pts.shape)
 
         fit = tp.fit_rigid_transform(camera_pts, world_pts)
@@ -91,7 +92,7 @@ class KabschFitTests(unittest.TestCase):
 
         world_pts = _world_points_array()
         self.assertTrue(np.allclose(world_pts[:, 2], world_pts[0, 2]))
-        camera_pts = (np.linalg.inv(R0) @ (world_pts - t0).T).T
+        camera_pts = np.array(list(_camera_points_from_pose(R0, t0).values()))
 
         fit = tp.fit_rigid_transform(camera_pts, world_pts)
 
