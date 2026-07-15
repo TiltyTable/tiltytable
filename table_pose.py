@@ -25,17 +25,17 @@ and so is offset on both axes, split evenly between them (45 degrees):
                                                 |
     x2 (-measured, -r, h) ------ x1 (-measured, -r, h) ------ origin (r/sqrt2, -r/sqrt2, h)
 
-h = MARKER_HEIGHT_MM (~50.8mm, 2 inch wall height). x1/x2/y1/y2's along-wall
-distance from origin is hardcoded directly in _build_geometry() from measured
-tape-measure readings (not derived from an overall wall length or assumed
-fractional spacing) — update those literals there when remeasured. r =
-MARKER_MOUNT_RADIUS_MM + WALL_THICKNESS_MM. TABLE_LONG_SIDE_MM/
-TABLE_SHORT_SIDE_MM are a separate measurement (the table's overall play-
-surface extent) used only by world_to_cell()'s grid mapping below, not by
-the marker geometry. marker_height_mm/marker_mount_radius_mm/
-wall_thickness_mm/max_marker_radius_mm are set from config.json's
-"table_pose" section via configure_table_geometry() at startup; everything
-else derives from them.
+h = TableGeometry.marker_height_mm (~50.8mm, 2 inch wall height). x1/x2/y1/y2's
+along-wall distance from origin is hardcoded directly in
+TableGeometry._rebuild() from measured tape-measure readings (not derived
+from an overall wall length or assumed fractional spacing) — update those
+literals there when remeasured. r = marker_mount_radius_mm + wall_thickness_mm.
+TABLE_LONG_SIDE_MM/TABLE_SHORT_SIDE_MM are a separate measurement (the
+table's overall play-surface extent) used only by world_to_cell()'s grid
+mapping below, not by the marker geometry. marker_height_mm/
+marker_mount_radius_mm/wall_thickness_mm/max_marker_radius_mm are set from
+config.json's "table_pose" section via configure_table_geometry() at
+startup; everything else derives from them.
 
 World-frame convention: Z=0 is defined at the table's own play surface, not
 at the markers — the markers sit at Z=h, i.e. h above the table, since
@@ -85,67 +85,179 @@ import numpy as np
 
 import camera_geometry
 
+
 # ---------------------------------------------------------------------------
 # Table marker geometry — single source of truth for where the 5 permanent
-# wall-mounted markers sit relative to the table's own origin corner.
-#
-# Each marker is a physical disc of radius MARKER_MOUNT_RADIUS_MM mounted
-# flush against the *outside* face of a foam wall of thickness
-# WALL_THICKNESS_MM built up around the table's edge, so its center isn't on
-# the nominal wall/corner line — it's pushed out by r = (wall thickness +
-# marker radius), perpendicular to whichever wall(s) it's mounted against:
-#   - x1/x2 sit only against the X wall (whose outward normal is -Y, since
-#     the table's short arm runs toward +Y) -> shifted -r in Y.
-#   - y1/y2 sit only against the Y wall (whose outward normal is +X, since
-#     the table's long arm runs toward -X) -> shifted +r in X.
-#   - origin sits at the corner shared by both walls, at 45 degrees, so its
-#     total displacement is r but split evenly between the two axes:
-#     (r/sqrt(2) in X, -r/sqrt(2) in Y), i.e. each component is sqrt(r^2/2).
+# wall-mounted markers sit relative to the table's own origin corner, and
+# the point-identity matching that recognizes them in a detected blob list.
 # ---------------------------------------------------------------------------
-def _build_geometry(
-    marker_height_mm: float,
-    marker_mount_radius_mm: float,
-    wall_thickness_mm: float,
-):
-    """Derive the named marker world points (and the lookup tables built from
-    them) from the physical measurements. Split out so the geometry can be
-    reconfigured at startup from config.json via configure_table_geometry()
-    instead of only ever matching the module-load-time defaults below."""
-    IN_TO_MM = 25.4
-    r = marker_mount_radius_mm + wall_thickness_mm
-    world_points: dict[str, tuple[float, float, float]] = {
-        "origin": (0.625 * IN_TO_MM, -0.625 * IN_TO_MM, marker_height_mm),   # 5/8"
-        "x1": (-10.9375 * IN_TO_MM, -r, marker_height_mm),                   # 10 15/16"
-        "x2": (-21.75 * IN_TO_MM, -r, marker_height_mm),                    # 21 3/4"
-        "y1": (r, 8.375 * IN_TO_MM, marker_height_mm),                      # 8 3/8"
-        "y2": (r, 16.5625 * IN_TO_MM, marker_height_mm),                   # 16 9/16"
-    }
-    names = list(world_points.keys())
-    pts = np.array([world_points[name] for name in names], dtype=np.float64)
-    dist_matrix = np.linalg.norm(pts[:, None, :] - pts[None, :, :], axis=-1)
-    return world_points, names, pts, dist_matrix
 
+class TableGeometry:
+    """Physical layout of the 5 named wall-mounted markers, plus the
+    pairwise-distance-signature matching that recovers point identity.
 
-MARKER_HEIGHT_MM = 50.8  # 2 inch wall height where markers are mounted, above the table (Z=0) surface
+    Each marker is a physical disc of radius `marker_mount_radius_mm`
+    mounted flush against the *outside* face of a foam wall of thickness
+    `wall_thickness_mm`, so its center isn't on the nominal wall/corner line
+    — it's pushed out by r = (wall thickness + marker radius), perpendicular
+    to whichever wall(s) it's mounted against:
+      - x1/x2 sit only against the X wall (whose outward normal is -Y, since
+        the table's short arm runs toward +Y) -> shifted -r in Y.
+      - y1/y2 sit only against the Y wall (whose outward normal is +X, since
+        the table's long arm runs toward -X) -> shifted +r in X.
+      - origin sits at the corner shared by both walls, at 45 degrees, so
+        its total displacement is r but split evenly between the two axes:
+        (r/sqrt(2) in X, -r/sqrt(2) in Y), i.e. each component is sqrt(r^2/2).
+    """
 
-MARKER_MOUNT_RADIUS_MM = 12.7  # 0.5 inch physical marker disc radius
-WALL_THICKNESS_MM = 4.7625     # 3/16 inch foam wall thickness
+    # Matching tolerances (pairwise-distance-signature match).
+    DISTANCE_MATCH_TOL_MM = 50.0        # max per-pair distance error allowed for the best assignment
+    DISTANCE_MATCH_AMBIGUITY_MM = 15.0  # runner-up assignment must be at least this much worse
+
+    def __init__(
+        self,
+        marker_height_mm: float = 50.8,
+        marker_mount_radius_mm: float = 12.7,
+        wall_thickness_mm: float = 4.7625,
+    ):
+        self.marker_height_mm = marker_height_mm
+        self.marker_mount_radius_mm = marker_mount_radius_mm
+        self.wall_thickness_mm = wall_thickness_mm
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        """Recompute the named world points and the lookup tables built from
+        them. Called once at construction and again by reconfigure()."""
+        IN_TO_MM = 25.4
+        r = self.marker_mount_radius_mm + self.wall_thickness_mm
+        h = self.marker_height_mm
+        self.world_points: dict[str, tuple[float, float, float]] = {
+            "origin": (0.625 * IN_TO_MM, -0.625 * IN_TO_MM, h),   # 5/8"
+            "x1": (-10.9375 * IN_TO_MM, -r, h),                   # 10 15/16"
+            "x2": (-21.75 * IN_TO_MM, -r, h),                     # 21 3/4"
+            "y1": (r, 8.375 * IN_TO_MM, h),                       # 8 3/8"
+            "y2": (r, 16.5625 * IN_TO_MM, h),                     # 16 9/16"
+        }
+        self.point_names = list(self.world_points.keys())
+        pts = np.array([self.world_points[name] for name in self.point_names], dtype=np.float64)
+        self.dist_matrix = np.linalg.norm(pts[:, None, :] - pts[None, :, :], axis=-1)
+        self.expected_marker_count = len(self.world_points)
+
+    def reconfigure(
+        self,
+        marker_height_mm: Optional[float] = None,
+        marker_mount_radius_mm: Optional[float] = None,
+        wall_thickness_mm: Optional[float] = None,
+    ) -> None:
+        """Override the physical marker measurements (normally sourced from
+        config.json) and rebuild every lookup table derived from them.
+        Intended to be called once at startup, before tracking begins."""
+        if marker_height_mm is not None:
+            self.marker_height_mm = marker_height_mm
+        if marker_mount_radius_mm is not None:
+            self.marker_mount_radius_mm = marker_mount_radius_mm
+        if wall_thickness_mm is not None:
+            self.wall_thickness_mm = wall_thickness_mm
+        self._rebuild()
+
+    def select_inliers(
+        self, blobs: list["MarkerBlob"], R: np.ndarray, t: np.ndarray,
+    ) -> list["MarkerBlob"]:
+        """Given more candidate blobs than markers, greedily pick the
+        closest blob (in camera-frame mm) to each known marker's position as
+        predicted by the prior pose (R, t maps camera -> world, so the
+        inverse camera prediction is R.T @ (world - t)). Returns exactly
+        `expected_marker_count` blobs, or fewer if there aren't enough
+        candidates left to pick from.
+
+        This is a lightweight, prior-pose-based stand-in for RANSAC: rather
+        than failing the whole frame when a stray reflection also clears the
+        IR threshold, it uses the last successfully fit pose to predict
+        where each marker should be right now and discards whatever doesn't
+        match. Final point *identity* is still left to match() below — this
+        step only decides which candidates are worth handing to it.
+        """
+        predicted_cam = {
+            name: R.T @ (np.array(world_pt, dtype=np.float64) - t)
+            for name, world_pt in self.world_points.items()
+        }
+        remaining_blobs = list(blobs)
+        remaining_names = list(predicted_cam.keys())
+        selected: list["MarkerBlob"] = []
+
+        while remaining_names and remaining_blobs:
+            best_dist = None
+            best_name = None
+            best_blob = None
+            for name in remaining_names:
+                pred = predicted_cam[name]
+                for blob in remaining_blobs:
+                    cam_pt = np.array([blob.x_mm, blob.y_mm, blob.z_mm])
+                    dist = float(np.linalg.norm(pred - cam_pt))
+                    if best_dist is None or dist < best_dist:
+                        best_dist, best_name, best_blob = dist, name, blob
+            selected.append(best_blob)
+            remaining_names.remove(best_name)
+            remaining_blobs.remove(best_blob)
+
+        return selected
+
+    def match(self, blobs: list) -> dict:
+        """
+        Match detected marker blobs (or any object exposing .x_mm/.y_mm/.z_mm)
+        to named table marker points ("origin", "x1", "x2", "y1", "y2") using
+        only the blobs' relative 3D geometry — no assumption about right
+        angles or arm shapes.
+
+        Tries every assignment of blobs to known points (5! = 120, trivially
+        cheap) and picks the one whose pairwise distances best reproduce the
+        known distance matrix. Raises MatchingError if the best assignment
+        isn't a good match, or isn't clearly better than the runner-up,
+        rather than guessing.
+        """
+        if len(blobs) != self.expected_marker_count:
+            raise MatchingError(f"expected {self.expected_marker_count} markers to match, got {len(blobs)}")
+
+        n = len(blobs)
+        points = np.array([[b.x_mm, b.y_mm, b.z_mm] for b in blobs], dtype=np.float64)
+        detected_dist = np.linalg.norm(points[:, None, :] - points[None, :, :], axis=-1)
+
+        best_perm = None
+        best_cost = float("inf")
+        second_best_cost = float("inf")
+        for perm in itertools.permutations(range(n)):
+            # perm[i] = index of the detected blob assigned to known point i
+            permuted = detected_dist[np.ix_(perm, perm)]
+            cost = float(np.max(np.abs(permuted - self.dist_matrix)))
+            if cost < best_cost:
+                second_best_cost = best_cost
+                best_cost = cost
+                best_perm = perm
+            elif cost < second_best_cost:
+                second_best_cost = cost
+
+        if best_cost > self.DISTANCE_MATCH_TOL_MM:
+            raise MatchingError(
+                f"no assignment matches the known table marker geometry within "
+                f"{self.DISTANCE_MATCH_TOL_MM:.0f}mm (best max-error {best_cost:.1f}mm)"
+            )
+        if second_best_cost - best_cost < self.DISTANCE_MATCH_AMBIGUITY_MM:
+            raise MatchingError(
+                f"ambiguous match: best assignment max-error {best_cost:.1f}mm, "
+                f"runner-up {second_best_cost:.1f}mm"
+            )
+
+        return {self.point_names[i]: blobs[best_perm[i]] for i in range(n)}
+
 
 # The table's own physical extent (distinct from where markers happen to be
-# mounted along the walls, which are hardcoded measured positions above) —
+# mounted along the walls, which TableGeometry above tracks separately) —
 # used only by world_to_cell() below to normalize a ball position into the
 # GRID_ROWS x GRID_COLS grid.
 TABLE_LONG_SIDE_MM = 831.85   # measured: 32 3/4 inches
 TABLE_SHORT_SIDE_MM = 831.85  # measured: 32 3/4 inches
 
-(
-    TABLE_MARKER_WORLD_POINTS,
-    _KNOWN_POINT_NAMES,
-    _KNOWN_WORLD_PTS,
-    _KNOWN_DIST_MATRIX,
-) = _build_geometry(MARKER_HEIGHT_MM, MARKER_MOUNT_RADIUS_MM, WALL_THICKNESS_MM)
-
-_EXPECTED_MARKER_COUNT = len(TABLE_MARKER_WORLD_POINTS)
+_GEOMETRY = TableGeometry()
 
 
 def configure_table_geometry(
@@ -159,26 +271,13 @@ def configure_table_geometry(
     to be called once at startup, before tracking begins. Does not touch
     TABLE_LONG_SIDE_MM/TABLE_SHORT_SIDE_MM (world_to_cell's grid extent) —
     those are independent of marker mounting and edited directly above."""
-    global MARKER_HEIGHT_MM, MARKER_MOUNT_RADIUS_MM, WALL_THICKNESS_MM, _MAX_MARKER_RADIUS_MM
-    global TABLE_MARKER_WORLD_POINTS, _KNOWN_POINT_NAMES, _KNOWN_WORLD_PTS, _KNOWN_DIST_MATRIX
-    global _EXPECTED_MARKER_COUNT
-
-    if marker_height_mm is not None:
-        MARKER_HEIGHT_MM = marker_height_mm
-    if marker_mount_radius_mm is not None:
-        MARKER_MOUNT_RADIUS_MM = marker_mount_radius_mm
-    if wall_thickness_mm is not None:
-        WALL_THICKNESS_MM = wall_thickness_mm
+    _GEOMETRY.reconfigure(
+        marker_height_mm=marker_height_mm,
+        marker_mount_radius_mm=marker_mount_radius_mm,
+        wall_thickness_mm=wall_thickness_mm,
+    )
     if max_marker_radius_mm is not None:
-        _MAX_MARKER_RADIUS_MM = max_marker_radius_mm
-
-    (
-        TABLE_MARKER_WORLD_POINTS,
-        _KNOWN_POINT_NAMES,
-        _KNOWN_WORLD_PTS,
-        _KNOWN_DIST_MATRIX,
-    ) = _build_geometry(MARKER_HEIGHT_MM, MARKER_MOUNT_RADIUS_MM, WALL_THICKNESS_MM)
-    _EXPECTED_MARKER_COUNT = len(TABLE_MARKER_WORLD_POINTS)
+        _DETECTOR.max_marker_radius_mm = max_marker_radius_mm
 
 
 # ---------------------------------------------------------------------------
@@ -207,43 +306,6 @@ def world_to_cell(x_mm: float, y_mm: float) -> tuple[int, int]:
     row = int(np.clip(np.floor(row_frac * GRID_ROWS), 0, GRID_ROWS - 1))
     return row, col
 
-# Matching tolerances (pairwise-distance-signature match).
-_DISTANCE_MATCH_TOL_MM = 50.0        # max per-pair distance error allowed for the best assignment
-_DISTANCE_MATCH_AMBIGUITY_MM = 15.0  # runner-up assignment must be at least this much worse
-
-# ---------------------------------------------------------------------------
-# Marker detection.  Retroreflective tape returns far more IR than the
-# diffuse background, so — unlike ball_tracker.py's *relative*, local-
-# background dark threshold — this thresholds the raw 16-bit IR frame
-# directly at a high *absolute* count.  The contrast-stretched 8-bit image
-# ball_tracker.py builds would clip both the bright background and the
-# marker to 255 and lose the distinction entirely.
-# ---------------------------------------------------------------------------
-_MARKER_IR_THRESHOLD = 3800.0  # module default; overridden live via UI slider in practice
-_MIN_MARKER_AREA_PX = 4.0
-_MAX_MARKER_AREA_PX = 4000.0
-_MIN_MARKER_CIRCULARITY = 0.6
-
-# The ball is also IR-reflective (see ball_tracker.py), so a bright, roughly
-# circular blob alone isn't enough to tell it apart from a marker — pixel
-# area alone is ambiguous too, since it conflates real size with distance
-# from the camera. Once we have a depth sample we convert radius_px to a
-# physical radius_mm and reject anything bigger than a marker has any
-# business being. The ball's radius is 20-40mm (ball_tracker.py); markers
-# (retroreflective tape) are much smaller, so this threshold sits well below
-# the ball's minimum radius with margin to spare.
-_MAX_MARKER_RADIUS_MM = 15.0
-
-_DEPTH_SAMPLE_FRACTION = 0.6
-_MIN_VALID_DEPTH_FRACTION = 0.10
-
-
-# Candidate thresholds reported alongside every detection attempt (success or
-# failure) so the operator can tune the live threshold slider from real
-# sensor data instead of guessing — pixel counts at each threshold reveal
-# where the markers actually separate from the background.
-_DIAGNOSTIC_THRESHOLDS = (300.0, 500.0, 800.0, 1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 3500.0, 4000.0)
-
 
 @dataclass
 class DetectionDiagnostics:
@@ -252,7 +314,7 @@ class DetectionDiagnostics:
 
 
 class DetectionError(ValueError):
-    """Raised when detect_markers doesn't find exactly the expected marker count."""
+    """Raised when detect_markers doesn't find at least the expected marker count."""
 
     def __init__(
         self,
@@ -300,8 +362,152 @@ class PoseFitAttempt:
 
 
 # ---------------------------------------------------------------------------
-# Detection
+# Marker detection.  Retroreflective tape returns far more IR than the
+# diffuse background, so — unlike ball_tracker.py's *relative*, local-
+# background dark threshold — this thresholds the raw 16-bit IR frame
+# directly at a high *absolute* count.  The contrast-stretched 8-bit image
+# ball_tracker.py builds would clip both the bright background and the
+# marker to 255 and lose the distinction entirely.
+#
+# Mirrors ball_tracker.py's BallDetector: tuning lives on the instance
+# (mutated live via the UI slider), detect() takes just the frame pair.
 # ---------------------------------------------------------------------------
+
+class MarkerDetector:
+    """Finds retroreflective marker blobs in a raw 16-bit IR frame."""
+
+    MIN_AREA_PX = 4.0
+    MAX_AREA_PX = 4000.0
+    MIN_CIRCULARITY = 0.6
+    DEPTH_SAMPLE_FRACTION = 0.6
+    MIN_VALID_DEPTH_FRACTION = 0.10
+
+    # Candidate thresholds reported alongside every detection attempt
+    # (success or failure) so the operator can tune the live threshold
+    # slider from real sensor data instead of guessing — pixel counts at
+    # each threshold reveal where the markers actually separate from the
+    # background.
+    DIAGNOSTIC_THRESHOLDS = (300.0, 500.0, 800.0, 1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 3500.0, 4000.0)
+
+    def __init__(self, ir_threshold: float = 3800.0, max_marker_radius_mm: float = 15.0):
+        # ir_threshold: module default; overridden live via the UI slider in practice.
+        self.ir_threshold = ir_threshold
+        # The ball is also IR-reflective (see ball_tracker.py), so a bright,
+        # roughly circular blob alone isn't enough to tell it apart from a
+        # marker — pixel area alone is ambiguous too, since it conflates
+        # real size with distance from the camera. Once we have a depth
+        # sample we convert radius_px to a physical radius_mm and reject
+        # anything bigger than a marker has any business being. The ball's
+        # radius is 20-40mm (ball_tracker.py); markers (retroreflective
+        # tape) are much smaller, so this threshold sits well below the
+        # ball's minimum radius with margin to spare.
+        self.max_marker_radius_mm = max_marker_radius_mm
+
+    def detect(
+        self,
+        ir_uint16: np.ndarray,
+        depth_mm: np.ndarray,
+        fx: float,
+        fy: float,
+        ppx: float,
+        ppy: float,
+        expected_marker_count: int,
+        ir_min_counts: Optional[float] = None,
+    ) -> tuple[list[MarkerBlob], np.ndarray, DetectionDiagnostics]:
+        """
+        Run the detection pipeline on one camera frame.
+
+        Returns (blobs, debug_frame_bgr, diagnostics). Raises DetectionError
+        (carrying the debug frame and diagnostics so a partial/failed
+        detection can still be shown to the operator) if fewer than
+        `expected_marker_count` blobs are found — too few is unrecoverable
+        (some marker just wasn't seen this frame). Too many (e.g. a stray
+        reflection also crossed the IR threshold) is returned as-is for the
+        caller to resolve, e.g. via TableGeometry.select_inliers().
+        """
+        threshold = self.ir_threshold if ir_min_counts is None else ir_min_counts
+
+        diag_thresholds = sorted(set(self.DIAGNOSTIC_THRESHOLDS) | {float(threshold)})
+        diagnostics = DetectionDiagnostics(
+            ir_max=float(ir_uint16.max()) if ir_uint16.size else 0.0,
+            threshold_counts={
+                t: int(np.count_nonzero(ir_uint16 >= t)) for t in diag_thresholds
+            },
+        )
+
+        bright = (ir_uint16 >= threshold).astype(np.uint8) * 255
+
+        ir_max_disp = max(1.0, diagnostics.ir_max)
+        ir_disp = np.clip(ir_uint16.astype(np.float32) / ir_max_disp * 255.0, 0, 255).astype(np.uint8)
+        dbg = cv2.cvtColor(ir_disp, cv2.COLOR_GRAY2BGR)
+
+        _CLR_AREA = (0, 80, 200)     # red — failed area filter
+        _CLR_SHAPE = (200, 0, 200)   # magenta — failed circularity
+        _CLR_DEPTH = (0, 165, 255)   # orange — failed depth sample
+        _CLR_TOO_BIG = (255, 255, 0)  # cyan — too large to be a marker (likely the ball)
+        _CLR_OK = (0, 200, 80)       # green — accepted
+
+        blobs: list[MarkerBlob] = []
+        contours, _ = cv2.findContours(bright, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        for c in contours:
+            area = float(cv2.contourArea(c))
+            if area < self.MIN_AREA_PX or area > self.MAX_AREA_PX:
+                cv2.drawContours(dbg, [c], -1, _CLR_AREA, 1)
+                continue
+
+            perimeter = float(cv2.arcLength(c, closed=True))
+            if perimeter < 1.0:
+                continue
+
+            circularity = 4.0 * np.pi * area / (perimeter * perimeter)
+            if circularity < self.MIN_CIRCULARITY:
+                cv2.drawContours(dbg, [c], -1, _CLR_SHAPE, 1)
+                continue
+
+            M = cv2.moments(c)
+            if M["m00"] == 0:
+                continue
+            cx = M["m10"] / M["m00"]
+            cy = M["m01"] / M["m00"]
+            (_, _), radius_px = cv2.minEnclosingCircle(c)
+            radius_px = float(radius_px)
+
+            z_mm = camera_geometry.sample_depth_patch(
+                depth_mm, cx, cy, radius_px, self.DEPTH_SAMPLE_FRACTION, self.MIN_VALID_DEPTH_FRACTION,
+            )
+            if z_mm is None:
+                z_mm = camera_geometry.sample_depth_ring(
+                    depth_mm, cx, cy, radius_px, 1.0, 1.6, self.MIN_VALID_DEPTH_FRACTION,
+                )
+            if z_mm is None:
+                cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_DEPTH, 1)
+                continue
+
+            # Pixel area alone can't distinguish "small and close" from "big
+            # and far", so re-check size in real-world mm now that depth is
+            # known — this is what actually keeps the (much larger) ball
+            # from being mistaken for a marker.
+            radius_mm = radius_px * z_mm / fx
+            if radius_mm > self.max_marker_radius_mm:
+                cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_TOO_BIG, 1)
+                continue
+
+            x_mm, y_mm, _ = camera_geometry.unproject_pixel(cx, cy, z_mm, fx, fy, ppx, ppy)
+            blobs.append(MarkerBlob(cx=cx, cy=cy, radius_px=radius_px, x_mm=x_mm, y_mm=y_mm, z_mm=z_mm))
+            cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_OK, 2)
+
+        if len(blobs) < expected_marker_count:
+            raise DetectionError(
+                f"expected {expected_marker_count} retroreflective markers, found {len(blobs)}",
+                debug_frame=dbg,
+                diagnostics=diagnostics,
+            )
+
+        return blobs, dbg, diagnostics
+
+
+_DETECTOR = MarkerDetector()
+
 
 def detect_markers(
     ir_uint16: np.ndarray,
@@ -310,199 +516,23 @@ def detect_markers(
     fy: float,
     ppx: float,
     ppy: float,
-    ir_min_counts: float = _MARKER_IR_THRESHOLD,
+    ir_min_counts: Optional[float] = None,
 ) -> tuple[list[MarkerBlob], np.ndarray, DetectionDiagnostics]:
-    """
-    Find retroreflective marker blobs in a raw 16-bit IR frame.
-
-    Returns (blobs, debug_frame_bgr, diagnostics).  Raises DetectionError
-    (carrying the debug frame and diagnostics so a partial/failed detection
-    can still be shown to the operator) if the count isn't exactly
-    _EXPECTED_MARKER_COUNT.
-    """
-    diag_thresholds = sorted(set(_DIAGNOSTIC_THRESHOLDS) | {float(ir_min_counts)})
-    diagnostics = DetectionDiagnostics(
-        ir_max=float(ir_uint16.max()) if ir_uint16.size else 0.0,
-        threshold_counts={
-            t: int(np.count_nonzero(ir_uint16 >= t)) for t in diag_thresholds
-        },
+    """Free-function wrapper around the module's default MarkerDetector."""
+    return _DETECTOR.detect(
+        ir_uint16, depth_mm, fx, fy, ppx, ppy,
+        expected_marker_count=_GEOMETRY.expected_marker_count, ir_min_counts=ir_min_counts,
     )
 
-    bright = (ir_uint16 >= ir_min_counts).astype(np.uint8) * 255
 
-    ir_max_disp = max(1.0, diagnostics.ir_max)
-    ir_disp = np.clip(ir_uint16.astype(np.float32) / ir_max_disp * 255.0, 0, 255).astype(np.uint8)
-    dbg = cv2.cvtColor(ir_disp, cv2.COLOR_GRAY2BGR)
+def select_inlier_markers(blobs: list[MarkerBlob], R: np.ndarray, t: np.ndarray) -> list[MarkerBlob]:
+    """Free-function wrapper around the module's default TableGeometry."""
+    return _GEOMETRY.select_inliers(blobs, R, t)
 
-    _CLR_AREA = (0, 80, 200)     # red — failed area filter
-    _CLR_SHAPE = (200, 0, 200)   # magenta — failed circularity
-    _CLR_DEPTH = (0, 165, 255)   # orange — failed depth sample
-    _CLR_TOO_BIG = (255, 255, 0)  # cyan — too large to be a marker (likely the ball)
-    _CLR_OK = (0, 200, 80)       # green — accepted
-
-    blobs: list[MarkerBlob] = []
-    contours, _ = cv2.findContours(bright, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
-    for c in contours:
-        area = float(cv2.contourArea(c))
-        if area < _MIN_MARKER_AREA_PX or area > _MAX_MARKER_AREA_PX:
-            cv2.drawContours(dbg, [c], -1, _CLR_AREA, 1)
-            continue
-
-        perimeter = float(cv2.arcLength(c, closed=True))
-        if perimeter < 1.0:
-            continue
-
-        circularity = 4.0 * np.pi * area / (perimeter * perimeter)
-        if circularity < _MIN_MARKER_CIRCULARITY:
-            cv2.drawContours(dbg, [c], -1, _CLR_SHAPE, 1)
-            continue
-
-        M = cv2.moments(c)
-        if M["m00"] == 0:
-            continue
-        cx = M["m10"] / M["m00"]
-        cy = M["m01"] / M["m00"]
-        (_, _), radius_px = cv2.minEnclosingCircle(c)
-        radius_px = float(radius_px)
-
-        z_mm = camera_geometry.sample_depth_patch(
-            depth_mm, cx, cy, radius_px, _DEPTH_SAMPLE_FRACTION, _MIN_VALID_DEPTH_FRACTION,
-        )
-        if z_mm is None:
-            z_mm = camera_geometry.sample_depth_ring(
-                depth_mm, cx, cy, radius_px, 1.0, 1.6, _MIN_VALID_DEPTH_FRACTION,
-            )
-        if z_mm is None:
-            cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_DEPTH, 1)
-            continue
-
-        # Pixel area alone can't distinguish "small and close" from "big and
-        # far", so re-check size in real-world mm now that depth is known —
-        # this is what actually keeps the (much larger) ball from being
-        # mistaken for a marker.
-        radius_mm = radius_px * z_mm / fx
-        if radius_mm > _MAX_MARKER_RADIUS_MM:
-            cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_TOO_BIG, 1)
-            continue
-
-        x_mm, y_mm, _ = camera_geometry.unproject_pixel(cx, cy, z_mm, fx, fy, ppx, ppy)
-        blobs.append(MarkerBlob(cx=cx, cy=cy, radius_px=radius_px, x_mm=x_mm, y_mm=y_mm, z_mm=z_mm))
-        cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_OK, 2)
-
-    # Too few is unrecoverable (some marker just wasn't seen this frame) and
-    # raises immediately. Too many (e.g. a stray reflection also crossed the
-    # IR threshold) is left for the caller to resolve — run_pose_fit() can
-    # narrow extra candidates down to _EXPECTED_MARKER_COUNT using the prior
-    # pose, so failing here would throw away a recoverable frame.
-    if len(blobs) < _EXPECTED_MARKER_COUNT:
-        raise DetectionError(
-            f"expected {_EXPECTED_MARKER_COUNT} retroreflective markers, found {len(blobs)}",
-            debug_frame=dbg,
-            diagnostics=diagnostics,
-        )
-
-    return blobs, dbg, diagnostics
-
-
-# ---------------------------------------------------------------------------
-# Inlier gating for extra candidate blobs — a lightweight, prior-pose-based
-# stand-in for RANSAC. detect_markers() may return more than
-# _EXPECTED_MARKER_COUNT blobs (e.g. a stray reflection also cleared the IR
-# threshold); rather than failing the whole frame, use the last successfully
-# fit pose to predict where each of the 5 known markers should be in camera
-# frame right now, then greedily keep whichever candidate blob is closest to
-# each prediction and drop the rest. Final point *identity* is still left to
-# match_points()'s pure pairwise-distance match below — this step only
-# decides which 5 of N blobs are worth handing to it.
-# ---------------------------------------------------------------------------
-
-def select_inlier_markers(
-    blobs: list[MarkerBlob], R: np.ndarray, t: np.ndarray,
-) -> list[MarkerBlob]:
-    """Given more candidate blobs than markers, greedily pick the closest
-    blob (in camera-frame mm) to each known marker's position as predicted
-    by the prior pose (R, t maps camera -> world, so the inverse camera
-    prediction is R.T @ (world - t)). Returns exactly _EXPECTED_MARKER_COUNT
-    blobs, or fewer if there aren't enough candidates left to pick from."""
-    predicted_cam = {
-        name: R.T @ (np.array(world_pt, dtype=np.float64) - t)
-        for name, world_pt in TABLE_MARKER_WORLD_POINTS.items()
-    }
-    remaining_blobs = list(blobs)
-    remaining_names = list(predicted_cam.keys())
-    selected: list[MarkerBlob] = []
-
-    while remaining_names and remaining_blobs:
-        best_dist = None
-        best_name = None
-        best_blob = None
-        for name in remaining_names:
-            pred = predicted_cam[name]
-            for blob in remaining_blobs:
-                cam_pt = np.array([blob.x_mm, blob.y_mm, blob.z_mm])
-                dist = float(np.linalg.norm(pred - cam_pt))
-                if best_dist is None or dist < best_dist:
-                    best_dist, best_name, best_blob = dist, name, blob
-        selected.append(best_blob)
-        remaining_names.remove(best_name)
-        remaining_blobs.remove(best_blob)
-
-    return selected
-
-
-# ---------------------------------------------------------------------------
-# Point-identity matching — pure, camera-free, independently unit-testable.
-# _KNOWN_POINT_NAMES/_KNOWN_WORLD_PTS/_KNOWN_DIST_MATRIX are built above by
-# _build_geometry() and kept in sync with TABLE_MARKER_WORLD_POINTS by
-# configure_table_geometry().
-# ---------------------------------------------------------------------------
 
 def match_points(blobs: list) -> dict:
-    """
-    Match detected marker blobs (or any object exposing .x_mm/.y_mm/.z_mm) to
-    named table marker points ("origin", "x1", "x2", "y1", "y2") using only
-    the blobs' relative 3D geometry — no assumption about right angles or
-    arm shapes.
-
-    Tries every assignment of blobs to known points (5! = 120, trivially
-    cheap) and picks the one whose pairwise distances best reproduce the
-    known distance matrix. Raises MatchingError if the best assignment isn't
-    a good match, or isn't clearly better than the runner-up, rather than
-    guessing.
-    """
-    if len(blobs) != _EXPECTED_MARKER_COUNT:
-        raise MatchingError(f"expected {_EXPECTED_MARKER_COUNT} markers to match, got {len(blobs)}")
-
-    n = len(blobs)
-    points = np.array([[b.x_mm, b.y_mm, b.z_mm] for b in blobs], dtype=np.float64)
-    detected_dist = np.linalg.norm(points[:, None, :] - points[None, :, :], axis=-1)
-
-    best_perm = None
-    best_cost = float("inf")
-    second_best_cost = float("inf")
-    for perm in itertools.permutations(range(n)):
-        # perm[i] = index of the detected blob assigned to known point i
-        permuted = detected_dist[np.ix_(perm, perm)]
-        cost = float(np.max(np.abs(permuted - _KNOWN_DIST_MATRIX)))
-        if cost < best_cost:
-            second_best_cost = best_cost
-            best_cost = cost
-            best_perm = perm
-        elif cost < second_best_cost:
-            second_best_cost = cost
-
-    if best_cost > _DISTANCE_MATCH_TOL_MM:
-        raise MatchingError(
-            f"no assignment matches the known table marker geometry within "
-            f"{_DISTANCE_MATCH_TOL_MM:.0f}mm (best max-error {best_cost:.1f}mm)"
-        )
-    if second_best_cost - best_cost < _DISTANCE_MATCH_AMBIGUITY_MM:
-        raise MatchingError(
-            f"ambiguous match: best assignment max-error {best_cost:.1f}mm, "
-            f"runner-up {second_best_cost:.1f}mm"
-        )
-
-    return {_KNOWN_POINT_NAMES[i]: blobs[best_perm[i]] for i in range(n)}
+    """Free-function wrapper around the module's default TableGeometry."""
+    return _GEOMETRY.match(blobs)
 
 
 # ---------------------------------------------------------------------------
@@ -553,18 +583,18 @@ def run_pose_fit(
     fy: float,
     ppx: float,
     ppy: float,
-    marker_ir_threshold: float = _MARKER_IR_THRESHOLD,
+    marker_ir_threshold: Optional[float] = None,
     prior_pose: Optional[tuple[np.ndarray, np.ndarray]] = None,
 ) -> PoseFitAttempt:
     """One pose-fit attempt end to end: detect -> match -> fit. Never raises.
 
     prior_pose, if given, is the (R, t) of the last successfully fit pose
     (see TablePoseTracker). It's only used when detect_markers() returns
-    more than _EXPECTED_MARKER_COUNT candidate blobs (e.g. a stray
-    reflection also cleared the IR threshold) — select_inlier_markers()
-    uses it to predict where the real markers should be and discard the
-    extra candidate(s), instead of failing the whole frame. Without a prior
-    pose, an over-count is treated as a failure.
+    more than the expected marker count (e.g. a stray reflection also
+    cleared the IR threshold) — select_inlier_markers() uses it to predict
+    where the real markers should be and discard the extra candidate(s),
+    instead of failing the whole frame. Without a prior pose, an over-count
+    is treated as a failure.
     """
     try:
         blobs, debug_frame, diagnostics = detect_markers(
@@ -575,11 +605,11 @@ def run_pose_fit(
             ok=False, error=str(exc), debug_frame=exc.debug_frame, fit=None, diagnostics=exc.diagnostics,
         )
 
-    if len(blobs) > _EXPECTED_MARKER_COUNT:
+    if len(blobs) > _GEOMETRY.expected_marker_count:
         if prior_pose is None:
             return PoseFitAttempt(
                 ok=False,
-                error=f"found {len(blobs)} candidate markers (expected {_EXPECTED_MARKER_COUNT}) "
+                error=f"found {len(blobs)} candidate markers (expected {_GEOMETRY.expected_marker_count}) "
                       f"and no prior pose available to disambiguate",
                 debug_frame=debug_frame, fit=None, diagnostics=diagnostics,
             )
@@ -595,7 +625,7 @@ def run_pose_fit(
 
     point_ids = sorted(matched.keys())
     camera_pts = np.array([[matched[pid].x_mm, matched[pid].y_mm, matched[pid].z_mm] for pid in point_ids])
-    world_pts = np.array([TABLE_MARKER_WORLD_POINTS[pid] for pid in point_ids])
+    world_pts = np.array([_GEOMETRY.world_points[pid] for pid in point_ids])
 
     fit = fit_rigid_transform(camera_pts, world_pts)
 
@@ -663,7 +693,7 @@ class TablePoseTracker:
         fy: float,
         ppx: float,
         ppy: float,
-        marker_ir_threshold: float = _MARKER_IR_THRESHOLD,
+        marker_ir_threshold: Optional[float] = None,
         now: Optional[float] = None,
     ) -> PoseFitAttempt:
         prior_pose = (self.R, self.t) if self.R is not None else None
@@ -693,3 +723,25 @@ class TablePoseTracker:
         age_s = self.age_seconds(now)
         stale = self.last_error is not None
         return (float(world[0]), float(world[1]), float(world[2])), stale, age_s
+
+
+def __getattr__(name):
+    """Backward-compatible read-only views onto the module's default
+    TableGeometry/MarkerDetector instances, for code (and tests) that still
+    reads e.g. table_pose.TABLE_MARKER_WORLD_POINTS as a plain module-level
+    value rather than going through configure_table_geometry()."""
+    proxies = {
+        "TABLE_MARKER_WORLD_POINTS": lambda: _GEOMETRY.world_points,
+        "MARKER_HEIGHT_MM": lambda: _GEOMETRY.marker_height_mm,
+        "MARKER_MOUNT_RADIUS_MM": lambda: _GEOMETRY.marker_mount_radius_mm,
+        "WALL_THICKNESS_MM": lambda: _GEOMETRY.wall_thickness_mm,
+        "_EXPECTED_MARKER_COUNT": lambda: _GEOMETRY.expected_marker_count,
+        "_MARKER_IR_THRESHOLD": lambda: _DETECTOR.ir_threshold,
+        "_MAX_MARKER_RADIUS_MM": lambda: _DETECTOR.max_marker_radius_mm,
+        "_MIN_MARKER_AREA_PX": lambda: _DETECTOR.MIN_AREA_PX,
+        "_MAX_MARKER_AREA_PX": lambda: _DETECTOR.MAX_AREA_PX,
+        "_MIN_MARKER_CIRCULARITY": lambda: _DETECTOR.MIN_CIRCULARITY,
+    }
+    if name in proxies:
+        return proxies[name]()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

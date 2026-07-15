@@ -413,7 +413,7 @@ class BallTrackerRegressionTests(unittest.TestCase):
         cy, cx, r = 100, 100, 20
         yy, xx = np.ogrid[:h, :w]
         mask = (xx - cx) ** 2 + (yy - cy) ** 2 <= r * r
-        ir[mask] = 30  # dark ball against bright background
+        ir[mask] = 4000  # bright retro-reflective ball against a dark background
 
         depth = np.full((h, w), 1000.0, dtype=np.float32)
 
