@@ -1,11 +1,6 @@
 const cameraDot    = document.querySelector('#cameraDot');
 const cameraStatus = document.querySelector('#cameraStatus');
 const cameraMeta   = document.querySelector('#cameraMeta');
-const controlStatus = document.querySelector('#controlStatus');
-const servoList    = document.querySelector('#servoList');
-const startControl = document.querySelector('#startControl');
-const stopControl  = document.querySelector('#stopControl');
-const template     = document.querySelector('#servoTemplate');
 
 const irSection          = document.querySelector('#irSection');
 const irFeed             = document.querySelector('#irFeed');
@@ -22,15 +17,16 @@ const ballWorld           = document.querySelector('#ballWorld');
 const poseStatus          = document.querySelector('#poseStatus');
 const poseStatusPill      = document.querySelector('#poseStatusPill');
 const poseResiduals       = document.querySelector('#poseResiduals');
-const calibDiagnostics    = document.querySelector('#calibDiagnostics');
+const poseRms             = document.querySelector('#poseRms');
+const poseMax             = document.querySelector('#poseMax');
+const poseRoll            = document.querySelector('#poseRoll');
+const posePitch           = document.querySelector('#posePitch');
 const markerThresholdSlider = document.querySelector('#markerThresholdSlider');
 const lblMarkerThreshold    = document.querySelector('#lblMarkerThreshold');
 const ballThresholdSlider   = document.querySelector('#ballThresholdSlider');
 const lblBallThreshold      = document.querySelector('#lblBallThreshold');
 const irPixelTooltip        = document.querySelector('#irPixelTooltip');
 const irStage               = document.querySelector('#irStage');
-
-let lastDiagnostics = null;
 
 // AB pixel hover — draw one pixel from the MJPEG frame to a 1×1 offscreen
 // canvas and convert the 8-bit value back to raw IR counts.
@@ -75,7 +71,6 @@ markerThresholdSlider.addEventListener('input', () => {
   const v = Number(markerThresholdSlider.value);
   lblMarkerThreshold.textContent = v;
   if (!markerThresholdThrottle) sendMarkerThreshold(v); else markerThresholdPending = v;
-  renderDiagnostics(lastDiagnostics);
 });
 
 // Ball IR threshold slider.
@@ -103,8 +98,6 @@ function syncIrCanvas() {
 new ResizeObserver(syncIrCanvas).observe(irFeed);
 irFeed.addEventListener('load', syncIrCanvas);
 
-let selectedChannel = 0;
-let latestState = null;
 let stateTimer = null;
 
 function fmtMm(value) {
@@ -114,7 +107,7 @@ function fmtMm(value) {
 
 function fmtDeg(value) {
   if (value === null || value === undefined) return '--';
-  return `${Number(value).toFixed(1)} deg`;
+  return `${Number(value).toFixed(1)}°`;
 }
 
 async function postJson(path, body = {}) {
@@ -133,10 +126,10 @@ async function postJson(path, body = {}) {
 async function fetchState() {
   try {
     const response = await fetch('/api/state', { cache: 'no-store' });
-    latestState = await response.json();
-    renderState(latestState);
+    const state = await response.json();
+    renderState(state);
   } catch (error) {
-    controlStatus.textContent = `state error: ${error.message}`;
+    console.error('fetchState failed:', error);
   }
 }
 
@@ -149,102 +142,9 @@ function renderState(state) {
   const fps = state.camera.fps ? `${state.camera.fps.toFixed(1)} fps` : 'fps pending';
   cameraMeta.textContent = state.camera.error || `${dims}, ${fps}`;
 
-  controlStatus.textContent = state.control.error
-    ? `${state.control.message}: ${state.control.error}`
-    : state.control.message;
-  controlStatus.dataset.running = state.control.running ? 'true' : 'false';
-
-  for (const servo of state.servos) {
-    renderServo(servo);
-  }
   renderBall(state.ball);
   renderTablePose(state.table_pose);
 }
-
-function renderServo(servo) {
-  let card = servoList.querySelector(`[data-channel="${servo.channel}"]`);
-  if (!card) {
-    card = template.content.firstElementChild.cloneNode(true);
-    card.dataset.channel = servo.channel;
-    card.style.setProperty('--servo-color', servo.color);
-    servoList.appendChild(card);
-    wireServoCard(card, servo.channel);
-  }
-
-  card.classList.toggle('selected', servo.channel === selectedChannel);
-  card.querySelector('.select-servo').textContent = `Channel ${servo.channel}`;
-
-  const targetInput = card.querySelector('.target-input');
-  const boxX        = card.querySelector('.box-x');
-  const boxY        = card.querySelector('.box-y');
-  const boxWidth    = card.querySelector('.box-width');
-  const boxHeight   = card.querySelector('.box-height');
-
-  if (document.activeElement !== targetInput) targetInput.value = Math.round(servo.target_depth_mm);
-  if (document.activeElement !== boxX)        boxX.value        = servo.box.x;
-  if (document.activeElement !== boxY)        boxY.value        = servo.box.y;
-  if (document.activeElement !== boxWidth)    boxWidth.value    = servo.box.width;
-  if (document.activeElement !== boxHeight)   boxHeight.value   = servo.box.height;
-
-  card.querySelector('.current-depth').textContent = fmtMm(servo.current_depth_mm);
-  card.querySelector('.current-error').textContent = fmtMm(servo.current_error_mm);
-  card.querySelector('.angle').textContent         = fmtDeg(servo.angle_deg);
-  card.querySelector('.valid-pixels').textContent  = `${servo.valid_pixels}/${servo.total_pixels}`;
-}
-
-function wireServoCard(card, channel) {
-  card.querySelector('.select-servo').addEventListener('click', () => {
-    selectedChannel = channel;
-    renderState(latestState);
-  });
-
-  card.querySelector('.target-input').addEventListener('change', async (event) => {
-    const target = Number(event.target.value);
-    if (!Number.isFinite(target) || target <= 0) return;
-    await postJson(`/api/servos/${channel}/target`, { target_depth_mm: target });
-    await fetchState();
-  });
-
-  card.querySelector('.apply-box').addEventListener('click', async () => {
-    const box = {
-      x:      Number(card.querySelector('.box-x').value),
-      y:      Number(card.querySelector('.box-y').value),
-      width:  Number(card.querySelector('.box-width').value),
-      height: Number(card.querySelector('.box-height').value),
-    };
-    if (!isIntegerBox(box)) return;
-    await postJson(`/api/servos/${channel}/box`, box);
-    await fetchState();
-  });
-}
-
-function isIntegerBox(box) {
-  return Number.isInteger(box.x)
-    && Number.isInteger(box.y)
-    && Number.isInteger(box.width)
-    && Number.isInteger(box.height)
-    && box.width > 0
-    && box.height > 0;
-}
-
-
-startControl.addEventListener('click', async () => {
-  try {
-    await postJson('/api/control/start');
-    await fetchState();
-  } catch (error) {
-    controlStatus.textContent = `start error: ${error.message}`;
-  }
-});
-
-stopControl.addEventListener('click', async () => {
-  try {
-    await postJson('/api/control/stop');
-    await fetchState();
-  } catch (error) {
-    controlStatus.textContent = `stop error: ${error.message}`;
-  }
-});
 
 fetchState();
 stateTimer = window.setInterval(fetchState, 350);
@@ -306,10 +206,6 @@ function renderBall(ball) {
 function renderTablePose(pose) {
   if (!pose) return;
 
-  const tiltTag = (pose.roll_deg !== null && pose.roll_deg !== undefined && pose.pitch_deg !== null && pose.pitch_deg !== undefined)
-    ? `, roll ${pose.roll_deg.toFixed(1)}° pitch ${pose.pitch_deg.toFixed(1)}°`
-    : '';
-
   if (!pose.tracking) {
     poseStatusPill.textContent = 'not tracking';
     poseStatusPill.className   = 'pill';
@@ -318,12 +214,17 @@ function renderTablePose(pose) {
   } else if (pose.stale) {
     poseStatusPill.textContent = `stale (${pose.age_s?.toFixed(1)}s ago)`;
     poseStatusPill.className   = 'pill';
-    poseStatus.textContent = (pose.last_error ? `holding last pose — ${pose.last_error}` : 'holding last pose') + tiltTag;
+    poseStatus.textContent = pose.last_error ? `holding last pose — ${pose.last_error}` : 'holding last pose';
   } else {
-    poseStatusPill.textContent = `tracking, rms ${pose.rms_residual_mm.toFixed(1)}mm`;
+    poseStatusPill.textContent = 'tracking';
     poseStatusPill.className   = 'pill detected';
-    poseStatus.textContent = `fit ok — rms ${pose.rms_residual_mm.toFixed(1)}mm, max ${pose.max_residual_mm.toFixed(1)}mm${tiltTag}`;
+    poseStatus.textContent = 'fit ok';
   }
+
+  poseRms.textContent   = fmtMm(pose.rms_residual_mm);
+  poseMax.textContent   = fmtMm(pose.max_residual_mm);
+  poseRoll.textContent  = fmtDeg(pose.roll_deg);
+  posePitch.textContent = fmtDeg(pose.pitch_deg);
 
   if (pose.tracking) {
     poseResiduals.innerHTML = '';
@@ -339,28 +240,6 @@ function renderTablePose(pose) {
   if (pose.marker_ir_threshold !== undefined && document.activeElement !== markerThresholdSlider) {
     markerThresholdSlider.value    = pose.marker_ir_threshold;
     lblMarkerThreshold.textContent = pose.marker_ir_threshold;
-  }
-
-  lastDiagnostics = pose.diagnostics || null;
-  renderDiagnostics(lastDiagnostics);
-}
-
-function renderDiagnostics(diagnostics) {
-  calibDiagnostics.innerHTML = '';
-  if (!diagnostics) return;
-
-  const currentThreshold = Number(markerThresholdSlider.value);
-  const title = document.createElement('div');
-  title.className = 'diag-title';
-  title.textContent = `IR diagnostics — frame max ${diagnostics.ir_max.toFixed(0)}`;
-  calibDiagnostics.appendChild(title);
-
-  for (const { threshold, count } of diagnostics.threshold_counts) {
-    const row = document.createElement('div');
-    const isCurrent = Math.abs(threshold - currentThreshold) < 25;
-    row.className = 'diag-row' + (isCurrent ? ' current' : '');
-    row.innerHTML = `<span>&ge; ${threshold.toFixed(0)}</span><span>${count} px</span>`;
-    calibDiagnostics.appendChild(row);
   }
 }
 

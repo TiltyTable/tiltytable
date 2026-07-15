@@ -307,12 +307,6 @@ def world_to_cell(x_mm: float, y_mm: float) -> tuple[int, int]:
     return row, col
 
 
-@dataclass
-class DetectionDiagnostics:
-    ir_max: float
-    threshold_counts: dict[float, int]
-
-
 class DetectionError(ValueError):
     """Raised when detect_markers doesn't find at least the expected marker count."""
 
@@ -320,11 +314,9 @@ class DetectionError(ValueError):
         self,
         message: str,
         debug_frame: Optional[np.ndarray] = None,
-        diagnostics: Optional[DetectionDiagnostics] = None,
     ):
         super().__init__(message)
         self.debug_frame = debug_frame
-        self.diagnostics = diagnostics
 
 
 class MatchingError(ValueError):
@@ -358,7 +350,6 @@ class PoseFitAttempt:
     debug_frame: Optional[np.ndarray]
     fit: Optional[RigidFitResult]
     matched_points: Optional[dict] = field(default=None)
-    diagnostics: Optional[DetectionDiagnostics] = field(default=None)
 
 
 # ---------------------------------------------------------------------------
@@ -381,13 +372,6 @@ class MarkerDetector:
     MIN_CIRCULARITY = 0.6
     DEPTH_SAMPLE_FRACTION = 0.6
     MIN_VALID_DEPTH_FRACTION = 0.10
-
-    # Candidate thresholds reported alongside every detection attempt
-    # (success or failure) so the operator can tune the live threshold
-    # slider from real sensor data instead of guessing — pixel counts at
-    # each threshold reveal where the markers actually separate from the
-    # background.
-    DIAGNOSTIC_THRESHOLDS = (300.0, 500.0, 800.0, 1000.0, 1500.0, 2000.0, 2500.0, 3000.0, 3500.0, 4000.0)
 
     def __init__(self, ir_threshold: float = 3800.0, max_marker_radius_mm: float = 15.0):
         # ir_threshold: module default; overridden live via the UI slider in practice.
@@ -413,39 +397,32 @@ class MarkerDetector:
         ppy: float,
         expected_marker_count: int,
         ir_min_counts: Optional[float] = None,
-    ) -> tuple[list[MarkerBlob], np.ndarray, DetectionDiagnostics]:
+    ) -> tuple[list[MarkerBlob], np.ndarray]:
         """
         Run the detection pipeline on one camera frame.
 
-        Returns (blobs, debug_frame_bgr, diagnostics). Raises DetectionError
-        (carrying the debug frame and diagnostics so a partial/failed
-        detection can still be shown to the operator) if fewer than
-        `expected_marker_count` blobs are found — too few is unrecoverable
-        (some marker just wasn't seen this frame). Too many (e.g. a stray
-        reflection also crossed the IR threshold) is returned as-is for the
-        caller to resolve, e.g. via TableGeometry.select_inliers().
+        Returns (blobs, debug_frame_bgr). Raises DetectionError (carrying
+        the debug frame so a partial/failed detection can still be shown to
+        the operator) if fewer than `expected_marker_count` blobs are found
+        — too few is unrecoverable (some marker just wasn't seen this
+        frame). Too many (e.g. a stray reflection also crossed the IR
+        threshold) is returned as-is for the caller to resolve, e.g. via
+        TableGeometry.select_inliers().
         """
         threshold = self.ir_threshold if ir_min_counts is None else ir_min_counts
 
-        diag_thresholds = sorted(set(self.DIAGNOSTIC_THRESHOLDS) | {float(threshold)})
-        diagnostics = DetectionDiagnostics(
-            ir_max=float(ir_uint16.max()) if ir_uint16.size else 0.0,
-            threshold_counts={
-                t: int(np.count_nonzero(ir_uint16 >= t)) for t in diag_thresholds
-            },
-        )
-
         bright = (ir_uint16 >= threshold).astype(np.uint8) * 255
 
-        ir_max_disp = max(1.0, diagnostics.ir_max)
+        ir_max = float(ir_uint16.max()) if ir_uint16.size else 0.0
+        ir_max_disp = max(1.0, ir_max)
         ir_disp = np.clip(ir_uint16.astype(np.float32) / ir_max_disp * 255.0, 0, 255).astype(np.uint8)
         dbg = cv2.cvtColor(ir_disp, cv2.COLOR_GRAY2BGR)
 
         _CLR_AREA = (0, 80, 200)     # red — failed area filter
-        _CLR_SHAPE = (200, 0, 200)   # magenta — failed circularity
+        _CLR_SHAPE = (255, 80, 0)    # blue — failed circularity
         _CLR_DEPTH = (0, 165, 255)   # orange — failed depth sample
         _CLR_TOO_BIG = (255, 255, 0)  # cyan — too large to be a marker (likely the ball)
-        _CLR_OK = (0, 200, 80)       # green — accepted
+        _CLR_OK = (255, 0, 255)      # magenta — accepted
 
         blobs: list[MarkerBlob] = []
         contours, _ = cv2.findContours(bright, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
@@ -500,10 +477,9 @@ class MarkerDetector:
             raise DetectionError(
                 f"expected {expected_marker_count} retroreflective markers, found {len(blobs)}",
                 debug_frame=dbg,
-                diagnostics=diagnostics,
             )
 
-        return blobs, dbg, diagnostics
+        return blobs, dbg
 
 
 _DETECTOR = MarkerDetector()
@@ -517,7 +493,7 @@ def detect_markers(
     ppx: float,
     ppy: float,
     ir_min_counts: Optional[float] = None,
-) -> tuple[list[MarkerBlob], np.ndarray, DetectionDiagnostics]:
+) -> tuple[list[MarkerBlob], np.ndarray]:
     """Free-function wrapper around the module's default MarkerDetector."""
     return _DETECTOR.detect(
         ir_uint16, depth_mm, fx, fy, ppx, ppy,
@@ -597,12 +573,12 @@ def run_pose_fit(
     is treated as a failure.
     """
     try:
-        blobs, debug_frame, diagnostics = detect_markers(
+        blobs, debug_frame = detect_markers(
             ir_uint16, depth_mm, fx, fy, ppx, ppy, ir_min_counts=marker_ir_threshold,
         )
     except DetectionError as exc:
         return PoseFitAttempt(
-            ok=False, error=str(exc), debug_frame=exc.debug_frame, fit=None, diagnostics=exc.diagnostics,
+            ok=False, error=str(exc), debug_frame=exc.debug_frame, fit=None,
         )
 
     if len(blobs) > _GEOMETRY.expected_marker_count:
@@ -611,7 +587,7 @@ def run_pose_fit(
                 ok=False,
                 error=f"found {len(blobs)} candidate markers (expected {_GEOMETRY.expected_marker_count}) "
                       f"and no prior pose available to disambiguate",
-                debug_frame=debug_frame, fit=None, diagnostics=diagnostics,
+                debug_frame=debug_frame, fit=None,
             )
         prior_R, prior_t = prior_pose
         blobs = select_inlier_markers(blobs, prior_R, prior_t)
@@ -620,7 +596,7 @@ def run_pose_fit(
         matched = match_points(blobs)
     except MatchingError as exc:
         return PoseFitAttempt(
-            ok=False, error=str(exc), debug_frame=debug_frame, fit=None, diagnostics=diagnostics,
+            ok=False, error=str(exc), debug_frame=debug_frame, fit=None,
         )
 
     point_ids = sorted(matched.keys())
@@ -640,7 +616,7 @@ def run_pose_fit(
 
     return PoseFitAttempt(
         ok=True, error=None, debug_frame=debug_frame, fit=fit,
-        matched_points=matched_points, diagnostics=diagnostics,
+        matched_points=matched_points,
     )
 
 

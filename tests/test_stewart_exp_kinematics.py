@@ -6,13 +6,14 @@ import unittest
 from analysis.stewart_exp_kinematics import (
     calibrated_solution,
     endpoint_heave_range,
+    experimental_geometry,
     plan_circle,
+    solve_pose_at_heave,
     solve_crank_branches,
     steps_to_crank_deg,
     top_joint_position,
     unwrap_toward,
 )
-from analysis.tilt_kinematics import Geometry
 from stewart_exp_probe import parse_status
 from stewart_exp_roller_ball import (
     EV_REL,
@@ -28,7 +29,12 @@ from stewart_exp_roller_ball import (
 
 class BranchAwareIkTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.geometry = Geometry()
+        self.geometry = experimental_geometry()
+
+    def test_axis_two_is_experimental_cardinal_zero(self) -> None:
+        self.assertEqual(
+            self.geometry.leg_azimuth_deg, (120.0, 240.0, 0.0)
+        )
 
     def test_both_triangle_branches_are_exposed(self) -> None:
         top = top_joint_position(self.geometry, 0, 0.0, 0.0, 20.0)
@@ -67,6 +73,30 @@ class BranchAwareIkTests(unittest.TestCase):
     def test_plan_starts_from_calibrated_pose_without_branch_jump(self) -> None:
         planned = plan_circle(6.0, initial=calibrated_solution())
         self.assertLess(planned[0].max_crank_delta_deg, 12.0)
+
+    def test_model_level_is_nonunique_across_heave_and_branch(self) -> None:
+        high = solve_pose_at_heave(
+            self.geometry,
+            0.0,
+            0.0,
+            20.0,
+            (90.0, 90.0, 90.0),
+            estimate_torque=False,
+        )
+        low = solve_pose_at_heave(
+            self.geometry,
+            0.0,
+            0.0,
+            -5.0,
+            (-90.0, -90.0, -90.0),
+            estimate_torque=False,
+        )
+        self.assertIsNotNone(high)
+        self.assertIsNotNone(low)
+        assert high is not None and low is not None
+        self.assertEqual((high.roll_deg, high.pitch_deg), (0.0, 0.0))
+        self.assertEqual((low.roll_deg, low.pitch_deg), (0.0, 0.0))
+        self.assertNotEqual(high.steps, low.steps)
 
 
 class ExperimentalProtocolTests(unittest.TestCase):

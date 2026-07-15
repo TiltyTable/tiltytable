@@ -219,7 +219,7 @@ class DetectMarkersBallRejectionTests(unittest.TestCase):
 
         ir, depth = self._synthetic_frame(blobs_px, depth_mm=z_mm)
 
-        found, _debug_frame, _diag = tp.detect_markers(ir, depth, fx, fy, ppx, ppy)
+        found, _debug_frame = tp.detect_markers(ir, depth, fx, fy, ppx, ppy)
 
         self.assertEqual(len(found), len(marker_centers))
         for blob in found:
@@ -296,7 +296,7 @@ class RunPoseFitPriorPoseTests(unittest.TestCase):
         t0 = np.array([10.0, 20.0, 900.0])
         blobs = self._blobs_with_one_spurious(R0, t0)
 
-        with mock.patch.object(tp, "detect_markers", return_value=(blobs, None, None)):
+        with mock.patch.object(tp, "detect_markers", return_value=(blobs, None)):
             attempt = tp.run_pose_fit(None, None, 1.0, 1.0, 1.0, 1.0, prior_pose=None)
 
         self.assertFalse(attempt.ok)
@@ -307,7 +307,7 @@ class RunPoseFitPriorPoseTests(unittest.TestCase):
         t0 = np.array([10.0, 20.0, 900.0])
         blobs = self._blobs_with_one_spurious(R0, t0)
 
-        with mock.patch.object(tp, "detect_markers", return_value=(blobs, None, None)):
+        with mock.patch.object(tp, "detect_markers", return_value=(blobs, None)):
             attempt = tp.run_pose_fit(None, None, 1.0, 1.0, 1.0, 1.0, prior_pose=(R0, t0))
 
         self.assertTrue(attempt.ok)

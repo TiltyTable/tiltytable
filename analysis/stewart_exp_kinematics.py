@@ -20,6 +20,12 @@ STEPS_PER_CRANK_REV = 16_000  # MCS=4, 20:1 gearbox
 CALIBRATE_CRANK_DEG = 90.0
 DEFAULT_PAYLOAD_KG = 22.6796  # 50 lb
 PREFERRED_DEAD_CENTER_MARGIN_DEG = 15.0
+EXP_LEG_AZIMUTH_DEG = (120.0, 240.0, 0.0)  # axis 2 defines cardinal 0°
+
+
+def experimental_geometry() -> Geometry:
+    """As-built symmetric geometry rotated so motor axis 2 is cardinal."""
+    return Geometry(leg_azimuth_deg=EXP_LEG_AZIMUTH_DEG)
 
 
 @dataclass(frozen=True)
@@ -290,9 +296,9 @@ def solve_pose_at_heave(
         )
         score = (
             solution.max_crank_delta_deg,
-            solution.max_static_torque_nm,
-            -solution.dead_center_margin_deg,
             sum(deltas),
+            -solution.dead_center_margin_deg,
+            solution.max_static_torque_nm,
             -solution.closure_margin_mm,
         )
         if best is None or score < best[0]:
@@ -312,6 +318,8 @@ def optimize_heave(
     max_heave_step_mm: float | None = 1.0,
     payload_kg: float = DEFAULT_PAYLOAD_KG,
     preferred_dead_center_margin_deg: float = PREFERRED_DEAD_CENTER_MARGIN_DEG,
+    estimate_torque: bool = True,
+    objective: str = "margin",
 ) -> PoseSolution | None:
     """Find a closure-valid heave while preserving crank/heave continuity."""
     if heave_step_mm <= 0:
@@ -335,6 +343,7 @@ def optimize_heave(
             heave,
             previous.crank_deg,
             payload_kg,
+            estimate_torque,
         )
         if solution is None:
             continue
@@ -343,15 +352,31 @@ def optimize_heave(
             0.0,
             preferred_dead_center_margin_deg - solution.dead_center_margin_deg,
         )
-        # Favor closure margin, but only inside the bounded per-waypoint heave
-        # window so vertical motion remains continuous.
-        score = (
-            solution.max_static_torque_nm + dead_center_penalty,
-            -solution.dead_center_margin_deg,
-            -solution.closure_margin_mm,
-            solution.max_crank_delta_deg,
-            heave_delta,
-        )
+        if objective == "agile":
+            closure_penalty = max(0.0, 2.0 - solution.closure_margin_mm) * 5.0
+            agility_cost = (
+                solution.max_crank_delta_deg
+                + 0.25 * heave_delta
+                + closure_penalty
+                + 0.10 * dead_center_penalty
+                + 0.05 * solution.max_static_torque_nm
+            )
+            score = (
+                agility_cost,
+                solution.max_crank_delta_deg,
+                heave_delta,
+                -solution.closure_margin_mm,
+            )
+        elif objective == "margin":
+            score = (
+                -solution.closure_margin_mm,
+                solution.max_crank_delta_deg,
+                heave_delta,
+                dead_center_penalty,
+                solution.max_static_torque_nm,
+            )
+        else:
+            raise ValueError("objective must be agile or margin")
         if best is None or score < best[0]:
             best = (score, solution)
     return None if best is None else best[1]
@@ -390,6 +415,44 @@ def linear_targets(
     ]
 
 
+def plan_heave_transition(
+    initial: PoseSolution,
+    target_heave_mm: float,
+    *,
+    geometry: Geometry | None = None,
+    step_mm: float = 0.25,
+    max_crank_step_deg: float = 12.0,
+) -> list[PoseSolution]:
+    """Move common heave at fixed roll/pitch with branch continuity."""
+    if step_mm <= 0:
+        raise ValueError("step_mm must be positive")
+    geometry = geometry or experimental_geometry()
+    distance = target_heave_mm - initial.heave_mm
+    count = max(1, math.ceil(abs(distance) / step_mm))
+    previous = initial
+    planned: list[PoseSolution] = []
+    for index in range(1, count + 1):
+        heave = initial.heave_mm + distance * index / count
+        solution = solve_pose_at_heave(
+            geometry,
+            initial.roll_deg,
+            initial.pitch_deg,
+            heave,
+            previous.crank_deg,
+            estimate_torque=False,
+        )
+        if solution is None:
+            raise NoSolutionError(f"no level closure at heave={heave:.3f}")
+        if solution.max_crank_delta_deg > max_crank_step_deg:
+            raise NoSolutionError(
+                f"heave transition crank jump "
+                f"{solution.max_crank_delta_deg:.2f}°"
+            )
+        planned.append(solution)
+        previous = solution
+    return planned
+
+
 def circle_targets(radius_deg: float, points: int) -> list[tuple[float, float]]:
     if radius_deg <= 0 or points < 12:
         raise ValueError("radius must be positive and points >= 12")
@@ -414,8 +477,10 @@ def plan_targets(
     max_crank_step_deg: float = 12.0,
     payload_kg: float = DEFAULT_PAYLOAD_KG,
     preferred_dead_center_margin_deg: float = PREFERRED_DEAD_CENTER_MARGIN_DEG,
+    estimate_torque: bool = True,
+    objective: str = "margin",
 ) -> list[PoseSolution]:
-    geometry = geometry or Geometry()
+    geometry = geometry or experimental_geometry()
     previous = initial or calibrated_solution()
     planned: list[PoseSolution] = []
     for waypoint, (roll, pitch) in enumerate(targets, start=1):
@@ -430,6 +495,8 @@ def plan_targets(
             max_heave_step_mm=max_heave_step_mm,
             payload_kg=payload_kg,
             preferred_dead_center_margin_deg=preferred_dead_center_margin_deg,
+            estimate_torque=estimate_torque,
+            objective=objective,
         )
         if solution is None:
             raise NoSolutionError(
@@ -473,7 +540,7 @@ def endpoint_heave_range(
     heave_step_mm: float = 0.25,
 ) -> tuple[float, float] | None:
     """Closure-only endpoint heave range, independent of path continuity."""
-    geometry = geometry or Geometry()
+    geometry = geometry or experimental_geometry()
     valid: list[float] = []
     count = round((heave_max_mm - heave_min_mm) / heave_step_mm)
     for index in range(count + 1):

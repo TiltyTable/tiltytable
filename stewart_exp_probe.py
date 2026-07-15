@@ -456,18 +456,11 @@ def main() -> int:
     parser.add_argument("--heave-min", type=float, default=-15.0)
     parser.add_argument("--heave-max", type=float, default=30.0)
     parser.add_argument("--heave-step", type=float, default=0.25)
-    parser.add_argument("--max-heave-step", type=float, default=0.25)
+    parser.add_argument("--max-heave-step", type=float, default=0.5)
     parser.add_argument("--max-crank-step", type=float, default=12.0)
-    parser.add_argument("--ramp-points", type=int, default=240)
-    parser.add_argument("--points", type=int, default=240)
+    parser.add_argument("--ramp-points", type=int, default=80)
+    parser.add_argument("--points", type=int, default=120)
     parser.add_argument("--period", type=float, default=30.0)
-    parser.add_argument(
-        "--max-following-error",
-        type=float,
-        default=2.0,
-        metavar="CRANK_DEG",
-        help="wait when generated crank position lags target by more than this",
-    )
     parser.add_argument("--crank-speed", type=float, default=40.0)
     parser.add_argument("--crank-accel", type=float, default=120.0)
     parser.add_argument("--log", type=Path)
@@ -484,8 +477,6 @@ def main() -> int:
             "select exactly one of --circle, --target, --cardinals, "
             "--envelope-map, --check-firmware"
         )
-    if args.max_following_error <= 0:
-        parser.error("--max-following-error must be > 0")
     if not 1.0 <= args.crank_speed <= 90.0:
         parser.error("--crank-speed must be in [1, 90] deg/s")
     if not 1.0 <= args.crank_accel <= 500.0:
@@ -547,7 +538,6 @@ def main() -> int:
         interval = args.period / max(1, args.points)
         for index, pose in enumerate(planned, start=1):
             link.target(pose)
-            link.wait_following(pose.steps, args.max_following_error)
             print(
                 f"\r{index}/{len(planned)} "
                 f"r={pose.roll_deg:+6.2f} p={pose.pitch_deg:+6.2f} "

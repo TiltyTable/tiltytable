@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import os
 import select
@@ -16,9 +15,18 @@ from pathlib import Path
 
 import serial
 
-from analysis.stewart_exp_kinematics import NoSolutionError, optimize_heave
-from analysis.tilt_kinematics import Geometry
+from analysis.stewart_exp_kinematics import (
+    NoSolutionError,
+    experimental_geometry,
+    optimize_heave,
+    plan_heave_transition,
+)
 from stewart_exp_probe import ExpLink, calibrate
+from stewart_exp_tune import (
+    TuningResults,
+    TuningSession,
+    clear_after_fresh_crank_calibration,
+)
 from stewart_supervisor_client import DEFAULT_SOCKET
 
 EVENT_ROOT = Path("/dev/input")
@@ -126,20 +134,19 @@ def main() -> int:
     )
     parser.add_argument("--max-tilt", type=float, default=10.0)
     parser.add_argument("--scale", type=float, default=0.04)
-    parser.add_argument("--rate-hz", type=float, default=30.0)
-    parser.add_argument("--target-step", type=float, default=0.5)
+    parser.add_argument("--rate-hz", type=float, default=60.0)
+    parser.add_argument("--target-step", type=float, default=1.5)
     parser.add_argument("--heave-min", type=float, default=-15.0)
     parser.add_argument("--heave-max", type=float, default=30.0)
     parser.add_argument("--heave-step", type=float, default=0.25)
     parser.add_argument("--max-heave-step", type=float, default=0.5)
-    parser.add_argument("--max-following-error", type=float, default=2.0)
     parser.add_argument("--crank-speed", type=float, default=40.0)
     parser.add_argument("--crank-accel", type=float, default=120.0)
     parser.add_argument("--deadband", type=int, default=1)
     parser.add_argument(
         "--vector-window-ms",
         type=float,
-        default=8.0,
+        default=2.0,
         help="aggregate complete SYN_REPORT vectors for this many milliseconds",
     )
     parser.add_argument("--roll-sign", type=float, choices=(-1.0, 1.0), default=1.0)
@@ -154,7 +161,6 @@ def main() -> int:
         args.target_step,
         args.heave_step,
         args.max_heave_step,
-        args.max_following_error,
         args.vector_window_ms,
         args.crank_speed,
         args.crank_accel,
@@ -191,15 +197,16 @@ def main() -> int:
         direct_serial=args.direct_serial,
         mode="motion",
     )
-    geometry = Geometry()
-    motor_trim_steps = (0, 0, 0)
-    if args.tuning_config.exists():
-        tuning = json.loads(args.tuning_config.read_text())
-        raw_trim = tuning.get("motor_trim_steps", [0, 0, 0])
-        if len(raw_trim) != 3:
-            parser.error("tuning config motor_trim_steps must contain 3 values")
-        motor_trim_steps = tuple(int(value) for value in raw_trim)
-        print(f"motor trims={motor_trim_steps}")
+    geometry = experimental_geometry()
+    try:
+        tuning = TuningResults.load(args.tuning_config)
+    except (ValueError, KeyError, TypeError) as exc:
+        parser.error(f"invalid tuning config: {exc}")
+    motor_trim_steps = tuple(tuning.motor_trim_steps)
+    print(
+        f"motor trims={motor_trim_steps} "
+        f"level anchor={tuning.level_anchor_steps}"
+    )
     try:
         link.open()
         link.require_ok(
@@ -209,14 +216,34 @@ def main() -> int:
         status = link.status()
         if not status.calibrated:
             status = calibrate(link)
+            clear_after_fresh_crank_calibration(tuning, args.tuning_config)
+            motor_trim_steps = (0, 0, 0)
+            print("Fresh crank calibration cleared stale trims and level anchor.")
         current = status.as_pose(motor_trim_steps)
-        desired_roll = current.roll_deg
-        desired_pitch = current.pitch_deg
+        session = TuningSession(link, tuning, args.tuning_config)
+        session.current = current
         vectors = TrackballVectorAccumulator()
         interval = 1.0 / args.rate_hz
         last_update = time.monotonic()
 
         link.require_ok("ARM CONFIRM", "OK ARM")
+        if tuning.level_anchor_steps is not None:
+            print("Returning to canonical physical level anchor...")
+            session.move_to_level_anchor()
+            assert session.current is not None
+            current = session.current
+        elif current.heave_mm > 5.0 and abs(current.roll_deg) < 0.1 and abs(
+            current.pitch_deg
+        ) < 0.1:
+            print("Preparing low-heave agile operating pose...")
+            transition = plan_heave_transition(current, 0.0, geometry=geometry)
+            for pose in transition:
+                link.target(pose, motor_trim_steps)
+            link.wait_idle()
+            current = transition[-1]
+        origin_roll, origin_pitch = tuning.game_origin()
+        desired_roll = current.roll_deg - origin_roll
+        desired_pitch = current.pitch_deg - origin_pitch
         print(
             "Live: Y→roll, X→pitch; stopping the ball holds position. "
             "Ctrl-C aborts and holds."
@@ -262,12 +289,14 @@ def main() -> int:
                 )
 
             next_roll, next_pitch = step_toward(
-                current.roll_deg,
-                current.pitch_deg,
+                current.roll_deg - origin_roll,
+                current.pitch_deg - origin_pitch,
                 desired_roll,
                 desired_pitch,
                 args.target_step,
             )
+            next_roll += origin_roll
+            next_pitch += origin_pitch
             if (
                 abs(next_roll - current.roll_deg) < 1e-8
                 and abs(next_pitch - current.pitch_deg) < 1e-8
@@ -283,21 +312,19 @@ def main() -> int:
                 heave_max_mm=args.heave_max,
                 heave_step_mm=args.heave_step,
                 max_heave_step_mm=args.max_heave_step,
+                estimate_torque=False,
+                objective="agile",
             )
             if solution is None or solution.max_crank_delta_deg > 12.0:
                 print(
                     "\nNo continuous IK step; retaining last valid target.",
                     file=sys.stderr,
                 )
-                desired_roll, desired_pitch = current.roll_deg, current.pitch_deg
+                desired_roll = current.roll_deg - origin_roll
+                desired_pitch = current.pitch_deg - origin_pitch
                 continue
 
-            target_steps = tuple(
-                solution.steps[axis] + motor_trim_steps[axis]
-                for axis in range(3)
-            )
             link.target(solution, motor_trim_steps)
-            link.wait_following(target_steps, args.max_following_error)
             current = solution
             print(
                 f"\rr={current.roll_deg:+5.2f}° p={current.pitch_deg:+5.2f}° "

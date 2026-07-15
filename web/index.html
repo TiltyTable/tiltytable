@@ -11,7 +11,7 @@
     <div>
       <p class="eyebrow">Azure Kinect + PCA9685</p>
       <h1>TiltyTable Command Center</h1>
-      <p class="lede">Watch the color and IR feeds, drag boxes on the depth map, and tune target depth for channels 0-3.</p>
+      <p class="lede">Live ball detection, wall-marker table pose tracking, and the raw color feed.</p>
     </div>
     <div class="status-card">
       <span class="status-dot" id="cameraDot"></span>
@@ -24,129 +24,87 @@
 
   <main class="layout">
     <section class="feeds">
-      <article class="panel feed-panel">
-        <div class="panel-head">
-          <h2>Color Video</h2>
-          <span class="pill">live</span>
-        </div>
-        <div class="color-stage" id="colorStage">
-          <img class="feed-img" id="colorFeed" src="/stream/color.mjpg" alt="Azure Kinect color stream">
-        </div>
-      </article>
-
-
-<article class="panel ball-panel" id="irSection">
-        <div class="panel-head">
-          <h2>Active Brightness</h2>
-          <span class="pill" id="ballPill">searching</span>
-        </div>
-        <div class="ir-stage" id="irStage">
-          <img class="feed-img" id="irFeed" src="/stream/tracker.mjpg" alt="Azure Kinect IR stream">
-          <img id="irSampleFeed" src="/stream/ir.mjpg" alt="" style="display:none">
-          <canvas id="irOverlay" aria-hidden="true"></canvas>
-          <div id="irPixelTooltip" class="ir-pixel-tooltip"></div>
-        </div>
-        <dl class="readout ball-readout">
-          <div><dt>X</dt><dd id="ballX">--</dd></div>
-          <div><dt>Y</dt><dd id="ballY">--</dd></div>
-          <div><dt>Z (depth)</dt><dd id="ballZ">--</dd></div>
-          <div><dt>Radius</dt><dd id="ballR">--</dd></div>
-        </dl>
-        <p class="hint">Table frame: <strong id="ballWorld">not tracking</strong></p>
-        <p class="hint">
-          <span style="color:#3cc850">&#9644;</span> accepted &nbsp;
-          <span style="color:#c8c830">&#9644;</span> wrong size &nbsp;
-          <span style="color:#ff6020">&#9644;</span> no depth &nbsp;
-          <span style="color:#3050c8">&#9644;</span> not circular &nbsp;
-          <span style="color:#c800c8">&#9644;</span> not filled &nbsp;
-          <span style="color:#808080">&#9644;</span> table edge
-        </p>
-        <div class="ir-controls">
-          <div class="slider-row">
-            <div class="slider-label">Ball IR threshold <span id="lblBallThreshold">3000</span></div>
-            <input type="range" id="ballThresholdSlider" min="0" max="65535" step="100" value="3000">
-          </div>
-        </div>
-      </article>
-
-      <article class="panel calibration-panel" id="poseSection">
+      <article class="panel tracking-panel" id="trackingSection">
         <div class="panel-head">
           <div>
-            <h2>Table Pose Tracking</h2>
-            <p>Wall-mounted table markers &rarr; live camera-to-table pose. Updates continuously as the platform moves.</p>
+            <h2>Ball &amp; Table Tracking</h2>
+            <p>Live ball detection and wall-marker table pose, updating continuously as the platform moves.</p>
           </div>
-          <span class="pill" id="poseStatusPill">not tracking</span>
         </div>
-        <div class="calibration-body">
-          <div class="ir-stage">
-            <img class="feed-img" id="poseFeed" src="/stream/pose.mjpg" alt="Table pose marker debug stream">
-          </div>
-          <div class="calibration-side">
-            <div class="slider-row">
-              <div class="slider-label">Marker IR threshold <span id="lblMarkerThreshold">3800</span></div>
-              <input type="range" id="markerThresholdSlider" min="0" max="65535" step="100" value="3800">
+        <div class="tracking-body">
+          <div class="tracking-col ball-panel" id="irSection">
+            <div class="tracking-col-head">
+              <h2>Active Brightness</h2>
+              <span class="pill" id="ballPill">searching</span>
             </div>
+            <div class="ir-stage" id="irStage">
+              <img class="feed-img" id="irFeed" src="/stream/tracker.mjpg" alt="Azure Kinect IR stream">
+              <img id="irSampleFeed" src="/stream/ir.mjpg" alt="" style="display:none">
+              <canvas id="irOverlay" aria-hidden="true"></canvas>
+              <div id="irPixelTooltip" class="ir-pixel-tooltip"></div>
+            </div>
+            <dl class="readout ball-readout">
+              <div><dt>X</dt><dd id="ballX">--</dd></div>
+              <div><dt>Y</dt><dd id="ballY">--</dd></div>
+              <div><dt>Z (depth)</dt><dd id="ballZ">--</dd></div>
+              <div><dt>Radius</dt><dd id="ballR">--</dd></div>
+            </dl>
+            <p class="hint">Table frame: <strong id="ballWorld">not tracking</strong></p>
+            <p class="hint">
+              <span style="color:#3cc850">&#9644;</span> accepted &nbsp;
+              <span style="color:#c8c830">&#9644;</span> wrong size &nbsp;
+              <span style="color:#ff6020">&#9644;</span> no depth &nbsp;
+              <span style="color:#3050c8">&#9644;</span> not circular &nbsp;
+              <span style="color:#c800c8">&#9644;</span> not filled &nbsp;
+              <span style="color:#808080">&#9644;</span> table edge
+            </p>
+            <div class="ir-controls">
+              <div class="slider-row">
+                <div class="slider-label">Ball IR threshold <span id="lblBallThreshold">3000</span></div>
+                <input type="range" id="ballThresholdSlider" min="0" max="65535" step="100" value="3000">
+              </div>
+            </div>
+          </div>
+
+          <div class="tracking-col" id="poseSection">
+            <div class="tracking-col-head">
+              <h2>Table Pose Tracking</h2>
+              <span class="pill" id="poseStatusPill">not tracking</span>
+            </div>
+            <div class="ir-stage">
+              <img class="feed-img" id="poseFeed" src="/stream/pose.mjpg" alt="Table pose marker debug stream">
+            </div>
+            <dl class="readout ball-readout" id="poseReadout">
+              <div><dt>RMS</dt><dd id="poseRms">--</dd></div>
+              <div><dt>Max</dt><dd id="poseMax">--</dd></div>
+              <div><dt>Roll</dt><dd id="poseRoll">--</dd></div>
+              <div><dt>Pitch</dt><dd id="posePitch">--</dd></div>
+            </dl>
             <div class="control-status" id="poseStatus">no pose fit yet</div>
+            <div class="ir-controls">
+              <div class="slider-row">
+                <div class="slider-label">Marker IR threshold <span id="lblMarkerThreshold">3800</span></div>
+                <input type="range" id="markerThresholdSlider" min="0" max="65535" step="100" value="3800">
+              </div>
+            </div>
             <div class="calib-residuals" id="poseResiduals"></div>
-            <div class="calib-diagnostics" id="calibDiagnostics"></div>
           </div>
         </div>
       </article>
     </section>
-
-    <div class="right-col">
-      <aside class="panel controls">
-        <div class="panel-head sticky-head">
-          <div>
-            <h2>Servo Targets</h2>
-            <p>Four channels, four depth boxes, four target depths.</p>
-          </div>
-          <div class="control-buttons">
-            <button class="action start" id="startControl" type="button">Start</button>
-            <button class="action stop" id="stopControl" type="button">Stop</button>
-          </div>
-        </div>
-
-        <div class="control-status" id="controlStatus">control idle</div>
-        <div class="servo-list" id="servoList"></div>
-      </aside>
-    </div>
   </main>
 
-  <template id="servoTemplate">
-    <section class="servo-card">
-      <button class="select-servo" type="button"></button>
-      <div class="servo-grid">
-        <label>
-          <span>Target depth</span>
-          <input class="target-input" type="number" min="1" step="1" inputmode="decimal">
-        </label>
-        <label>
-          <span>Box X</span>
-          <input class="box-x" type="number" min="0" step="1" inputmode="numeric">
-        </label>
-        <label>
-          <span>Box Y</span>
-          <input class="box-y" type="number" min="0" step="1" inputmode="numeric">
-        </label>
-        <label>
-          <span>Box W</span>
-          <input class="box-width" type="number" min="1" step="1" inputmode="numeric">
-        </label>
-        <label>
-          <span>Box H</span>
-          <input class="box-height" type="number" min="1" step="1" inputmode="numeric">
-        </label>
-        <button class="apply-box" type="button">Apply Box</button>
+  <section class="bottom-feed">
+    <article class="panel feed-panel">
+      <div class="panel-head">
+        <h2>Color Video</h2>
+        <span class="pill">live</span>
       </div>
-      <dl class="readout">
-        <div><dt>Mean depth</dt><dd class="current-depth">--</dd></div>
-        <div><dt>Error</dt><dd class="current-error">--</dd></div>
-        <div><dt>Angle</dt><dd class="angle">--</dd></div>
-        <div><dt>Valid</dt><dd class="valid-pixels">--</dd></div>
-      </dl>
-    </section>
-  </template>
+      <div class="color-stage" id="colorStage">
+        <img class="feed-img" id="colorFeed" src="/stream/color.mjpg" alt="Azure Kinect color stream">
+      </div>
+    </article>
+  </section>
 
   <script src="/app.js"></script>
 </body>

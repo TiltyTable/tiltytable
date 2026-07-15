@@ -1,6 +1,7 @@
 # Progress
 
 ## Completed
+- [x] Maximum-agility pipeline flashed: 60 Hz pipelined roller targets, adaptive endpoint-only tuning moves, crank/heave-first IK, cached AccelStepper profiles, bounded serial parsing, and axis-2-aligned cardinal frame.
 - [x] Supervisor-based Stewart game tuning CLI: manual directional ball-roll thresholds, runtime speed/acceleration profiles, supervised agility reversals, and persisted tuning results.
 - [x] Persistent no-DTR Stewart supervisor with Unix-socket IPC, motion-client ABORT/HOLD cleanup, readonly leases, and non-restarting user service; experimental tools no longer open Arduino serial by default.
 - [x] Isolated experimental full-rotation/free-heave stack: dual-branch host IK, dedicated armed absolute-step firmware (flashed at MCS=4), supervised probe/logging, 10° continuous dry-run coverage, and regression tests.

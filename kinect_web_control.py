@@ -370,11 +370,21 @@ class KinectFrameHub:
         if self.tracker is not None:
             self.tracker.close()
 
+    # Azure Kinect's IMU streams at ~1.6kHz, far faster than the heavily
+    # smoothed gravity estimate (EMA factor 0.02, tracking something that
+    # shouldn't move at all -- a stationary tripod's "up" direction) needs.
+    # PyK4A defaults to thread_safe=True, which wraps *every* native device
+    # call -- get_capture() and get_imu_sample() alike -- in a shared lock,
+    # so draining every IMU sample as fast as they arrive would hammer that
+    # lock and starve the main capture loop's get_capture() calls, slowing
+    # ball tracking / table tracking / streaming (all downstream of that
+    # same loop). Throttling to a much lower poll rate avoids that.
+    _IMU_POLL_INTERVAL_S = 1.0 / 30.0
+
     def _run_imu(self):
-        """Continuously drains IMU samples into self.gravity so the camera's
+        """Periodically samples the IMU into self.gravity so the camera's
         accelerometer-derived "up" direction stays fresh — decoupled from
-        the depth-camera capture loop's cadence since the IMU runs at its
-        own (much higher) rate."""
+        the depth-camera capture loop's cadence."""
         while not self.stop_event.is_set():
             try:
                 sample = self.k4a.get_imu_sample(timeout=100)
@@ -385,6 +395,7 @@ class KinectFrameHub:
             if sample is not None and self._accel_to_depth_R is not None:
                 acc_depth_frame = self._accel_to_depth_R @ np.array(sample["acc_sample"])
                 self.gravity.add_sample(acc_depth_frame)
+            time.sleep(self._IMU_POLL_INTERVAL_S)
 
     def _set_status(self, status, error=""):
         with self.lock:
@@ -688,14 +699,6 @@ class KinectFrameHub:
             "roll_deg": round(roll_pitch[0], 1) if roll_pitch is not None else None,
             "pitch_deg": round(roll_pitch[1], 1) if roll_pitch is not None else None,
         }
-        if last_attempt is not None and last_attempt.diagnostics is not None:
-            result["diagnostics"] = {
-                "ir_max": last_attempt.diagnostics.ir_max,
-                "threshold_counts": [
-                    {"threshold": t, "count": c}
-                    for t, c in sorted(last_attempt.diagnostics.threshold_counts.items())
-                ],
-            }
         if last_attempt is not None and last_attempt.ok and last_attempt.matched_points is not None:
             result["matched_points"] = {
                 name: {"residual_mm": info["residual_mm"]}

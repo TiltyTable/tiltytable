@@ -87,6 +87,8 @@ float currentPitchDeg = 0.0;
 float currentHeaveMm = 30.0;
 float profileSpeedDegS = DEFAULT_CRANK_SPEED_DEG_S;
 float profileAccelDegS2 = DEFAULT_CRANK_ACCEL_DEG_S2;
+float configuredSpeedSteps[AXES] = {-1.0, -1.0, -1.0};
+float configuredAccelSteps[AXES] = {-1.0, -1.0, -1.0};
 String line;
 
 uint8_t logicLevel(bool active, bool activeLow) {
@@ -186,6 +188,23 @@ bool loadPersisted() {
   return true;
 }
 
+bool profileValueChanged(float current, float requested) {
+  if (current < 0.0) return true;
+  float tolerance = max(1.0, fabs(current) * 0.02);
+  return fabs(current - requested) > tolerance;
+}
+
+void setMotionProfile(uint8_t axis, float speedSteps, float accelSteps) {
+  if (profileValueChanged(configuredSpeedSteps[axis], speedSteps)) {
+    stepper[axis].setMaxSpeed(speedSteps);
+    configuredSpeedSteps[axis] = speedSteps;
+  }
+  if (profileValueChanged(configuredAccelSteps[axis], accelSteps)) {
+    stepper[axis].setAcceleration(accelSteps);
+    configuredAccelSteps[axis] = accelSteps;
+  }
+}
+
 void applyCoordinatedTargets(const long target[AXES]) {
   long maxDelta = 0;
   for (uint8_t axis = 0; axis < AXES; axis++) {
@@ -197,10 +216,9 @@ void applyCoordinatedTargets(const long target[AXES]) {
     long delta = labs(target[axis] - stepper[axis].currentPosition());
     float scale = maxDelta > 0 ? (float)delta / (float)maxDelta : 1.0;
     if (scale < 0.001) scale = 0.001;
-    stepper[axis].setMaxSpeed(
-      profileSpeedDegS * STEPS_PER_CRANK_REV / 360.0 * scale
-    );
-    stepper[axis].setAcceleration(
+    setMotionProfile(
+      axis,
+      profileSpeedDegS * STEPS_PER_CRANK_REV / 360.0 * scale,
       profileAccelDegS2 * STEPS_PER_CRANK_REV / 360.0 * scale
     );
     stepper[axis].moveTo(target[axis]);
@@ -299,10 +317,9 @@ void handleCommand(String command) {
     profileSpeedDegS = requestedSpeed;
     profileAccelDegS2 = requestedAccel;
     for (uint8_t axis = 0; axis < AXES; axis++) {
-      stepper[axis].setMaxSpeed(
-        profileSpeedDegS * STEPS_PER_CRANK_REV / 360.0
-      );
-      stepper[axis].setAcceleration(
+      setMotionProfile(
+        axis,
+        profileSpeedDegS * STEPS_PER_CRANK_REV / 360.0,
         profileAccelDegS2 * STEPS_PER_CRANK_REV / 360.0
       );
     }
@@ -437,10 +454,9 @@ void setup() {
   for (uint8_t axis = 0; axis < AXES; axis++) {
     stepper[axis].setPinsInverted(DIR_INVERT[axis], true, false);
     stepper[axis].setMinPulseWidth(5);
-    stepper[axis].setMaxSpeed(
-      profileSpeedDegS * STEPS_PER_CRANK_REV / 360.0
-    );
-    stepper[axis].setAcceleration(
+    setMotionProfile(
+      axis,
+      profileSpeedDegS * STEPS_PER_CRANK_REV / 360.0,
       profileAccelDegS2 * STEPS_PER_CRANK_REV / 360.0
     );
     stepper[axis].setCurrentPosition(0);
@@ -458,9 +474,18 @@ void setup() {
   Serial.println(F("Send EXP? then STATUS."));
 }
 
+void runEnabledSteppers() {
+  for (uint8_t axis = 0; axis < AXES; axis++) {
+    if (axisEnabled[axis]) stepper[axis].run();
+  }
+}
+
 void loop() {
-  while (Serial.available()) {
+  runEnabledSteppers();
+  uint8_t bytesRead = 0;
+  while (Serial.available() && bytesRead < 8) {
     char c = (char)Serial.read();
+    bytesRead++;
     if (c == '\n' || c == '\r') {
       if (line.length()) {
         handleCommand(line);
@@ -470,7 +495,5 @@ void loop() {
       line += c;
     }
   }
-  for (uint8_t axis = 0; axis < AXES; axis++) {
-    if (axisEnabled[axis]) stepper[axis].run();
-  }
+  runEnabledSteppers();
 }
