@@ -34,10 +34,14 @@ const bool DIR_INVERT[AXES] = {false, false, false};
 const bool ENA_ACTIVE_LOW = true;
 
 const float STEPS_PER_CRANK_REV = 16000.0;  // MCS=4, 20:1 gearbox
-// Aggressive MCS=4 profile with ample Uno R3 pulse-rate headroom.
-// 40 deg/s = 1778 pulses/s per full-travel axis.
-const float MAX_CRANK_SPEED_DEG_S = 40.0;
-const float MAX_CRANK_ACCEL_DEG_S2 = 120.0;
+// Runtime-configurable profile. 90 deg/s at MCS=4 is 4000 pulses/s, the
+// documented practical ceiling for AccelStepper on a 16 MHz Uno.
+const float DEFAULT_CRANK_SPEED_DEG_S = 40.0;
+const float DEFAULT_CRANK_ACCEL_DEG_S2 = 120.0;
+const float MIN_CRANK_SPEED_DEG_S = 1.0;
+const float MAX_CRANK_SPEED_DEG_S = 90.0;
+const float MIN_CRANK_ACCEL_DEG_S2 = 1.0;
+const float MAX_CRANK_ACCEL_DEG_S2 = 500.0;
 const float MAX_TARGET_DELTA_DEG = 12.0;
 const long MAX_TARGET_DELTA_STEPS =
   lround(MAX_TARGET_DELTA_DEG * STEPS_PER_CRANK_REV / 360.0);
@@ -81,6 +85,8 @@ bool restored = false;
 float currentRollDeg = 0.0;
 float currentPitchDeg = 0.0;
 float currentHeaveMm = 30.0;
+float profileSpeedDegS = DEFAULT_CRANK_SPEED_DEG_S;
+float profileAccelDegS2 = DEFAULT_CRANK_ACCEL_DEG_S2;
 String line;
 
 uint8_t logicLevel(bool active, bool activeLow) {
@@ -192,10 +198,10 @@ void applyCoordinatedTargets(const long target[AXES]) {
     float scale = maxDelta > 0 ? (float)delta / (float)maxDelta : 1.0;
     if (scale < 0.001) scale = 0.001;
     stepper[axis].setMaxSpeed(
-      MAX_CRANK_SPEED_DEG_S * STEPS_PER_CRANK_REV / 360.0 * scale
+      profileSpeedDegS * STEPS_PER_CRANK_REV / 360.0 * scale
     );
     stepper[axis].setAcceleration(
-      MAX_CRANK_ACCEL_DEG_S2 * STEPS_PER_CRANK_REV / 360.0 * scale
+      profileAccelDegS2 * STEPS_PER_CRANK_REV / 360.0 * scale
     );
     stepper[axis].moveTo(target[axis]);
   }
@@ -241,7 +247,9 @@ void printStatus() {
   }
   Serial.print(F(" roll=")); Serial.print(currentRollDeg, 4);
   Serial.print(F(" pitch=")); Serial.print(currentPitchDeg, 4);
-  Serial.print(F(" heave=")); Serial.println(currentHeaveMm, 4);
+  Serial.print(F(" heave=")); Serial.print(currentHeaveMm, 4);
+  Serial.print(F(" vmax=")); Serial.print(profileSpeedDegS, 3);
+  Serial.print(F(" amax=")); Serial.println(profileAccelDegS2, 3);
 }
 
 void printHelp() {
@@ -249,6 +257,7 @@ void printHelp() {
   Serial.println(F("EXP? | STATUS | HELP"));
   Serial.println(F("CAL BEGIN | CAL JOG axis pulses | CAL MARK axis | CAL FINISH"));
   Serial.println(F("ARM CONFIRM | TARGET s0 s1 s2 roll pitch heave"));
+  Serial.println(F("PROFILE speed_deg_s accel_deg_s2 | PROFILE?"));
   Serial.println(F("HOLD | ABORT | DISABLE"));
 }
 
@@ -270,6 +279,35 @@ void handleCommand(String command) {
     printHelp();
   } else if (first == "STATUS") {
     printStatus();
+  } else if (first == "PROFILE?") {
+    Serial.print(F("OK PROFILE speed=")); Serial.print(profileSpeedDegS, 3);
+    Serial.print(F(" accel=")); Serial.println(profileAccelDegS2, 3);
+  } else if (first == "PROFILE") {
+    if (count != 3 || moving()) {
+      Serial.println(F("ERR PROFILE SYNTAX_OR_MOVING"));
+      return;
+    }
+    float requestedSpeed = atof(tokens[1]);
+    float requestedAccel = atof(tokens[2]);
+    if (requestedSpeed < MIN_CRANK_SPEED_DEG_S ||
+        requestedSpeed > MAX_CRANK_SPEED_DEG_S ||
+        requestedAccel < MIN_CRANK_ACCEL_DEG_S2 ||
+        requestedAccel > MAX_CRANK_ACCEL_DEG_S2) {
+      Serial.println(F("ERR PROFILE RANGE speed=1..90 accel=1..500"));
+      return;
+    }
+    profileSpeedDegS = requestedSpeed;
+    profileAccelDegS2 = requestedAccel;
+    for (uint8_t axis = 0; axis < AXES; axis++) {
+      stepper[axis].setMaxSpeed(
+        profileSpeedDegS * STEPS_PER_CRANK_REV / 360.0
+      );
+      stepper[axis].setAcceleration(
+        profileAccelDegS2 * STEPS_PER_CRANK_REV / 360.0
+      );
+    }
+    Serial.print(F("OK PROFILE speed=")); Serial.print(profileSpeedDegS, 3);
+    Serial.print(F(" accel=")); Serial.println(profileAccelDegS2, 3);
   } else if (first == "CAL") {
     if (count < 2) {
       Serial.println(F("ERR CAL SYNTAX"));
@@ -400,10 +438,10 @@ void setup() {
     stepper[axis].setPinsInverted(DIR_INVERT[axis], true, false);
     stepper[axis].setMinPulseWidth(5);
     stepper[axis].setMaxSpeed(
-      MAX_CRANK_SPEED_DEG_S * STEPS_PER_CRANK_REV / 360.0
+      profileSpeedDegS * STEPS_PER_CRANK_REV / 360.0
     );
     stepper[axis].setAcceleration(
-      MAX_CRANK_ACCEL_DEG_S2 * STEPS_PER_CRANK_REV / 360.0
+      profileAccelDegS2 * STEPS_PER_CRANK_REV / 360.0
     );
     stepper[axis].setCurrentPosition(0);
     desiredTarget[axis] = 0;

@@ -36,6 +36,7 @@ from analysis.stewart_exp_kinematics import (
     steps_to_crank_deg,
 )
 from stewart_serial import open_stewart_serial, wait_if_reset
+from stewart_supervisor_client import DEFAULT_SOCKET, StewartSupervisorClient
 
 
 @dataclass(frozen=True)
@@ -52,17 +53,25 @@ class ExpStatus:
     roll_deg: float
     pitch_deg: float
     heave_mm: float
+    max_speed_deg_s: float
+    max_accel_deg_s2: float
 
     @property
     def crank_deg(self) -> tuple[float, float, float]:
         return tuple(steps_to_crank_deg(value) for value in self.steps)
 
-    def as_pose(self) -> PoseSolution:
+    def as_pose(
+        self,
+        step_offsets: tuple[int, int, int] = (0, 0, 0),
+    ) -> PoseSolution:
+        model_steps = tuple(
+            self.steps[axis] - step_offsets[axis] for axis in range(3)
+        )
         return PoseSolution(
             roll_deg=self.roll_deg,
             pitch_deg=self.pitch_deg,
             heave_mm=self.heave_mm,
-            crank_deg=self.crank_deg,
+            crank_deg=tuple(steps_to_crank_deg(value) for value in model_steps),
             branch_index=(0, 0, 0),
             closure_margin_mm=0.0,
             worst_advisory_joint_deg=0.0,
@@ -95,21 +104,51 @@ def parse_status(text: str) -> ExpStatus:
         roll_deg=_field(text, "roll", float),
         pitch_deg=_field(text, "pitch", float),
         heave_mm=_field(text, "heave", float),
+        max_speed_deg_s=_field(text, "vmax", float),
+        max_accel_deg_s2=_field(text, "amax", float),
     )
 
 
 class ExpLink:
-    def __init__(self, port: str, baud: int = 115200) -> None:
+    def __init__(
+        self,
+        port: str,
+        baud: int = 115200,
+        *,
+        socket_path: Path = DEFAULT_SOCKET,
+        direct_serial: bool = False,
+        mode: str = "motion",
+    ) -> None:
         self.port = port
         self.baud = baud
+        self.socket_path = socket_path
+        self.direct_serial = direct_serial
+        self.mode = mode
         self.ser: serial.Serial | None = None
+        self.client: StewartSupervisorClient | None = None
+
+    @property
+    def is_open(self) -> bool:
+        return self.ser is not None or (
+            self.client is not None and self.client.is_open
+        )
 
     def open(self) -> None:
-        self.ser = open_stewart_serial(self.port, self.baud, timeout=0.25)
-        if wait_if_reset(self.ser, 2.2):
-            time.sleep(0.2)
+        if self.direct_serial:
+            print(
+                "WARNING: direct serial may DTR-reset and release the table.",
+                file=sys.stderr,
+            )
+            self.ser = open_stewart_serial(self.port, self.baud, timeout=0.25)
+            if wait_if_reset(self.ser, 2.2):
+                time.sleep(0.2)
+            else:
+                time.sleep(2.2)
         else:
-            time.sleep(2.2)
+            self.client = StewartSupervisorClient(
+                self.socket_path, mode=self.mode
+            )
+            self.client.open()
         identity = self.exchange("EXP?", timeout=0.8)
         if not identity.startswith("OK EXP UIM5756PM_STEWART_EXP"):
             raise RuntimeError(
@@ -121,10 +160,15 @@ class ExpLink:
         if self.ser is not None:
             self.ser.close()
             self.ser = None
+        if self.client is not None:
+            self.client.close()
+            self.client = None
 
     def exchange(self, command: str, timeout: float = 0.6) -> str:
+        if self.client is not None:
+            return self.client.exchange(command, timeout)
         if self.ser is None:
-            raise RuntimeError("serial link is not open")
+            raise RuntimeError("experimental link is not open")
         self.ser.reset_input_buffer()
         self.ser.write((command.rstrip() + "\n").encode("ascii"))
         self.ser.flush()
@@ -179,8 +223,14 @@ class ExpLink:
             time.sleep(0.03)
         raise TimeoutError("experimental target following error stayed too large")
 
-    def target(self, pose: PoseSolution) -> None:
-        steps = pose.steps
+    def target(
+        self,
+        pose: PoseSolution,
+        step_offsets: tuple[int, int, int] = (0, 0, 0),
+    ) -> None:
+        steps = tuple(
+            pose.steps[axis] + step_offsets[axis] for axis in range(3)
+        )
         self.require_ok(
             "TARGET "
             f"{steps[0]} {steps[1]} {steps[2]} "
@@ -388,6 +438,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", default="/dev/arduino-stewart")
     parser.add_argument("--baud", type=int, default=115200)
+    parser.add_argument("--socket", type=Path, default=DEFAULT_SOCKET)
+    parser.add_argument(
+        "--direct-serial",
+        action="store_true",
+        help="unsafe fallback: bypass supervisor and open Arduino directly",
+    )
     parser.add_argument("--circle", type=float, metavar="DEG")
     parser.add_argument("--target", type=float, nargs=2, metavar=("ROLL", "PITCH"))
     parser.add_argument("--cardinals", type=float, metavar="DEG")
@@ -412,6 +468,8 @@ def main() -> int:
         metavar="CRANK_DEG",
         help="wait when generated crank position lags target by more than this",
     )
+    parser.add_argument("--crank-speed", type=float, default=40.0)
+    parser.add_argument("--crank-accel", type=float, default=120.0)
     parser.add_argument("--log", type=Path)
     parser.add_argument("--yes", "-y", action="store_true")
     parser.add_argument("--disable-on-exit", action="store_true")
@@ -428,6 +486,10 @@ def main() -> int:
         )
     if args.max_following_error <= 0:
         parser.error("--max-following-error must be > 0")
+    if not 1.0 <= args.crank_speed <= 90.0:
+        parser.error("--crank-speed must be in [1, 90] deg/s")
+    if not 1.0 <= args.crank_accel <= 500.0:
+        parser.error("--crank-accel must be in [1, 500] deg/s^2")
 
     if args.envelope_map is not None:
         payload = envelope_map(args)
@@ -444,9 +506,20 @@ def main() -> int:
             print(f"wrote {args.log}")
         return 0
 
-    link = ExpLink(args.port, args.baud)
+    link = ExpLink(
+        args.port,
+        args.baud,
+        socket_path=args.socket,
+        direct_serial=args.direct_serial,
+        mode="readonly" if args.check_firmware else "motion",
+    )
     try:
         link.open()
+        if not args.check_firmware:
+            link.require_ok(
+                f"PROFILE {args.crank_speed:.3f} {args.crank_accel:.3f}",
+                "OK PROFILE",
+            )
         status = link.status()
         print(status)
         if args.check_firmware:
@@ -503,12 +576,13 @@ def main() -> int:
             pass
         return 1
     finally:
-        if link.ser is not None:
+        if link.is_open:
             try:
-                if args.disable_on_exit:
-                    link.require_ok("DISABLE", "OK DISABLE")
-                else:
-                    link.require_ok("HOLD", "OK HOLD")
+                if not args.check_firmware:
+                    if args.disable_on_exit:
+                        link.require_ok("DISABLE", "OK DISABLE")
+                    else:
+                        link.require_ok("HOLD", "OK HOLD")
             except Exception as exc:
                 print(f"WARNING: final hold/disable failed: {exc}", file=sys.stderr)
             link.close()

@@ -306,6 +306,10 @@ function renderBall(ball) {
 function renderTablePose(pose) {
   if (!pose) return;
 
+  const tiltTag = (pose.roll_deg !== null && pose.roll_deg !== undefined && pose.pitch_deg !== null && pose.pitch_deg !== undefined)
+    ? `, roll ${pose.roll_deg.toFixed(1)}° pitch ${pose.pitch_deg.toFixed(1)}°`
+    : '';
+
   if (!pose.tracking) {
     poseStatusPill.textContent = 'not tracking';
     poseStatusPill.className   = 'pill';
@@ -314,11 +318,11 @@ function renderTablePose(pose) {
   } else if (pose.stale) {
     poseStatusPill.textContent = `stale (${pose.age_s?.toFixed(1)}s ago)`;
     poseStatusPill.className   = 'pill';
-    poseStatus.textContent = pose.last_error ? `holding last pose — ${pose.last_error}` : 'holding last pose';
+    poseStatus.textContent = (pose.last_error ? `holding last pose — ${pose.last_error}` : 'holding last pose') + tiltTag;
   } else {
     poseStatusPill.textContent = `tracking, rms ${pose.rms_residual_mm.toFixed(1)}mm`;
     poseStatusPill.className   = 'pill detected';
-    poseStatus.textContent = `fit ok — rms ${pose.rms_residual_mm.toFixed(1)}mm, max ${pose.max_residual_mm.toFixed(1)}mm`;
+    poseStatus.textContent = `fit ok — rms ${pose.rms_residual_mm.toFixed(1)}mm, max ${pose.max_residual_mm.toFixed(1)}mm${tiltTag}`;
   }
 
   if (pose.tracking) {

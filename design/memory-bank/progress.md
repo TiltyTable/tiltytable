@@ -1,7 +1,9 @@
 # Progress
 
 ## Completed
-- [x] Isolated experimental full-rotation/free-heave stack: dual-branch host IK, dedicated armed absolute-step firmware, supervised probe/logging, 10° continuous dry-run coverage, and regression tests (not flashed).
+- [x] Supervisor-based Stewart game tuning CLI: manual directional ball-roll thresholds, runtime speed/acceleration profiles, supervised agility reversals, and persisted tuning results.
+- [x] Persistent no-DTR Stewart supervisor with Unix-socket IPC, motion-client ABORT/HOLD cleanup, readonly leases, and non-restarting user service; experimental tools no longer open Arduino serial by default.
+- [x] Isolated experimental full-rotation/free-heave stack: dual-branch host IK, dedicated armed absolute-step firmware (flashed at MCS=4), supervised probe/logging, 10° continuous dry-run coverage, and regression tests.
 - [x] Clean app-restart position persistence (EEPROM + reset-cause gate) and supervised Stewart circular range test command.
 - [x] One-at-a-time UIM5756PM MCS=8 configurator (A4 RX/white TX, A5 TX/green RX); Stewart runtime prepared for 32000 steps/crank rev and 5 µs pulses.
 - [x] Responsive Stewart position control: safe 4.6° radial envelope at heave 20, direct EMA 1.0 response at fixed 0.04°/count, firmware error visibility, corrected as-built kinematics, and regression tests.

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import select
@@ -18,6 +19,7 @@ import serial
 from analysis.stewart_exp_kinematics import NoSolutionError, optimize_heave
 from analysis.tilt_kinematics import Geometry
 from stewart_exp_probe import ExpLink, calibrate
+from stewart_supervisor_client import DEFAULT_SOCKET
 
 EVENT_ROOT = Path("/dev/input")
 DEFAULT_MOUSE = EVENT_ROOT / "by-id/usb-13ba_Barcode_Reader-if01-event-mouse"
@@ -111,6 +113,17 @@ def main() -> int:
     parser.add_argument("device", nargs="?")
     parser.add_argument("--port", default="/dev/arduino-stewart")
     parser.add_argument("--baud", type=int, default=115200)
+    parser.add_argument("--socket", type=Path, default=DEFAULT_SOCKET)
+    parser.add_argument(
+        "--tuning-config",
+        type=Path,
+        default=Path("calibration/stewart_game_tuning.json"),
+    )
+    parser.add_argument(
+        "--direct-serial",
+        action="store_true",
+        help="unsafe fallback: bypass supervisor and open Arduino directly",
+    )
     parser.add_argument("--max-tilt", type=float, default=10.0)
     parser.add_argument("--scale", type=float, default=0.04)
     parser.add_argument("--rate-hz", type=float, default=30.0)
@@ -120,6 +133,8 @@ def main() -> int:
     parser.add_argument("--heave-step", type=float, default=0.25)
     parser.add_argument("--max-heave-step", type=float, default=0.5)
     parser.add_argument("--max-following-error", type=float, default=2.0)
+    parser.add_argument("--crank-speed", type=float, default=40.0)
+    parser.add_argument("--crank-accel", type=float, default=120.0)
     parser.add_argument("--deadband", type=int, default=1)
     parser.add_argument(
         "--vector-window-ms",
@@ -141,8 +156,14 @@ def main() -> int:
         args.max_heave_step,
         args.max_following_error,
         args.vector_window_ms,
+        args.crank_speed,
+        args.crank_accel,
     ) <= 0:
         parser.error("tilt, scales, rates, and step limits must be positive")
+    if args.crank_speed > 90.0:
+        parser.error("--crank-speed must be <= 90 deg/s")
+    if args.crank_accel > 500.0:
+        parser.error("--crank-accel must be <= 500 deg/s^2")
 
     device = Path(args.device) if args.device else find_roller_ball()
     if device is None:
@@ -163,14 +184,32 @@ def main() -> int:
             os.close(mouse_fd)
             return 2
 
-    link = ExpLink(args.port, args.baud)
+    link = ExpLink(
+        args.port,
+        args.baud,
+        socket_path=args.socket,
+        direct_serial=args.direct_serial,
+        mode="motion",
+    )
     geometry = Geometry()
+    motor_trim_steps = (0, 0, 0)
+    if args.tuning_config.exists():
+        tuning = json.loads(args.tuning_config.read_text())
+        raw_trim = tuning.get("motor_trim_steps", [0, 0, 0])
+        if len(raw_trim) != 3:
+            parser.error("tuning config motor_trim_steps must contain 3 values")
+        motor_trim_steps = tuple(int(value) for value in raw_trim)
+        print(f"motor trims={motor_trim_steps}")
     try:
         link.open()
+        link.require_ok(
+            f"PROFILE {args.crank_speed:.3f} {args.crank_accel:.3f}",
+            "OK PROFILE",
+        )
         status = link.status()
         if not status.calibrated:
             status = calibrate(link)
-        current = status.as_pose()
+        current = status.as_pose(motor_trim_steps)
         desired_roll = current.roll_deg
         desired_pitch = current.pitch_deg
         vectors = TrackballVectorAccumulator()
@@ -253,8 +292,12 @@ def main() -> int:
                 desired_roll, desired_pitch = current.roll_deg, current.pitch_deg
                 continue
 
-            link.target(solution)
-            link.wait_following(solution.steps, args.max_following_error)
+            target_steps = tuple(
+                solution.steps[axis] + motor_trim_steps[axis]
+                for axis in range(3)
+            )
+            link.target(solution, motor_trim_steps)
+            link.wait_following(target_steps, args.max_following_error)
             current = solution
             print(
                 f"\rr={current.roll_deg:+5.2f}° p={current.pitch_deg:+5.2f}° "
@@ -277,7 +320,7 @@ def main() -> int:
             pass
         return 1
     finally:
-        if link.ser is not None:
+        if link.is_open:
             try:
                 link.require_ok("HOLD", "OK HOLD")
             except Exception as exc:

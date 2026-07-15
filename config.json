@@ -52,6 +52,7 @@
     "marker_height_mm": 50.8,
     "marker_mount_radius_mm": 12.7,
     "wall_thickness_mm": 4.7625,
-    "max_marker_radius_mm": 15.0
+    "max_marker_radius_mm": 15.0,
+    "gravity_sign": 1.0
   }
 }

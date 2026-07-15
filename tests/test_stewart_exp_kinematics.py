@@ -75,13 +75,20 @@ class ExperimentalProtocolTests(unittest.TestCase):
             "OK STATUS exp=1 calibrated=1 restored=0 calibrating=0 "
             "armed=1 enabled=1 moving=0 "
             "s0=100 s1=-200 s2=300 t0=100 t1=-200 t2=300 "
-            "m0=1 m1=1 m2=1 roll=4.0 pitch=-3.0 heave=-2.5"
+            "m0=1 m1=1 m2=1 roll=4.0 pitch=-3.0 heave=-2.5 "
+            "vmax=40.0 amax=120.0"
         )
         self.assertTrue(status.calibrated)
         self.assertTrue(status.armed)
         self.assertEqual(status.steps, (100, -200, 300))
         self.assertEqual(status.marked, (True, True, True))
         self.assertAlmostEqual(status.heave_mm, -2.5)
+        self.assertAlmostEqual(status.max_speed_deg_s, 40.0)
+        self.assertAlmostEqual(status.max_accel_deg_s2, 120.0)
+        trimmed_pose = status.as_pose((100, -200, 300))
+        self.assertAlmostEqual(trimmed_pose.crank_deg[0], 90.0)
+        self.assertAlmostEqual(trimmed_pose.crank_deg[1], 90.0)
+        self.assertAlmostEqual(trimmed_pose.crank_deg[2], 90.0)
 
     def test_reject_production_status(self) -> None:
         with self.assertRaises(ValueError):

@@ -402,6 +402,159 @@ class TablePoseTrackerTests(unittest.TestCase):
         np.testing.assert_allclose(prior_t, t_before)
 
 
+class TiltDegFromGravityTests(unittest.TestCase):
+    """tilt_deg_from_gravity compares the table's fitted Z axis (expressed
+    in camera-frame coordinates via R.T) against a camera-frame "up" vector
+    -- both expressed in the same (camera) frame, so the camera's own
+    unknown mounting angle cancels out without needing separate
+    calibration."""
+
+    def test_level_table_reads_zero(self):
+        # R = identity: table's Z axis in camera frame is exactly (0,0,1).
+        # If gravity "up" is also exactly (0,0,1), the table is level.
+        R = np.eye(3)
+        self.assertAlmostEqual(tp.tilt_deg_from_gravity(R, np.array([0.0, 0.0, 1.0])), 0.0, places=6)
+
+    def test_known_tilt_angle_is_recovered(self):
+        # Tilt the table 15 degrees about the camera-frame X axis; gravity
+        # stays fixed at the camera's original "up" -- the angle between the
+        # table's rotated Z axis and that fixed "up" should be 15 degrees.
+        R = _rotation_from_euler_deg(15.0, 0.0, 0.0)
+        tilt = tp.tilt_deg_from_gravity(R, np.array([0.0, 0.0, 1.0]))
+        self.assertAlmostEqual(tilt, 15.0, places=4)
+
+    def test_90_degree_tilt(self):
+        R = _rotation_from_euler_deg(90.0, 0.0, 0.0)
+        tilt = tp.tilt_deg_from_gravity(R, np.array([0.0, 0.0, 1.0]))
+        self.assertAlmostEqual(tilt, 90.0, places=4)
+
+    def test_gravity_vector_need_not_be_normalized(self):
+        R = _rotation_from_euler_deg(20.0, 0.0, 0.0)
+        tilt_unit = tp.tilt_deg_from_gravity(R, np.array([0.0, 0.0, 1.0]))
+        tilt_scaled = tp.tilt_deg_from_gravity(R, np.array([0.0, 0.0, 9.81]))
+        self.assertAlmostEqual(tilt_unit, tilt_scaled, places=6)
+
+
+class RollPitchDegFromGravityTests(unittest.TestCase):
+    """Per ball_balancer.py's convention: pitch is rotation about the
+    table's own X axis, roll is rotation about the table's own Y axis.
+    _rotation_from_euler_deg(x_deg, 0, 0) is a pure-X rotation (Rz(0)@Ry(0)@Rx(x_deg)
+    == Rx(x_deg)), and (0, y_deg, 0) is pure-Y, so each isolates one axis
+    cleanly for testing."""
+
+    def test_level_table_reads_zero_zero(self):
+        R = np.eye(3)
+        roll, pitch = tp.roll_pitch_deg_from_gravity(R, np.array([0.0, 0.0, 1.0]))
+        self.assertAlmostEqual(roll, 0.0, places=6)
+        self.assertAlmostEqual(pitch, 0.0, places=6)
+
+    def test_pure_x_rotation_is_pitch_only(self):
+        R = _rotation_from_euler_deg(12.0, 0.0, 0.0)
+        roll, pitch = tp.roll_pitch_deg_from_gravity(R, np.array([0.0, 0.0, 1.0]))
+        self.assertAlmostEqual(pitch, 12.0, places=4)
+        self.assertAlmostEqual(roll, 0.0, places=4)
+
+    def test_pure_y_rotation_is_roll_only(self):
+        R = _rotation_from_euler_deg(0.0, 15.0, 0.0)
+        roll, pitch = tp.roll_pitch_deg_from_gravity(R, np.array([0.0, 0.0, 1.0]))
+        self.assertAlmostEqual(roll, 15.0, places=4)
+        self.assertAlmostEqual(pitch, 0.0, places=4)
+
+    def test_negative_x_rotation_gives_negative_pitch(self):
+        R = _rotation_from_euler_deg(-9.0, 0.0, 0.0)
+        roll, pitch = tp.roll_pitch_deg_from_gravity(R, np.array([0.0, 0.0, 1.0]))
+        self.assertAlmostEqual(pitch, -9.0, places=4)
+        self.assertAlmostEqual(roll, 0.0, places=4)
+
+    def test_combined_roll_and_pitch(self):
+        # roll = atan2(gx, gz) is exact regardless of pitch (the pitch-only
+        # cos6 factor cancels in that ratio), but pitch = atan2(-gy, gz)
+        # picks up a small 1/cos(roll) coupling term from the composed
+        # rotation order -- expected for a two-angle decomposition of a
+        # combined tilt, not a bug, so pitch gets a looser tolerance here.
+        R = _rotation_from_euler_deg(6.0, -4.0, 0.0)
+        roll, pitch = tp.roll_pitch_deg_from_gravity(R, np.array([0.0, 0.0, 1.0]))
+        self.assertAlmostEqual(roll, -4.0, places=6)
+        self.assertAlmostEqual(pitch, 6.0, delta=0.02)
+
+
+class GravityEstimatorTests(unittest.TestCase):
+    def test_no_samples_yet_has_no_up_vector(self):
+        est = tp.GravityEstimator()
+        self.assertIsNone(est.up_vector)
+
+    def test_single_sample_is_normalized(self):
+        est = tp.GravityEstimator()
+        est.add_sample((0.0, 0.0, 9.81))
+        np.testing.assert_allclose(est.up_vector, [0.0, 0.0, 1.0], atol=1e-9)
+
+    def test_sign_flips_the_reading(self):
+        est = tp.GravityEstimator(sign=-1.0)
+        est.add_sample((0.0, 0.0, 9.81))
+        np.testing.assert_allclose(est.up_vector, [0.0, 0.0, -1.0], atol=1e-9)
+
+    def test_repeated_consistent_samples_converge_and_stay_unit_length(self):
+        est = tp.GravityEstimator(smoothing=0.1)
+        for _ in range(200):
+            est.add_sample((0.0, 0.3, 9.81))
+        self.assertAlmostEqual(float(np.linalg.norm(est.up_vector)), 1.0, places=6)
+        expected = np.array([0.0, 0.3, 9.81])
+        expected = expected / np.linalg.norm(expected)
+        np.testing.assert_allclose(est.up_vector, expected, atol=1e-3)
+
+    def test_zero_sample_is_ignored(self):
+        est = tp.GravityEstimator()
+        est.add_sample((0.0, 0.0, 9.81))
+        before = est.up_vector.copy()
+        est.add_sample((0.0, 0.0, 0.0))
+        np.testing.assert_allclose(est.up_vector, before)
+
+
+class TablePoseTrackerTiltTests(unittest.TestCase):
+    def test_tilt_deg_is_none_before_tracking_or_without_gravity(self):
+        tracker = tp.TablePoseTracker()
+        self.assertIsNone(tracker.tilt_deg(np.array([0.0, 0.0, 1.0])))
+        self.assertIsNone(tracker.tilt_deg(None))
+
+    def test_tilt_deg_uses_current_fit_and_gravity(self):
+        tracker = tp.TablePoseTracker()
+        R0 = _rotation_from_euler_deg(8.0, 0.0, 0.0)
+        fit = tp.RigidFitResult(
+            R=R0, t=np.array([0.0, 0.0, 900.0]),
+            residuals_mm=[1.0] * 5, rms_residual_mm=1.0, max_residual_mm=1.0,
+        )
+        with mock.patch.object(
+            tp, "run_pose_fit",
+            return_value=tp.PoseFitAttempt(ok=True, error=None, debug_frame=None, fit=fit),
+        ):
+            tracker.update(None, None, 1.0, 1.0, 1.0, 1.0, now=100.0)
+
+        tilt = tracker.tilt_deg(np.array([0.0, 0.0, 1.0]))
+        self.assertAlmostEqual(tilt, 8.0, places=4)
+
+    def test_roll_pitch_deg_is_none_before_tracking_or_without_gravity(self):
+        tracker = tp.TablePoseTracker()
+        self.assertIsNone(tracker.roll_pitch_deg(np.array([0.0, 0.0, 1.0])))
+        self.assertIsNone(tracker.roll_pitch_deg(None))
+
+    def test_roll_pitch_deg_uses_current_fit_and_gravity(self):
+        tracker = tp.TablePoseTracker()
+        R0 = _rotation_from_euler_deg(0.0, -7.0, 0.0)
+        fit = tp.RigidFitResult(
+            R=R0, t=np.array([0.0, 0.0, 900.0]),
+            residuals_mm=[1.0] * 5, rms_residual_mm=1.0, max_residual_mm=1.0,
+        )
+        with mock.patch.object(
+            tp, "run_pose_fit",
+            return_value=tp.PoseFitAttempt(ok=True, error=None, debug_frame=None, fit=fit),
+        ):
+            tracker.update(None, None, 1.0, 1.0, 1.0, 1.0, now=100.0)
+
+        roll, pitch = tracker.roll_pitch_deg(np.array([0.0, 0.0, 1.0]))
+        self.assertAlmostEqual(roll, -7.0, places=4)
+        self.assertAlmostEqual(pitch, 0.0, places=4)
+
+
 class BallTrackerRegressionTests(unittest.TestCase):
     """Confirm extracting camera_geometry.py didn't change BallTracker's output."""
 

@@ -32,6 +32,7 @@ from depth_servo_control import (
     ServoController,
 )
 from table_pose import (
+    GravityEstimator,
     PoseFitAttempt,
     TablePoseTracker,
     configure_table_geometry,
@@ -348,6 +349,10 @@ class KinectFrameHub:
         self.marker_ir_threshold = args.marker_ir_threshold
         self.ball_ir_threshold = args.ball_ir_threshold
 
+        self.gravity = GravityEstimator(sign=args.gravity_sign)
+        self._imu_thread = None
+        self._accel_to_depth_R = None  # set once calibration is available in _run()
+
     def start(self):
         self.thread = threading.Thread(target=self._run, name="kinect-capture", daemon=True)
         self.thread.start()
@@ -358,10 +363,28 @@ class KinectFrameHub:
             self.lock.notify_all()
         if self.thread is not None:
             self.thread.join(timeout=2.0)
+        if self._imu_thread is not None:
+            self._imu_thread.join(timeout=2.0)
         if self.k4a is not None and self.k4a.is_running:
             self.k4a.stop()
         if self.tracker is not None:
             self.tracker.close()
+
+    def _run_imu(self):
+        """Continuously drains IMU samples into self.gravity so the camera's
+        accelerometer-derived "up" direction stays fresh — decoupled from
+        the depth-camera capture loop's cadence since the IMU runs at its
+        own (much higher) rate."""
+        while not self.stop_event.is_set():
+            try:
+                sample = self.k4a.get_imu_sample(timeout=100)
+            except K4ATimeoutException:
+                continue
+            except K4AException:
+                break
+            if sample is not None and self._accel_to_depth_R is not None:
+                acc_depth_frame = self._accel_to_depth_R @ np.array(sample["acc_sample"])
+                self.gravity.add_sample(acc_depth_frame)
 
     def _set_status(self, status, error=""):
         with self.lock:
@@ -393,6 +416,18 @@ class KinectFrameHub:
             self.k4a = PyK4A(config=config, device_id=args.device_id)
             self.k4a.start()
             self._set_status("running")
+
+            # The accelerometer isn't necessarily axis-aligned with the depth
+            # camera (they're separate physical sensors) -- rotate raw IMU
+            # samples into the depth camera's frame using the factory
+            # extrinsic calibration, since that's the frame table_pose.py's
+            # fitted R is expressed in.
+            self._accel_to_depth_R, _ = self.k4a.calibration.get_extrinsic_parameters(
+                CalibrationType.ACCEL, CalibrationType.DEPTH,
+            )
+
+            self._imu_thread = threading.Thread(target=self._run_imu, name="kinect-imu", daemon=True)
+            self._imu_thread.start()
 
             mat = self.k4a.calibration.get_camera_matrix(CalibrationType.DEPTH)
             with self.lock:
@@ -639,6 +674,8 @@ class KinectFrameHub:
             marker_ir_threshold = self.marker_ir_threshold
             last_attempt = self._last_pose_attempt
         _, stale, age_s = tracker.apply((0.0, 0.0, 0.0))
+        tilt_deg = tracker.tilt_deg(self.gravity.up_vector)
+        roll_pitch = tracker.roll_pitch_deg(self.gravity.up_vector)
         result = {
             "tracking": tracker.is_tracking,
             "stale": stale if tracker.is_tracking else None,
@@ -647,6 +684,9 @@ class KinectFrameHub:
             "max_residual_mm": tracker.last_fit.max_residual_mm if tracker.last_fit else None,
             "last_error": tracker.last_error,
             "marker_ir_threshold": marker_ir_threshold,
+            "tilt_deg": round(tilt_deg, 1) if tilt_deg is not None else None,
+            "roll_deg": round(roll_pitch[0], 1) if roll_pitch is not None else None,
+            "pitch_deg": round(roll_pitch[1], 1) if roll_pitch is not None else None,
         }
         if last_attempt is not None and last_attempt.diagnostics is not None:
             result["diagnostics"] = {
@@ -1056,7 +1096,10 @@ def parse_args(argv=None):
     calib = parser.add_argument_group("Table Pose Tracking")
     calib.add_argument("--pose-update-every-n-frames", type=int, default=3, metavar="N",
                        help="recompute the camera-to-table pose every N camera frames")
-    calib.add_argument("--marker-ir-min-counts", type=float, default=3800.0, metavar="COUNTS")
+    calib.add_argument("--marker-ir-threshold", type=float, default=3800.0, metavar="COUNTS")
+    calib.add_argument("--gravity-sign", type=float, default=1.0, choices=(1.0, -1.0),
+                       help="flip if a level table doesn't read ~0 tilt_deg (IMU accelerometer "
+                            "sign convention can't be verified without real hardware)")
     calib.add_argument("--marker-height-mm", type=float, default=50.8, metavar="MM",
                        help="height of the wall-mounted markers above the table surface")
     calib.add_argument("--marker-mount-radius-mm", type=float, default=12.7, metavar="MM",
@@ -1103,7 +1146,7 @@ def parse_args(argv=None):
     if args.pose_update_every_n_frames <= 0:
         parser.error("--pose-update-every-n-frames must be greater than 0")
     if args.marker_ir_threshold < 0:
-        parser.error("--marker-ir-min-counts cannot be negative")
+        parser.error("--marker-ir-threshold cannot be negative")
     if args.marker_height_mm < 0:
         parser.error("--marker-height-mm cannot be negative")
     if args.marker_mount_radius_mm < 0:

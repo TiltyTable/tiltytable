@@ -724,6 +724,119 @@ class TablePoseTracker:
         stale = self.last_error is not None
         return (float(world[0]), float(world[1]), float(world[2])), stale, age_s
 
+    def tilt_deg(self, gravity_up_cam: Optional[np.ndarray]) -> Optional[float]:
+        """Table tilt in degrees relative to true vertical (0 = level), given
+        the camera-frame "up" direction from GravityEstimator. None if there's
+        no fitted pose yet or no gravity reading yet."""
+        if self.R is None or gravity_up_cam is None:
+            return None
+        return tilt_deg_from_gravity(self.R, gravity_up_cam)
+
+    def roll_pitch_deg(self, gravity_up_cam: Optional[np.ndarray]) -> Optional[tuple[float, float]]:
+        """(roll_deg, pitch_deg) — see roll_pitch_deg_from_gravity(). None if
+        there's no fitted pose yet or no gravity reading yet."""
+        if self.R is None or gravity_up_cam is None:
+            return None
+        return roll_pitch_deg_from_gravity(self.R, gravity_up_cam)
+
+
+# ---------------------------------------------------------------------------
+# Tilt relative to gravity — separate from the table-frame pose fit above,
+# which only ever reports the table's orientation relative to the camera.
+# The camera itself is tripod-mounted at some arbitrary, unknown angle, so
+# "how tilted is the table" in any absolute sense requires an independent
+# reference: the Azure Kinect's onboard accelerometer, which (while the
+# camera is stationary) reads the reaction to gravity -- i.e. it points
+# "up", away from the pull of gravity. Because both the fitted table
+# orientation and the gravity reading are expressed in the *depth camera's*
+# coordinate frame, the camera's own (unknown) mounting angle cancels out
+# automatically; no separate camera-to-gravity calibration step is needed.
+#
+# IMPORTANT: the accelerometer is a separate physical sensor from the depth
+# camera and is *not* guaranteed to share its axes -- raw IMU samples must
+# first be rotated into the depth camera's frame using the factory extrinsic
+# calibration (pyk4a's Calibration.get_extrinsic_parameters(ACCEL, DEPTH));
+# see kinect_web_control.py's KinectFrameHub._run_imu(). This module's
+# GravityEstimator only does the smoothing, and assumes its input is already
+# in the depth camera's frame -- feeding it raw, un-rotated accelerometer
+# samples will silently produce a wrong (but plausible-looking) tilt.
+#
+# NOTE: even after that rotation, the accelerometer's sign convention
+# (whether it points "up" or "down") is a hardware detail this module can't
+# verify without a real device. `GravityEstimator(sign=...)` exists so that
+# can be flipped at runtime if a level table doesn't read ~0 degrees.
+# ---------------------------------------------------------------------------
+
+def tilt_deg_from_gravity(R: np.ndarray, gravity_up_cam: np.ndarray) -> float:
+    """Angle (degrees) between the table's own Z axis (straight up out of
+    the play surface, per the fitted rotation R mapping camera -> world) and
+    true vertical, as given by a camera-frame "up" vector from gravity. 0
+    means the table is level; 90 would mean it's on its side."""
+    table_z_cam = R.T @ np.array([0.0, 0.0, 1.0])
+    g = np.asarray(gravity_up_cam, dtype=np.float64)
+    g_unit = g / np.linalg.norm(g)
+    cos_angle = float(np.clip(np.dot(table_z_cam, g_unit), -1.0, 1.0))
+    return float(np.degrees(np.arccos(cos_angle)))
+
+
+def roll_pitch_deg_from_gravity(R: np.ndarray, gravity_up_cam: np.ndarray) -> tuple[float, float]:
+    """(roll_deg, pitch_deg) of the table relative to true vertical, given
+    the fitted rotation R (camera -> world) and a camera-frame "up" vector
+    from gravity. Matches ball_balancer.py's axis convention: pitch is
+    rotation about the table's own X axis, roll is rotation about the
+    table's own Y axis. (0, 0) means level; sign matches a right-handed
+    rotation about each axis (see fit_rigid_transform / TABLE_MARKER_WORLD_POINTS
+    for the table's X/Y/Z convention).
+
+    Unlike tilt_deg_from_gravity (which collapses tilt to a single magnitude
+    via the angle between two vectors), this expresses gravity's "up"
+    direction *in the table's own body-fixed frame* (g_table = R @ gravity),
+    then reads off each axis's contribution independently -- the standard
+    accelerometer-tilt decomposition, valid for combined roll+pitch as well
+    as pure single-axis tilts.
+    """
+    g = np.asarray(gravity_up_cam, dtype=np.float64)
+    g_unit = g / np.linalg.norm(g)
+    gx, gy, gz = R @ g_unit
+    pitch_deg = float(np.degrees(np.arctan2(-gy, gz)))
+    roll_deg = float(np.degrees(np.arctan2(gx, gz)))
+    return roll_deg, pitch_deg
+
+
+class GravityEstimator:
+    """Smoothed estimate of the "up" direction (opposite gravity's pull) in
+    camera-frame coordinates, built from a stream of raw accelerometer
+    samples (e.g. Azure Kinect IMU acc_sample readings). Camera-agnostic and
+    pure — reading the IMU itself requires the camera device handle, so that
+    loop lives wherever that handle does (see kinect_web_control.py); this
+    class only does the smoothing math, independently testable without
+    hardware.
+    """
+
+    def __init__(self, smoothing: float = 0.02, sign: float = 1.0):
+        # smoothing: EMA weight given to each new sample (0..1) -- smaller is
+        # slower to respond but rejects vibration/noise better, appropriate
+        # for a tripod-mounted camera where "up" should barely move at all.
+        self.smoothing = smoothing
+        self.sign = sign
+        self._up: Optional[np.ndarray] = None
+
+    def add_sample(self, acc_sample: tuple[float, float, float]) -> None:
+        v = self.sign * np.array(acc_sample, dtype=np.float64)
+        norm = np.linalg.norm(v)
+        if norm < 1e-9:
+            return
+        v = v / norm
+        if self._up is None:
+            self._up = v
+        else:
+            blended = (1.0 - self.smoothing) * self._up + self.smoothing * v
+            self._up = blended / np.linalg.norm(blended)
+
+    @property
+    def up_vector(self) -> Optional[np.ndarray]:
+        return self._up
+
 
 def __getattr__(name):
     """Backward-compatible read-only views onto the module's default
