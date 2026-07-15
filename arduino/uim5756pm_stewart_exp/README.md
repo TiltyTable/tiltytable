@@ -94,6 +94,12 @@ crank branches. Defaults are 30 Hz, 0.5° maximum platform target change per
 update, and 0.5 mm maximum heave change per update. Ctrl-C sends `ABORT` and
 holds; it does not disable.
 
+The host commits REL_X/REL_Y only at Linux `SYN_REPORT` boundaries, with an
+8 ms aggregation window so diagonal ball motion remains one vector. IK heave
+selection includes a 50 lb static-load torque estimate plus a penalty inside
+15° of top/bottom crank dead center. Use `--vector-window-ms` to tune input
+aggregation without changing the production roller tool.
+
 ## Return to production
 
 1. Mechanically support the table.

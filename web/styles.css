@@ -251,8 +251,7 @@ h2 {
   background: #000;
 }
 
-.color-stage,
-.depth-stage {
+.color-stage {
   position: relative;
   background: #000;
   aspect-ratio: 16 / 9;
@@ -265,12 +264,6 @@ h2 {
   /* Kinect NFOV depth/IR native resolution — avoids letterbox empty space */
   aspect-ratio: 640 / 576;
   overflow: hidden;
-}
-
-.depth-stage {
-  cursor: crosshair;
-  touch-action: none;
-  user-select: none;
 }
 
 .ir-pixel-tooltip {
@@ -487,16 +480,6 @@ dd {
   letter-spacing: -0.01em;
 }
 
-/* ── Ball pair (IR + Tracker side by side) ──────────────────── */
-
-.ball-pair {
-  grid-column: 1 / -1;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
-  align-items: start;
-}
-
 /* ── Ball panel ─────────────────────────────────────────────── */
 
 .ball-panel {
@@ -659,8 +642,7 @@ input[type="range"] {
 @media (max-width: 760px) {
   .hero { flex-direction: column; align-items: flex-start; gap: 0.75rem; }
   .feeds { grid-template-columns: 1fr; }
-  .ball-pair { grid-template-columns: 1fr; }
-  .servo-grid { grid-template-columns: 1fr; }
+.servo-grid { grid-template-columns: 1fr; }
   .readout { grid-template-columns: 1fr; }
   .ball-readout { grid-template-columns: repeat(2, 1fr); }
 }

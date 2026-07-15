@@ -34,62 +34,40 @@
         </div>
       </article>
 
-      <article class="panel feed-panel depth-panel">
+
+<article class="panel ball-panel" id="irSection">
         <div class="panel-head">
-          <h2>Depth Map</h2>
-          <span class="pill accent">drag to set box</span>
+          <h2>Active Brightness</h2>
+          <span class="pill" id="ballPill">searching</span>
         </div>
-        <div class="depth-stage" id="depthStage">
-          <img class="feed-img" id="depthFeed" src="/stream/depth.mjpg" alt="Azure Kinect depth stream">
-          <canvas id="depthOverlay" aria-hidden="true"></canvas>
+        <div class="ir-stage" id="irStage">
+          <img class="feed-img" id="irFeed" src="/stream/tracker.mjpg" alt="Azure Kinect IR stream">
+          <img id="irSampleFeed" src="/stream/ir.mjpg" alt="" style="display:none">
+          <canvas id="irOverlay" aria-hidden="true"></canvas>
+          <div id="irPixelTooltip" class="ir-pixel-tooltip"></div>
         </div>
-        <p class="hint" id="clickHint">Selected channel: <strong>0</strong>. Drag on the depth map to set its depth box.</p>
+        <dl class="readout ball-readout">
+          <div><dt>X</dt><dd id="ballX">--</dd></div>
+          <div><dt>Y</dt><dd id="ballY">--</dd></div>
+          <div><dt>Z (depth)</dt><dd id="ballZ">--</dd></div>
+          <div><dt>Radius</dt><dd id="ballR">--</dd></div>
+        </dl>
+        <p class="hint">Table frame: <strong id="ballWorld">not tracking</strong></p>
+        <p class="hint">
+          <span style="color:#3cc850">&#9644;</span> accepted &nbsp;
+          <span style="color:#c8c830">&#9644;</span> wrong size &nbsp;
+          <span style="color:#ff6020">&#9644;</span> no depth &nbsp;
+          <span style="color:#3050c8">&#9644;</span> not circular &nbsp;
+          <span style="color:#c800c8">&#9644;</span> not filled &nbsp;
+          <span style="color:#808080">&#9644;</span> table edge
+        </p>
+        <div class="ir-controls">
+          <div class="slider-row">
+            <div class="slider-label">Ball IR threshold <span id="lblBallThreshold">3000</span></div>
+            <input type="range" id="ballThresholdSlider" min="0" max="65535" step="100" value="3000">
+          </div>
+        </div>
       </article>
-
-      <div class="ball-pair" id="ballPair">
-        <article class="panel ball-panel" id="irSection">
-          <div class="panel-head">
-            <h2>Active Brightness</h2>
-            <span class="pill" id="ballPill">searching</span>
-          </div>
-          <div class="ir-stage" id="irStage">
-            <img class="feed-img" id="irFeed" src="/stream/ir.mjpg" alt="Azure Kinect IR stream">
-            <canvas id="irOverlay" aria-hidden="true"></canvas>
-            <div id="irPixelTooltip" class="ir-pixel-tooltip"></div>
-          </div>
-          <dl class="readout ball-readout">
-            <div><dt>X</dt><dd id="ballX">--</dd></div>
-            <div><dt>Y</dt><dd id="ballY">--</dd></div>
-            <div><dt>Z (depth)</dt><dd id="ballZ">--</dd></div>
-            <div><dt>Radius</dt><dd id="ballR">--</dd></div>
-          </dl>
-          <p class="hint">Table frame: <strong id="ballWorld">not tracking</strong></p>
-          <div class="ir-controls">
-            <div class="slider-row">
-              <div class="slider-label">Ball IR threshold <span id="lblBallThreshold">3000</span></div>
-              <input type="range" id="ballThresholdSlider" min="0" max="65535" step="100" value="3000">
-            </div>
-          </div>
-        </article>
-
-        <article class="panel feed-panel" id="trackerSection">
-          <div class="panel-head">
-            <h2>Tracker View</h2>
-            <span class="pill">detection pipeline</span>
-          </div>
-          <div class="ir-stage">
-            <img class="feed-img" id="trackerFeed" src="/stream/tracker.mjpg" alt="Tracker debug stream">
-          </div>
-          <p class="hint">
-            <span style="color:#3cc850">&#9644;</span> accepted &nbsp;
-            <span style="color:#c8c830">&#9644;</span> wrong size &nbsp;
-            <span style="color:#ff6020">&#9644;</span> no depth &nbsp;
-            <span style="color:#3050c8">&#9644;</span> not circular &nbsp;
-            <span style="color:#c800c8">&#9644;</span> not filled &nbsp;
-            <span style="color:#808080">&#9644;</span> table edge
-          </p>
-        </article>
-      </div>
 
       <article class="panel calibration-panel" id="poseSection">
         <div class="panel-head">

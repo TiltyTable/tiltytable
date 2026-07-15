@@ -2,16 +2,14 @@ const cameraDot    = document.querySelector('#cameraDot');
 const cameraStatus = document.querySelector('#cameraStatus');
 const cameraMeta   = document.querySelector('#cameraMeta');
 const controlStatus = document.querySelector('#controlStatus');
-const clickHint    = document.querySelector('#clickHint');
 const servoList    = document.querySelector('#servoList');
 const startControl = document.querySelector('#startControl');
 const stopControl  = document.querySelector('#stopControl');
 const template     = document.querySelector('#servoTemplate');
 
 const irSection          = document.querySelector('#irSection');
-const trackerSection     = document.querySelector('#trackerSection');
 const irFeed             = document.querySelector('#irFeed');
-const trackerFeed        = document.querySelector('#trackerFeed');
+const irSampleFeed       = document.querySelector('#irSampleFeed');
 const irOverlay          = document.querySelector('#irOverlay');
 
 const ballPill     = document.querySelector('#ballPill');
@@ -19,10 +17,6 @@ const ballX        = document.querySelector('#ballX');
 const ballY        = document.querySelector('#ballY');
 const ballZ        = document.querySelector('#ballZ');
 const ballR        = document.querySelector('#ballR');
-
-const depthStage   = document.querySelector('#depthStage');
-const depthImg     = document.querySelector('#depthFeed');
-const overlay      = document.querySelector('#depthOverlay');
 
 const ballWorld           = document.querySelector('#ballWorld');
 const poseStatus          = document.querySelector('#poseStatus');
@@ -52,7 +46,7 @@ irStage.addEventListener('mousemove', (e) => {
   const px = Math.round((e.clientX - rect.left) / rect.width  * nw);
   const py = Math.round((e.clientY - rect.top)  / rect.height * nh);
   try {
-    _irSampleCtx.drawImage(irFeed, px, py, 1, 1, 0, 0, 1, 1);
+    _irSampleCtx.drawImage(irSampleFeed, px, py, 1, 1, 0, 0, 1, 1);
     const val8 = _irSampleCtx.getImageData(0, 0, 1, 1).data[0];
     const counts = val8 << 8;
     irPixelTooltip.textContent = `${counts} cts`;
@@ -112,9 +106,6 @@ irFeed.addEventListener('load', syncIrCanvas);
 let selectedChannel = 0;
 let latestState = null;
 let stateTimer = null;
-let isDrawingBox = false;
-let dragStart = null;
-let draftBox = null;
 
 function fmtMm(value) {
   if (value === null || value === undefined) return '--';
@@ -166,10 +157,8 @@ function renderState(state) {
   for (const servo of state.servos) {
     renderServo(servo);
   }
-  clickHint.innerHTML = `Selected channel: <strong>${selectedChannel}</strong>. Drag on the depth map to set its depth box.`;
   renderBall(state.ball);
   renderTablePose(state.table_pose);
-  drawOverlay();
 }
 
 function renderServo(servo) {
@@ -238,124 +227,6 @@ function isIntegerBox(box) {
     && box.height > 0;
 }
 
-function depthCoordinateFromEvent(event) {
-  const rect = depthImg.getBoundingClientRect();
-  const width  = latestState?.depth_image?.width  || depthImg.naturalWidth;
-  const height = latestState?.depth_image?.height || depthImg.naturalHeight;
-  if (!width || !height || !rect.width || !rect.height) return null;
-  const x = Math.floor((event.clientX - rect.left) * width  / rect.width);
-  const y = Math.floor((event.clientY - rect.top)  * height / rect.height);
-  return {
-    x: Math.max(0, Math.min(width  - 1, x)),
-    y: Math.max(0, Math.min(height - 1, y)),
-  };
-}
-
-function boxFromPoints(a, b) {
-  const x0 = Math.min(a.x, b.x);
-  const y0 = Math.min(a.y, b.y);
-  const x1 = Math.max(a.x, b.x);
-  const y1 = Math.max(a.y, b.y);
-  return { x: x0, y: y0, width: x1 - x0 + 1, height: y1 - y0 + 1 };
-}
-
-depthStage.addEventListener('pointerdown', (event) => {
-  const point = depthCoordinateFromEvent(event);
-  if (!point) return;
-  event.preventDefault();
-  isDrawingBox = true;
-  dragStart = point;
-  draftBox = boxFromPoints(point, point);
-  depthStage.setPointerCapture(event.pointerId);
-  drawOverlay();
-});
-
-depthStage.addEventListener('pointermove', (event) => {
-  if (!isDrawingBox || !dragStart) return;
-  const point = depthCoordinateFromEvent(event);
-  if (!point) return;
-  event.preventDefault();
-  draftBox = boxFromPoints(dragStart, point);
-  drawOverlay();
-});
-
-depthStage.addEventListener('pointerup', async (event) => {
-  if (!isDrawingBox || !draftBox) return;
-  event.preventDefault();
-  const box = draftBox;
-  isDrawingBox = false;
-  dragStart = null;
-  draftBox = null;
-  drawOverlay();
-
-  try {
-    await postJson(`/api/servos/${selectedChannel}/box`, box);
-    await fetchState();
-  } catch (error) {
-    controlStatus.textContent = `box error: ${error.message}`;
-  }
-});
-
-depthStage.addEventListener('pointercancel', () => {
-  isDrawingBox = false;
-  dragStart = null;
-  draftBox = null;
-  drawOverlay();
-});
-
-function drawOverlay() {
-  const state = latestState;
-  const rect = depthImg.getBoundingClientRect();
-  const width  = state?.depth_image?.width  || depthImg.naturalWidth;
-  const height = state?.depth_image?.height || depthImg.naturalHeight;
-  if (!state || !width || !height || rect.width < 1 || rect.height < 1) return;
-
-  const dpr = window.devicePixelRatio || 1;
-  overlay.width  = Math.round(rect.width  * dpr);
-  overlay.height = Math.round(rect.height * dpr);
-  overlay.style.width  = `${rect.width}px`;
-  overlay.style.height = `${rect.height}px`;
-
-  const ctx = overlay.getContext('2d');
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, rect.width, rect.height);
-  ctx.lineWidth = 2;
-  ctx.font = '700 12px "JetBrains Mono", monospace';
-  ctx.textBaseline = 'middle';
-
-  for (const servo of state.servos) {
-    drawBox(ctx, servo.box, servo.color, servo.channel, servo.channel === selectedChannel, rect, width, height);
-  }
-
-  if (draftBox) {
-    const selectedServo = state.servos.find((servo) => servo.channel === selectedChannel);
-    drawBox(ctx, draftBox, selectedServo?.color || '#ffcc4d', selectedChannel, true, rect, width, height, true);
-  }
-}
-
-function drawBox(ctx, box, color, channel, selected, rect, imageWidth, imageHeight, draft = false) {
-  const x      = box.x      * rect.width  / imageWidth;
-  const y      = box.y      * rect.height / imageHeight;
-  const width  = box.width  * rect.width  / imageWidth;
-  const height = box.height * rect.height / imageHeight;
-
-  ctx.save();
-  ctx.strokeStyle = color;
-  ctx.lineWidth = selected ? 3 : 2;
-  ctx.globalAlpha = draft ? 0.36 : 0.18;
-  ctx.fillStyle = color;
-  ctx.fillRect(x, y, width, height);
-  ctx.globalAlpha = 1;
-  ctx.strokeRect(x, y, width, height);
-
-  const labelX = Math.min(rect.width  - 34, Math.max(4, x + 6));
-  const labelY = Math.min(rect.height - 16, Math.max(12, y + 13));
-  ctx.fillStyle = color;
-  ctx.fillRect(labelX, labelY - 12, 30, 22);
-  ctx.fillStyle = '#12201c';
-  ctx.fillText(String(channel), labelX + 10, labelY);
-  ctx.restore();
-}
 
 startControl.addEventListener('click', async () => {
   try {
@@ -374,9 +245,6 @@ stopControl.addEventListener('click', async () => {
     controlStatus.textContent = `stop error: ${error.message}`;
   }
 });
-
-window.addEventListener('resize', drawOverlay);
-depthImg.addEventListener('load', drawOverlay);
 
 fetchState();
 stateTimer = window.setInterval(fetchState, 350);

@@ -67,6 +67,8 @@ class ExpStatus:
             closure_margin_mm=0.0,
             worst_advisory_joint_deg=0.0,
             max_crank_delta_deg=0.0,
+            dead_center_margin_deg=0.0,
+            max_static_torque_nm=0.0,
         )
 
 
@@ -325,6 +327,14 @@ def summarize(planned: list[PoseSolution]) -> None:
     print(
         f"worst advisory joint proxy: "
         f"{max(p.worst_advisory_joint_deg for p in planned):.2f}°"
+    )
+    print(
+        f"minimum dead-center margin: "
+        f"{min(p.dead_center_margin_deg for p in planned):.2f}°"
+    )
+    print(
+        f"worst estimated static motor torque (50 lb): "
+        f"{max(p.max_static_torque_nm for p in planned):.2f} N·m"
     )
 
 

@@ -10,6 +10,7 @@ import select
 import struct
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 import serial
@@ -21,13 +22,53 @@ from stewart_exp_probe import ExpLink, calibrate
 EVENT_ROOT = Path("/dev/input")
 DEFAULT_MOUSE = EVENT_ROOT / "by-id/usb-13ba_Barcode_Reader-if01-event-mouse"
 INPUT_EVENT = struct.Struct("llHHI")
+EV_SYN = 0x00
 EV_REL = 0x02
+SYN_REPORT = 0x00
 REL_X = 0x00
 REL_Y = 0x01
 
 
 def signed32(value: int) -> int:
     return value - 0x100000000 if value & 0x80000000 else value
+
+
+@dataclass
+class TrackballVectorAccumulator:
+    frame_dx: int = 0
+    frame_dy: int = 0
+    pending_dx: int = 0
+    pending_dy: int = 0
+    window_started_at: float | None = None
+
+    def feed(
+        self, event_type: int, code: int, value: int, now: float
+    ) -> None:
+        if event_type == EV_REL:
+            if code == REL_X:
+                self.frame_dx += value
+            elif code == REL_Y:
+                self.frame_dy += value
+            return
+        if event_type == EV_SYN and code == SYN_REPORT:
+            if self.frame_dx or self.frame_dy:
+                self.pending_dx += self.frame_dx
+                self.pending_dy += self.frame_dy
+                if self.window_started_at is None:
+                    self.window_started_at = now
+            self.frame_dx = 0
+            self.frame_dy = 0
+
+    def pop_ready(self, now: float, window_seconds: float) -> tuple[int, int] | None:
+        if self.window_started_at is None:
+            return None
+        if now - self.window_started_at < window_seconds:
+            return None
+        result = self.pending_dx, self.pending_dy
+        self.pending_dx = 0
+        self.pending_dy = 0
+        self.window_started_at = None
+        return result
 
 
 def find_roller_ball() -> Path | None:
@@ -80,6 +121,12 @@ def main() -> int:
     parser.add_argument("--max-heave-step", type=float, default=0.5)
     parser.add_argument("--max-following-error", type=float, default=2.0)
     parser.add_argument("--deadband", type=int, default=1)
+    parser.add_argument(
+        "--vector-window-ms",
+        type=float,
+        default=8.0,
+        help="aggregate complete SYN_REPORT vectors for this many milliseconds",
+    )
     parser.add_argument("--roll-sign", type=float, choices=(-1.0, 1.0), default=1.0)
     parser.add_argument("--pitch-sign", type=float, choices=(-1.0, 1.0), default=-1.0)
     parser.add_argument("--yes", "-y", action="store_true")
@@ -93,6 +140,7 @@ def main() -> int:
         args.heave_step,
         args.max_heave_step,
         args.max_following_error,
+        args.vector_window_ms,
     ) <= 0:
         parser.error("tilt, scales, rates, and step limits must be positive")
 
@@ -125,8 +173,7 @@ def main() -> int:
         current = status.as_pose()
         desired_roll = current.roll_deg
         desired_pitch = current.pitch_deg
-        pending_dx = 0
-        pending_dy = 0
+        vectors = TrackballVectorAccumulator()
         interval = 1.0 / args.rate_hz
         last_update = time.monotonic()
 
@@ -150,26 +197,30 @@ def main() -> int:
                     _, _, event_type, code, raw_value = INPUT_EVENT.unpack_from(
                         data, offset
                     )
-                    if event_type != EV_REL:
-                        continue
                     value = signed32(raw_value)
-                    if code == REL_X:
-                        pending_dx += value
-                    elif code == REL_Y:
-                        pending_dy += value
+                    vectors.feed(event_type, code, value, time.monotonic())
 
             now = time.monotonic()
             if now - last_update < interval:
                 continue
             last_update = now
 
+            vector = vectors.pop_ready(now, args.vector_window_ms / 1000.0)
+            if vector is not None:
+                pending_dx, pending_dy = vector
+            else:
+                pending_dx = pending_dy = 0
+
             if abs(pending_dx) > args.deadband or abs(pending_dy) > args.deadband:
-                desired_pitch += pending_dx * args.scale * args.pitch_sign
-                desired_roll += -pending_dy * args.scale * args.roll_sign
+                magnitude = math.hypot(pending_dx, pending_dy)
+                angle = math.atan2(-pending_dy, pending_dx)
+                vector_dx = magnitude * math.cos(angle)
+                vector_dy = -magnitude * math.sin(angle)
+                desired_pitch += vector_dx * args.scale * args.pitch_sign
+                desired_roll += -vector_dy * args.scale * args.roll_sign
                 desired_roll, desired_pitch = clamp_vector(
                     desired_roll, desired_pitch, args.max_tilt
                 )
-            pending_dx = pending_dy = 0
 
             next_roll, next_pitch = step_toward(
                 current.roll_deg,

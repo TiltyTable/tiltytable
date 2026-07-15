@@ -12,10 +12,14 @@ import math
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
+import numpy as np
+
 from analysis.tilt_kinematics import Geometry
 
 STEPS_PER_CRANK_REV = 16_000  # MCS=4, 20:1 gearbox
 CALIBRATE_CRANK_DEG = 90.0
+DEFAULT_PAYLOAD_KG = 22.6796  # 50 lb
+PREFERRED_DEAD_CENTER_MARGIN_DEG = 15.0
 
 
 @dataclass(frozen=True)
@@ -23,6 +27,8 @@ class CrankBranch:
     wrapped_deg: float
     advisory_joint_deg: float
     closure_margin_mm: float
+    crank_pin: tuple[float, float, float]
+    arm_unit: tuple[float, float, float]
 
 
 @dataclass(frozen=True)
@@ -35,6 +41,8 @@ class PoseSolution:
     closure_margin_mm: float
     worst_advisory_joint_deg: float
     max_crank_delta_deg: float
+    dead_center_margin_deg: float
+    max_static_torque_nm: float
 
     @property
     def steps(self) -> tuple[int, int, int]:
@@ -152,15 +160,69 @@ def solve_crank_branches(
             geometry.crank_radius_mm * math.sin(crank_rad),
         )
         dx, dy, dz = top[0] - pin[0], top[1] - pin[1], top[2] - pin[2]
+        arm_length = math.sqrt(dx * dx + dy * dy + dz * dz)
         advisory = math.degrees(math.atan2(math.hypot(dx, dy), dz))
         branches.append(
             CrankBranch(
                 wrapped_deg=math.degrees(crank_rad),
                 advisory_joint_deg=advisory,
                 closure_margin_mm=max(0.0, closure_margin),
+                crank_pin=pin,
+                arm_unit=(dx / arm_length, dy / arm_length, dz / arm_length),
             )
         )
     return tuple(branches)
+
+
+def distance_from_vertical_dead_center(crank_deg: float) -> float:
+    """Angular distance from either +90° or -90° crank dead center."""
+    return abs((crank_deg - 90.0 + 90.0) % 180.0 - 90.0)
+
+
+def estimate_static_motor_torque(
+    geometry: Geometry,
+    roll_deg: float,
+    pitch_deg: float,
+    heave_mm: float,
+    selected: Sequence[CrankBranch],
+    payload_kg: float,
+) -> float:
+    """Estimate worst crank torque for gravity using a 3-leg wrench solve."""
+    columns: list[list[float]] = []
+    top_center_z = geometry.neutral_top_z_mm + heave_mm
+    for leg, branch in enumerate(selected):
+        top = top_joint_position(geometry, leg, roll_deg, pitch_deg, heave_mm)
+        radius = np.array(
+            [top[0], top[1], top[2] - top_center_z], dtype=float
+        )
+        arm = np.array(branch.arm_unit, dtype=float)
+        moment = np.cross(radius, arm)
+        columns.append([*arm, *moment])
+
+    wrench_matrix = np.array(columns, dtype=float).T
+    desired_wrench = np.array(
+        [0.0, 0.0, payload_kg * 9.80665, 0.0, 0.0, 0.0], dtype=float
+    )
+    forces, *_ = np.linalg.lstsq(wrench_matrix, desired_wrench, rcond=None)
+
+    torques: list[float] = []
+    for leg, (branch, axial_force) in enumerate(zip(selected, forces)):
+        azimuth = math.radians(geometry.leg_azimuth_deg[leg])
+        motor = np.array(
+            [
+                geometry.base_motor_radius_mm * math.cos(azimuth),
+                geometry.base_motor_radius_mm * math.sin(azimuth),
+                0.0,
+            ]
+        )
+        crank = (np.array(branch.crank_pin) - motor) / 1000.0
+        force = -float(axial_force) * np.array(branch.arm_unit)
+        tangential_axis = np.array(
+            [-math.sin(azimuth), math.cos(azimuth), 0.0]
+        )
+        torque = abs(float(np.dot(np.cross(crank, force), tangential_axis)))
+        torques.append(torque)
+    return max(torques)
 
 
 def solve_pose_at_heave(
@@ -169,6 +231,8 @@ def solve_pose_at_heave(
     pitch_deg: float,
     heave_mm: float,
     previous_crank_deg: Sequence[float],
+    payload_kg: float = DEFAULT_PAYLOAD_KG,
+    estimate_torque: bool = True,
 ) -> PoseSolution | None:
     """Choose the continuous combination among all 2^3 crank branches."""
     if len(previous_crank_deg) != 3:
@@ -195,6 +259,21 @@ def solve_pose_at_heave(
         deltas = tuple(
             abs(unwrapped[leg] - previous_crank_deg[leg]) for leg in range(3)
         )
+        dead_center_margin = min(
+            distance_from_vertical_dead_center(value) for value in unwrapped
+        )
+        max_torque = (
+            estimate_static_motor_torque(
+                geometry,
+                roll_deg,
+                pitch_deg,
+                heave_mm,
+                selected,
+                payload_kg,
+            )
+            if estimate_torque
+            else 0.0
+        )
         solution = PoseSolution(
             roll_deg=roll_deg,
             pitch_deg=pitch_deg,
@@ -206,9 +285,13 @@ def solve_pose_at_heave(
                 item.advisory_joint_deg for item in selected
             ),
             max_crank_delta_deg=max(deltas),
+            dead_center_margin_deg=dead_center_margin,
+            max_static_torque_nm=max_torque,
         )
         score = (
             solution.max_crank_delta_deg,
+            solution.max_static_torque_nm,
+            -solution.dead_center_margin_deg,
             sum(deltas),
             -solution.closure_margin_mm,
         )
@@ -227,6 +310,8 @@ def optimize_heave(
     heave_max_mm: float = 30.0,
     heave_step_mm: float = 0.25,
     max_heave_step_mm: float | None = 1.0,
+    payload_kg: float = DEFAULT_PAYLOAD_KG,
+    preferred_dead_center_margin_deg: float = PREFERRED_DEAD_CENTER_MARGIN_DEG,
 ) -> PoseSolution | None:
     """Find a closure-valid heave while preserving crank/heave continuity."""
     if heave_step_mm <= 0:
@@ -249,13 +334,20 @@ def optimize_heave(
             pitch_deg,
             heave,
             previous.crank_deg,
+            payload_kg,
         )
         if solution is None:
             continue
         heave_delta = abs(heave - previous.heave_mm)
+        dead_center_penalty = max(
+            0.0,
+            preferred_dead_center_margin_deg - solution.dead_center_margin_deg,
+        )
         # Favor closure margin, but only inside the bounded per-waypoint heave
         # window so vertical motion remains continuous.
         score = (
+            solution.max_static_torque_nm + dead_center_penalty,
+            -solution.dead_center_margin_deg,
             -solution.closure_margin_mm,
             solution.max_crank_delta_deg,
             heave_delta,
@@ -275,6 +367,8 @@ def calibrated_solution() -> PoseSolution:
         closure_margin_mm=0.0,
         worst_advisory_joint_deg=0.0,
         max_crank_delta_deg=0.0,
+        dead_center_margin_deg=0.0,
+        max_static_torque_nm=0.0,
     )
 
 
@@ -318,6 +412,8 @@ def plan_targets(
     heave_step_mm: float = 0.25,
     max_heave_step_mm: float = 0.25,
     max_crank_step_deg: float = 12.0,
+    payload_kg: float = DEFAULT_PAYLOAD_KG,
+    preferred_dead_center_margin_deg: float = PREFERRED_DEAD_CENTER_MARGIN_DEG,
 ) -> list[PoseSolution]:
     geometry = geometry or Geometry()
     previous = initial or calibrated_solution()
@@ -332,6 +428,8 @@ def plan_targets(
             heave_max_mm=heave_max_mm,
             heave_step_mm=heave_step_mm,
             max_heave_step_mm=max_heave_step_mm,
+            payload_kg=payload_kg,
+            preferred_dead_center_margin_deg=preferred_dead_center_margin_deg,
         )
         if solution is None:
             raise NoSolutionError(
@@ -381,7 +479,12 @@ def endpoint_heave_range(
     for index in range(count + 1):
         heave = heave_min_mm + index * heave_step_mm
         if solve_pose_at_heave(
-            geometry, roll_deg, pitch_deg, heave, (90.0, 90.0, 90.0)
+            geometry,
+            roll_deg,
+            pitch_deg,
+            heave,
+            (90.0, 90.0, 90.0),
+            estimate_torque=False,
         ):
             valid.append(heave)
     if not valid:

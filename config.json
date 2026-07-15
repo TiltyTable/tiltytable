@@ -42,9 +42,9 @@
   },
   "ball": {
     "ball_tracking": true,
-    "ball_radius_min": 17.5,
-    "ball_radius_max": 32.5,
-    "ball_ir_threshold": 10000.0
+    "ball_radius_min": 15,
+    "ball_radius_max": 35,
+    "ball_ir_threshold": 4000.0
   },
   "table_pose": {
     "pose_update_every_n_frames": 3,

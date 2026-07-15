@@ -254,8 +254,8 @@ class TableGeometry:
 # mounted along the walls, which TableGeometry above tracks separately) —
 # used only by world_to_cell() below to normalize a ball position into the
 # GRID_ROWS x GRID_COLS grid.
-TABLE_LONG_SIDE_MM = 831.85   # measured: 32 3/4 inches
-TABLE_SHORT_SIDE_MM = 831.85  # measured: 32 3/4 inches
+TABLE_LONG_SIDE_MM = 800.0
+TABLE_SHORT_SIDE_MM = 800.0
 
 _GEOMETRY = TableGeometry()
 
