@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "thresholds": {},
+  "recommended_activation_deg": null,
+  "selected_profile": null,
+  "level_trim_roll_deg": 0.0,
+  "level_trim_pitch_deg": 0.0,
+  "motor_trim_steps": [
+    -8340,
+    -5200,
+    -5300
+  ],
+  "profiles": []
+}

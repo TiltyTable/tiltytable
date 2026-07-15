@@ -1,0 +1,13 @@
+[Unit]
+Description=TiltyTable persistent Stewart serial supervisor
+After=default.target
+
+[Service]
+Type=simple
+ExecStart=/home/zipline/tiltytable/.venv/bin/python3 /home/zipline/tiltytable/stewart_supervisor.py --arduino-cli /home/zipline/bin/arduino-cli
+Restart=no
+KillSignal=SIGTERM
+TimeoutStopSec=5
+
+[Install]
+WantedBy=default.target
