@@ -273,6 +273,21 @@ h2 {
   user-select: none;
 }
 
+.ir-pixel-tooltip {
+  display: none;
+  position: absolute;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.72);
+  color: #b8ffb0;
+  font-family: monospace;
+  font-size: 0.72rem;
+  padding: 2px 6px;
+  border-radius: 3px;
+  white-space: nowrap;
+  z-index: 10;
+  transform: translate(10px, -100%);
+}
+
 #irOverlay {
   position: absolute;
   inset: 0;

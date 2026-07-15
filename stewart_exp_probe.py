@@ -1,0 +1,508 @@
+#!/usr/bin/env python3
+"""Supervised full-rotation/free-heave Stewart experiment.
+
+This tool only speaks to ``uim5756pm_stewart_exp`` firmware. Dry-run and
+envelope modes never open serial. Live modes own one serial connection for
+identity, calibration, planning, motion, logging, and final hold.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import math
+import os
+import re
+import select
+import sys
+import termios
+import time
+import tty
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+import serial
+
+from analysis.stewart_exp_kinematics import (
+    NoSolutionError,
+    PoseSolution,
+    STEPS_PER_CRANK_REV,
+    calibrated_solution,
+    circle_targets,
+    endpoint_heave_range,
+    linear_targets,
+    plan_circle,
+    plan_targets,
+    steps_to_crank_deg,
+)
+from stewart_serial import open_stewart_serial, wait_if_reset
+
+
+@dataclass(frozen=True)
+class ExpStatus:
+    calibrated: bool
+    restored: bool
+    calibrating: bool
+    armed: bool
+    enabled: bool
+    moving: bool
+    steps: tuple[int, int, int]
+    targets: tuple[int, int, int]
+    marked: tuple[bool, bool, bool]
+    roll_deg: float
+    pitch_deg: float
+    heave_mm: float
+
+    @property
+    def crank_deg(self) -> tuple[float, float, float]:
+        return tuple(steps_to_crank_deg(value) for value in self.steps)
+
+    def as_pose(self) -> PoseSolution:
+        return PoseSolution(
+            roll_deg=self.roll_deg,
+            pitch_deg=self.pitch_deg,
+            heave_mm=self.heave_mm,
+            crank_deg=self.crank_deg,
+            branch_index=(0, 0, 0),
+            closure_margin_mm=0.0,
+            worst_advisory_joint_deg=0.0,
+            max_crank_delta_deg=0.0,
+        )
+
+
+def _field(text: str, name: str, cast):
+    match = re.search(rf"(?:^|\s){re.escape(name)}=([-+0-9.]+)", text)
+    if not match:
+        raise ValueError(f"missing {name}= in status: {text!r}")
+    return cast(match.group(1))
+
+
+def parse_status(text: str) -> ExpStatus:
+    if not text.startswith("OK STATUS") or "exp=1" not in text:
+        raise ValueError(f"not experimental status: {text!r}")
+    return ExpStatus(
+        calibrated=bool(_field(text, "calibrated", int)),
+        restored=bool(_field(text, "restored", int)),
+        calibrating=bool(_field(text, "calibrating", int)),
+        armed=bool(_field(text, "armed", int)),
+        enabled=bool(_field(text, "enabled", int)),
+        moving=bool(_field(text, "moving", int)),
+        steps=tuple(_field(text, f"s{i}", int) for i in range(3)),
+        targets=tuple(_field(text, f"t{i}", int) for i in range(3)),
+        marked=tuple(bool(_field(text, f"m{i}", int)) for i in range(3)),
+        roll_deg=_field(text, "roll", float),
+        pitch_deg=_field(text, "pitch", float),
+        heave_mm=_field(text, "heave", float),
+    )
+
+
+class ExpLink:
+    def __init__(self, port: str, baud: int = 115200) -> None:
+        self.port = port
+        self.baud = baud
+        self.ser: serial.Serial | None = None
+
+    def open(self) -> None:
+        self.ser = open_stewart_serial(self.port, self.baud, timeout=0.25)
+        if wait_if_reset(self.ser, 2.2):
+            time.sleep(0.2)
+        else:
+            time.sleep(2.2)
+        identity = self.exchange("EXP?", timeout=0.8)
+        if not identity.startswith("OK EXP UIM5756PM_STEWART_EXP"):
+            raise RuntimeError(
+                "wrong firmware; expected experimental executor, got "
+                f"{identity!r}"
+            )
+
+    def close(self) -> None:
+        if self.ser is not None:
+            self.ser.close()
+            self.ser = None
+
+    def exchange(self, command: str, timeout: float = 0.6) -> str:
+        if self.ser is None:
+            raise RuntimeError("serial link is not open")
+        self.ser.reset_input_buffer()
+        self.ser.write((command.rstrip() + "\n").encode("ascii"))
+        self.ser.flush()
+        deadline = time.monotonic() + timeout
+        lines: list[str] = []
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([self.ser.fileno()], [], [], 0.05)
+            if not ready:
+                continue
+            raw = self.ser.readline()
+            if raw:
+                text = raw.decode("utf-8", "replace").strip()
+                if text:
+                    lines.append(text)
+                    break
+        return lines[0] if lines else ""
+
+    def require_ok(self, command: str, prefix: str = "OK") -> str:
+        reply = self.exchange(command)
+        if not reply.startswith(prefix):
+            raise RuntimeError(f"{command!r} failed: {reply!r}")
+        return reply
+
+    def status(self) -> ExpStatus:
+        return parse_status(self.require_ok("STATUS", "OK STATUS"))
+
+    def wait_idle(self, timeout: float = 90.0) -> ExpStatus:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            status = self.status()
+            if not status.moving:
+                return status
+            time.sleep(0.1)
+        raise TimeoutError("experimental move did not become idle")
+
+    def wait_following(
+        self,
+        target_steps: tuple[int, int, int],
+        max_error_deg: float,
+        timeout: float = 30.0,
+    ) -> ExpStatus:
+        max_error_steps = max_error_deg * STEPS_PER_CRANK_REV / 360.0
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            status = self.status()
+            error = max(
+                abs(target_steps[axis] - status.steps[axis])
+                for axis in range(3)
+            )
+            if error <= max_error_steps:
+                return status
+            time.sleep(0.03)
+        raise TimeoutError("experimental target following error stayed too large")
+
+    def target(self, pose: PoseSolution) -> None:
+        steps = pose.steps
+        self.require_ok(
+            "TARGET "
+            f"{steps[0]} {steps[1]} {steps[2]} "
+            f"{pose.roll_deg:.5f} {pose.pitch_deg:.5f} {pose.heave_mm:.5f}",
+            "OK TARGET",
+        )
+
+
+def read_key() -> str:
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        data = os.read(fd, 1)
+        if data == b"\x1b":
+            deadline = time.monotonic() + 0.15
+            while len(data) < 3 and time.monotonic() < deadline:
+                if select.select([fd], [], [], 0.03)[0]:
+                    data += os.read(fd, 3 - len(data))
+        return data.decode("ascii", "ignore")
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def calibrate(link: ExpLink, fine: int = 100, coarse: int = 800) -> ExpStatus:
+    print("\nEXPERIMENTAL CALIBRATION")
+    print(
+        "For each axis: ←/→ or -/+ fine; ↓/↑ or B/F coarse; "
+        "Enter marks vertical; q aborts."
+    )
+    link.require_ok("CAL BEGIN")
+    for axis in range(3):
+        print(f"\nAxis {axis}: jog crank pin straight UP, then Enter.")
+        while True:
+            key = read_key()
+            if key in ("q", "Q", "\x03"):
+                link.require_ok("ABORT")
+                raise KeyboardInterrupt
+            if key in ("\r", "\n"):
+                link.wait_idle()
+                link.require_ok(f"CAL MARK {axis}")
+                print(f"  axis {axis} marked")
+                break
+            pulses = {
+                "\x1b[C": fine,
+                "\x1b[D": -fine,
+                "\x1b[A": coarse,
+                "\x1b[B": -coarse,
+                "+": fine,
+                "-": -fine,
+                "F": coarse,
+                "f": coarse,
+                "B": -coarse,
+                "b": -coarse,
+                "l": fine,
+                "h": -fine,
+                "k": coarse,
+                "j": -coarse,
+            }.get(key)
+            if pulses is None:
+                continue
+            link.wait_idle()
+            reply = link.require_ok(f"CAL JOG {axis} {pulses}", "OK CAL JOG")
+            print(f"\r  {reply:<60}", end="", flush=True)
+    link.require_ok("CAL FINISH")
+    status = link.status()
+    if not status.calibrated:
+        raise RuntimeError("calibration did not set calibrated=1")
+    return status
+
+
+def build_target_list(
+    args: argparse.Namespace, initial: PoseSolution
+) -> list[tuple[float, float]]:
+    if args.circle is not None:
+        targets = linear_targets(
+            initial.roll_deg,
+            initial.pitch_deg,
+            0.0,
+            args.circle,
+            args.ramp_points,
+        )
+        targets.extend(circle_targets(args.circle, args.points)[1:])
+        return targets
+    if args.target is not None:
+        return linear_targets(
+            initial.roll_deg,
+            initial.pitch_deg,
+            args.target[0],
+            args.target[1],
+            args.ramp_points,
+        )
+    if args.cardinals is not None:
+        radius = args.cardinals
+        target_list: list[tuple[float, float]] = []
+        current = (initial.roll_deg, initial.pitch_deg)
+        for destination in (
+            (0.0, radius),
+            (radius, 0.0),
+            (0.0, -radius),
+            (-radius, 0.0),
+            (0.0, 0.0),
+        ):
+            target_list.extend(
+                linear_targets(
+                    current[0],
+                    current[1],
+                    destination[0],
+                    destination[1],
+                    args.ramp_points,
+                )
+            )
+            current = destination
+        return target_list
+    raise ValueError("select --circle, --target, or --cardinals")
+
+
+def plan(args: argparse.Namespace, initial: PoseSolution) -> list[PoseSolution]:
+    return plan_targets(
+        build_target_list(args, initial),
+        initial=initial,
+        heave_min_mm=args.heave_min,
+        heave_max_mm=args.heave_max,
+        heave_step_mm=args.heave_step,
+        max_heave_step_mm=args.max_heave_step,
+        max_crank_step_deg=args.max_crank_step,
+    )
+
+
+def summarize(planned: list[PoseSolution]) -> None:
+    print(f"waypoints: {len(planned)}")
+    print(
+        f"heave: {min(p.heave_mm for p in planned):.2f} .. "
+        f"{max(p.heave_mm for p in planned):.2f} mm"
+    )
+    print(
+        f"max crank waypoint: "
+        f"{max(p.max_crank_delta_deg for p in planned):.2f}°"
+    )
+    print(
+        f"minimum closure margin: "
+        f"{min(p.closure_margin_mm for p in planned):.2f} mm"
+    )
+    print(
+        f"worst advisory joint proxy: "
+        f"{max(p.worst_advisory_joint_deg for p in planned):.2f}°"
+    )
+
+
+def write_log(path: Path, planned: list[PoseSolution]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = []
+    for index, pose in enumerate(planned):
+        row = asdict(pose)
+        row["index"] = index
+        row["steps"] = pose.steps
+        payload.append(row)
+    path.write_text(json.dumps(payload, indent=2) + "\n")
+
+
+def envelope_map(args: argparse.Namespace) -> dict[str, object]:
+    directions = []
+    for direction in range(0, 360, args.direction_step):
+        radians = math.radians(direction)
+        last = 0.0
+        heave_range = None
+        radius = args.radius_step
+        while radius <= args.envelope_max + 1e-9:
+            roll = radius * math.sin(radians)
+            pitch = radius * math.cos(radians)
+            found = endpoint_heave_range(
+                roll,
+                pitch,
+                heave_min_mm=args.heave_min,
+                heave_max_mm=args.heave_max,
+                heave_step_mm=args.heave_step,
+            )
+            if found is None:
+                break
+            last, heave_range = radius, found
+            radius += args.radius_step
+        directions.append(
+            {
+                "direction_deg": direction,
+                "max_radius_deg": round(last, 6),
+                "heave_range_mm": heave_range,
+            }
+        )
+    return {
+        "heave_min_mm": args.heave_min,
+        "heave_max_mm": args.heave_max,
+        "directions": directions,
+    }
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--port", default="/dev/arduino-stewart")
+    parser.add_argument("--baud", type=int, default=115200)
+    parser.add_argument("--circle", type=float, metavar="DEG")
+    parser.add_argument("--target", type=float, nargs=2, metavar=("ROLL", "PITCH"))
+    parser.add_argument("--cardinals", type=float, metavar="DEG")
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--check-firmware", action="store_true")
+    parser.add_argument("--envelope-map", type=Path)
+    parser.add_argument("--envelope-max", type=float, default=20.0)
+    parser.add_argument("--direction-step", type=int, default=5)
+    parser.add_argument("--radius-step", type=float, default=0.25)
+    parser.add_argument("--heave-min", type=float, default=-15.0)
+    parser.add_argument("--heave-max", type=float, default=30.0)
+    parser.add_argument("--heave-step", type=float, default=0.25)
+    parser.add_argument("--max-heave-step", type=float, default=0.25)
+    parser.add_argument("--max-crank-step", type=float, default=12.0)
+    parser.add_argument("--ramp-points", type=int, default=240)
+    parser.add_argument("--points", type=int, default=240)
+    parser.add_argument("--period", type=float, default=30.0)
+    parser.add_argument(
+        "--max-following-error",
+        type=float,
+        default=2.0,
+        metavar="CRANK_DEG",
+        help="wait when generated crank position lags target by more than this",
+    )
+    parser.add_argument("--log", type=Path)
+    parser.add_argument("--yes", "-y", action="store_true")
+    parser.add_argument("--disable-on-exit", action="store_true")
+    args = parser.parse_args()
+
+    selected = sum(
+        value is not None
+        for value in (args.circle, args.target, args.cardinals, args.envelope_map)
+    ) + int(args.check_firmware)
+    if selected != 1:
+        parser.error(
+            "select exactly one of --circle, --target, --cardinals, "
+            "--envelope-map, --check-firmware"
+        )
+    if args.max_following_error <= 0:
+        parser.error("--max-following-error must be > 0")
+
+    if args.envelope_map is not None:
+        payload = envelope_map(args)
+        args.envelope_map.parent.mkdir(parents=True, exist_ok=True)
+        args.envelope_map.write_text(json.dumps(payload, indent=2) + "\n")
+        print(f"wrote {args.envelope_map}")
+        return 0
+
+    if args.dry_run:
+        planned = plan(args, calibrated_solution())
+        summarize(planned)
+        if args.log:
+            write_log(args.log, planned)
+            print(f"wrote {args.log}")
+        return 0
+
+    link = ExpLink(args.port, args.baud)
+    try:
+        link.open()
+        status = link.status()
+        print(status)
+        if args.check_firmware:
+            return 0
+        if not status.calibrated:
+            status = calibrate(link)
+
+        initial = status.as_pose()
+        planned = plan(args, initial)
+        summarize(planned)
+        if args.log:
+            write_log(args.log, planned)
+            print(f"wrote {args.log}")
+
+        if not args.yes:
+            confirmation = input(
+                "Type MOVE to arm and execute this experimental trajectory: "
+            )
+            if confirmation != "MOVE":
+                print("Cancelled; holding current state.")
+                link.require_ok("HOLD")
+                return 2
+
+        link.require_ok("ARM CONFIRM", "OK ARM")
+        interval = args.period / max(1, args.points)
+        for index, pose in enumerate(planned, start=1):
+            link.target(pose)
+            link.wait_following(pose.steps, args.max_following_error)
+            print(
+                f"\r{index}/{len(planned)} "
+                f"r={pose.roll_deg:+6.2f} p={pose.pitch_deg:+6.2f} "
+                f"h={pose.heave_mm:+6.2f}",
+                end="",
+                flush=True,
+            )
+            time.sleep(interval)
+        print()
+        link.wait_idle()
+        link.require_ok("HOLD", "OK HOLD")
+        print("Trajectory complete; holding final pose.")
+        return 0
+    except KeyboardInterrupt:
+        print("\nInterrupted; requesting ABORT/HOLD.")
+        try:
+            link.require_ok("ABORT", "OK ABORT")
+        except Exception as exc:
+            print(f"WARNING: abort failed: {exc}", file=sys.stderr)
+        return 130
+    except (NoSolutionError, RuntimeError, serial.SerialException, TimeoutError) as exc:
+        print(f"\nerror: {exc}", file=sys.stderr)
+        try:
+            link.require_ok("ABORT", "OK ABORT")
+        except Exception:
+            pass
+        return 1
+    finally:
+        if link.ser is not None:
+            try:
+                if args.disable_on_exit:
+                    link.require_ok("DISABLE", "OK DISABLE")
+                else:
+                    link.require_ok("HOLD", "OK HOLD")
+            except Exception as exc:
+                print(f"WARNING: final hold/disable failed: {exc}", file=sys.stderr)
+            link.close()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

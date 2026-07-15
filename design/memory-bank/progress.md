@@ -1,6 +1,7 @@
 # Progress
 
 ## Completed
+- [x] Isolated experimental full-rotation/free-heave stack: dual-branch host IK, dedicated armed absolute-step firmware, supervised probe/logging, 10° continuous dry-run coverage, and regression tests (not flashed).
 - [x] Clean app-restart position persistence (EEPROM + reset-cause gate) and supervised Stewart circular range test command.
 - [x] One-at-a-time UIM5756PM MCS=8 configurator (A4 RX/white TX, A5 TX/green RX); Stewart runtime prepared for 32000 steps/crank rev and 5 µs pulses.
 - [x] Responsive Stewart position control: safe 4.6° radial envelope at heave 20, direct EMA 1.0 response at fixed 0.04°/count, firmware error visibility, corrected as-built kinematics, and regression tests.

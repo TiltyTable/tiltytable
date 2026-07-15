@@ -219,7 +219,7 @@ _DISTANCE_MATCH_AMBIGUITY_MM = 15.0  # runner-up assignment must be at least thi
 # ball_tracker.py builds would clip both the bright background and the
 # marker to 255 and lose the distinction entirely.
 # ---------------------------------------------------------------------------
-_MARKER_IR_MIN_COUNTS = 3800.0  # module default; overridden live via UI slider in practice
+_MARKER_IR_THRESHOLD = 3800.0  # module default; overridden live via UI slider in practice
 _MIN_MARKER_AREA_PX = 4.0
 _MAX_MARKER_AREA_PX = 4000.0
 _MIN_MARKER_CIRCULARITY = 0.6
@@ -310,7 +310,7 @@ def detect_markers(
     fy: float,
     ppx: float,
     ppy: float,
-    ir_min_counts: float = _MARKER_IR_MIN_COUNTS,
+    ir_min_counts: float = _MARKER_IR_THRESHOLD,
 ) -> tuple[list[MarkerBlob], np.ndarray, DetectionDiagnostics]:
     """
     Find retroreflective marker blobs in a raw 16-bit IR frame.
@@ -320,10 +320,11 @@ def detect_markers(
     can still be shown to the operator) if the count isn't exactly
     _EXPECTED_MARKER_COUNT.
     """
+    diag_thresholds = sorted(set(_DIAGNOSTIC_THRESHOLDS) | {float(ir_min_counts)})
     diagnostics = DetectionDiagnostics(
         ir_max=float(ir_uint16.max()) if ir_uint16.size else 0.0,
         threshold_counts={
-            t: int(np.count_nonzero(ir_uint16 >= t)) for t in _DIAGNOSTIC_THRESHOLDS
+            t: int(np.count_nonzero(ir_uint16 >= t)) for t in diag_thresholds
         },
     )
 
@@ -388,7 +389,12 @@ def detect_markers(
         blobs.append(MarkerBlob(cx=cx, cy=cy, radius_px=radius_px, x_mm=x_mm, y_mm=y_mm, z_mm=z_mm))
         cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_OK, 2)
 
-    if len(blobs) != _EXPECTED_MARKER_COUNT:
+    # Too few is unrecoverable (some marker just wasn't seen this frame) and
+    # raises immediately. Too many (e.g. a stray reflection also crossed the
+    # IR threshold) is left for the caller to resolve — run_pose_fit() can
+    # narrow extra candidates down to _EXPECTED_MARKER_COUNT using the prior
+    # pose, so failing here would throw away a recoverable frame.
+    if len(blobs) < _EXPECTED_MARKER_COUNT:
         raise DetectionError(
             f"expected {_EXPECTED_MARKER_COUNT} retroreflective markers, found {len(blobs)}",
             debug_frame=dbg,
@@ -396,6 +402,52 @@ def detect_markers(
         )
 
     return blobs, dbg, diagnostics
+
+
+# ---------------------------------------------------------------------------
+# Inlier gating for extra candidate blobs — a lightweight, prior-pose-based
+# stand-in for RANSAC. detect_markers() may return more than
+# _EXPECTED_MARKER_COUNT blobs (e.g. a stray reflection also cleared the IR
+# threshold); rather than failing the whole frame, use the last successfully
+# fit pose to predict where each of the 5 known markers should be in camera
+# frame right now, then greedily keep whichever candidate blob is closest to
+# each prediction and drop the rest. Final point *identity* is still left to
+# match_points()'s pure pairwise-distance match below — this step only
+# decides which 5 of N blobs are worth handing to it.
+# ---------------------------------------------------------------------------
+
+def select_inlier_markers(
+    blobs: list[MarkerBlob], R: np.ndarray, t: np.ndarray,
+) -> list[MarkerBlob]:
+    """Given more candidate blobs than markers, greedily pick the closest
+    blob (in camera-frame mm) to each known marker's position as predicted
+    by the prior pose (R, t maps camera -> world, so the inverse camera
+    prediction is R.T @ (world - t)). Returns exactly _EXPECTED_MARKER_COUNT
+    blobs, or fewer if there aren't enough candidates left to pick from."""
+    predicted_cam = {
+        name: R.T @ (np.array(world_pt, dtype=np.float64) - t)
+        for name, world_pt in TABLE_MARKER_WORLD_POINTS.items()
+    }
+    remaining_blobs = list(blobs)
+    remaining_names = list(predicted_cam.keys())
+    selected: list[MarkerBlob] = []
+
+    while remaining_names and remaining_blobs:
+        best_dist = None
+        best_name = None
+        best_blob = None
+        for name in remaining_names:
+            pred = predicted_cam[name]
+            for blob in remaining_blobs:
+                cam_pt = np.array([blob.x_mm, blob.y_mm, blob.z_mm])
+                dist = float(np.linalg.norm(pred - cam_pt))
+                if best_dist is None or dist < best_dist:
+                    best_dist, best_name, best_blob = dist, name, blob
+        selected.append(best_blob)
+        remaining_names.remove(best_name)
+        remaining_blobs.remove(best_blob)
+
+    return selected
 
 
 # ---------------------------------------------------------------------------
@@ -501,17 +553,38 @@ def run_pose_fit(
     fy: float,
     ppx: float,
     ppy: float,
-    marker_ir_min_counts: float = _MARKER_IR_MIN_COUNTS,
+    marker_ir_threshold: float = _MARKER_IR_THRESHOLD,
+    prior_pose: Optional[tuple[np.ndarray, np.ndarray]] = None,
 ) -> PoseFitAttempt:
-    """One pose-fit attempt end to end: detect -> match -> fit. Never raises."""
+    """One pose-fit attempt end to end: detect -> match -> fit. Never raises.
+
+    prior_pose, if given, is the (R, t) of the last successfully fit pose
+    (see TablePoseTracker). It's only used when detect_markers() returns
+    more than _EXPECTED_MARKER_COUNT candidate blobs (e.g. a stray
+    reflection also cleared the IR threshold) — select_inlier_markers()
+    uses it to predict where the real markers should be and discard the
+    extra candidate(s), instead of failing the whole frame. Without a prior
+    pose, an over-count is treated as a failure.
+    """
     try:
         blobs, debug_frame, diagnostics = detect_markers(
-            ir_uint16, depth_mm, fx, fy, ppx, ppy, ir_min_counts=marker_ir_min_counts,
+            ir_uint16, depth_mm, fx, fy, ppx, ppy, ir_min_counts=marker_ir_threshold,
         )
     except DetectionError as exc:
         return PoseFitAttempt(
             ok=False, error=str(exc), debug_frame=exc.debug_frame, fit=None, diagnostics=exc.diagnostics,
         )
+
+    if len(blobs) > _EXPECTED_MARKER_COUNT:
+        if prior_pose is None:
+            return PoseFitAttempt(
+                ok=False,
+                error=f"found {len(blobs)} candidate markers (expected {_EXPECTED_MARKER_COUNT}) "
+                      f"and no prior pose available to disambiguate",
+                debug_frame=debug_frame, fit=None, diagnostics=diagnostics,
+            )
+        prior_R, prior_t = prior_pose
+        blobs = select_inlier_markers(blobs, prior_R, prior_t)
 
     try:
         matched = match_points(blobs)
@@ -556,6 +629,12 @@ class TablePoseTracker:
     table doesn't stop existing just because one frame's detection failed —
     but `apply()` reports `stale=True` so callers can decide whether to
     trust the position for that duration.
+
+    Also passes its held pose into run_pose_fit() as `prior_pose` on every
+    call, so a frame with a spurious extra IR blob (see
+    select_inlier_markers()) gets resolved instead of failing outright —
+    only the very first update(), before anything has ever succeeded, has no
+    prior pose to fall back on.
     """
 
     def __init__(self):
@@ -584,10 +663,14 @@ class TablePoseTracker:
         fy: float,
         ppx: float,
         ppy: float,
-        marker_ir_min_counts: float = _MARKER_IR_MIN_COUNTS,
+        marker_ir_threshold: float = _MARKER_IR_THRESHOLD,
         now: Optional[float] = None,
     ) -> PoseFitAttempt:
-        attempt = run_pose_fit(ir_uint16, depth_mm, fx, fy, ppx, ppy, marker_ir_min_counts=marker_ir_min_counts)
+        prior_pose = (self.R, self.t) if self.R is not None else None
+        attempt = run_pose_fit(
+            ir_uint16, depth_mm, fx, fy, ppx, ppy,
+            marker_ir_threshold=marker_ir_threshold, prior_pose=prior_pose,
+        )
         self.last_attempt = attempt
         if attempt.ok:
             self.R = attempt.fit.R

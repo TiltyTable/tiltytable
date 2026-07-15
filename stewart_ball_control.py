@@ -228,7 +228,7 @@ class CameraThread:
                     self._pose_frame_counter = 0
                     self.table_pose.update(
                         ir_frame, capture.depth, fx, fy, ppx, ppy,
-                        marker_ir_min_counts=args.marker_ir_min_counts,
+                        marker_ir_threshold=args.marker_ir_threshold,
                     )
 
                 ball_world = None
@@ -586,7 +586,7 @@ def parse_args(argv=None) -> argparse.Namespace:
         parser.error("--assist must be in [0, 1]")
     if args.pose_update_every_n_frames <= 0:
         parser.error("--pose-update-every-n-frames must be greater than zero")
-    if args.marker_ir_min_counts < 0:
+    if args.marker_ir_threshold < 0:
         parser.error("--marker-ir-min-counts cannot be negative")
     if args.input == "gamepad" and args.reset_button_code == args.assist_button_code:
         parser.error("--reset-button-code and --assist-button-code must differ")

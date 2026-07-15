@@ -228,6 +228,93 @@ class DetectMarkersBallRejectionTests(unittest.TestCase):
             self.assertGreater(dist_to_ball, ball_radius_px)
 
 
+class SelectInlierMarkersTests(unittest.TestCase):
+    """select_inlier_markers() is the RANSAC-ish gate: given more candidate
+    blobs than markers, it uses a prior pose to predict each known marker's
+    camera-frame position and keeps only the closest blob to each -- the
+    rest (e.g. a stray reflection) are dropped rather than failing the
+    whole frame."""
+
+    def _camera_points_for_pose(self, R: np.ndarray, t: np.ndarray) -> dict:
+        """camera = R.T @ (world - t) is the inverse of world = R @ camera + t."""
+        return {
+            name: R.T @ (np.array(world_pt, dtype=np.float64) - t)
+            for name, world_pt in tp.TABLE_MARKER_WORLD_POINTS.items()
+        }
+
+    def test_extra_spurious_blob_is_dropped(self):
+        R0 = _rotation_from_euler_deg(3.0, -5.0, 8.0)
+        t0 = np.array([50.0, -30.0, 900.0])
+        cam_pts = self._camera_points_for_pose(R0, t0)
+
+        blobs = [_FakeBlob(*cam_pts[name]) for name in cam_pts]
+        # A spurious blob nowhere near any predicted marker position.
+        spurious = _FakeBlob(cam_pts["origin"][0] + 500.0, cam_pts["origin"][1] + 500.0, cam_pts["origin"][2])
+        blobs.append(spurious)
+
+        selected = tp.select_inlier_markers(blobs, R0, t0)
+
+        self.assertEqual(len(selected), tp._EXPECTED_MARKER_COUNT)
+        self.assertNotIn(spurious, selected)
+        for name, pred in cam_pts.items():
+            closest = min(selected, key=lambda b: np.linalg.norm(pred - np.array([b.x_mm, b.y_mm, b.z_mm])))
+            self.assertLess(np.linalg.norm(pred - np.array([closest.x_mm, closest.y_mm, closest.z_mm])), 1e-6)
+
+    def test_multiple_extra_blobs_still_selects_the_five_closest(self):
+        R0 = _rotation_from_euler_deg(0.0, 0.0, 0.0)
+        t0 = np.array([0.0, 0.0, 900.0])
+        cam_pts = self._camera_points_for_pose(R0, t0)
+
+        blobs = [_FakeBlob(*cam_pts[name]) for name in cam_pts]
+        spurious_a = _FakeBlob(cam_pts["x1"][0] + 300.0, cam_pts["x1"][1], cam_pts["x1"][2])
+        spurious_b = _FakeBlob(cam_pts["y2"][0], cam_pts["y2"][1] + 300.0, cam_pts["y2"][2])
+        blobs.extend([spurious_a, spurious_b])
+
+        selected = tp.select_inlier_markers(blobs, R0, t0)
+
+        self.assertEqual(len(selected), tp._EXPECTED_MARKER_COUNT)
+        self.assertNotIn(spurious_a, selected)
+        self.assertNotIn(spurious_b, selected)
+
+
+class RunPoseFitPriorPoseTests(unittest.TestCase):
+    """run_pose_fit() only tolerates an over-count of candidate blobs when
+    given a prior pose to disambiguate with; otherwise it fails the attempt
+    rather than guessing."""
+
+    def _blobs_with_one_spurious(self, R0, t0):
+        cam_pts = {
+            name: R0.T @ (np.array(world_pt, dtype=np.float64) - t0)
+            for name, world_pt in tp.TABLE_MARKER_WORLD_POINTS.items()
+        }
+        blobs = [_FakeBlob(*cam_pts[name]) for name in cam_pts]
+        blobs.append(_FakeBlob(cam_pts["origin"][0] + 500.0, cam_pts["origin"][1] + 500.0, cam_pts["origin"][2]))
+        return blobs
+
+    def test_over_count_without_prior_pose_fails(self):
+        R0 = _rotation_from_euler_deg(2.0, -3.0, 5.0)
+        t0 = np.array([10.0, 20.0, 900.0])
+        blobs = self._blobs_with_one_spurious(R0, t0)
+
+        with mock.patch.object(tp, "detect_markers", return_value=(blobs, None, None)):
+            attempt = tp.run_pose_fit(None, None, 1.0, 1.0, 1.0, 1.0, prior_pose=None)
+
+        self.assertFalse(attempt.ok)
+        self.assertIn("no prior pose", attempt.error)
+
+    def test_over_count_with_prior_pose_succeeds(self):
+        R0 = _rotation_from_euler_deg(2.0, -3.0, 5.0)
+        t0 = np.array([10.0, 20.0, 900.0])
+        blobs = self._blobs_with_one_spurious(R0, t0)
+
+        with mock.patch.object(tp, "detect_markers", return_value=(blobs, None, None)):
+            attempt = tp.run_pose_fit(None, None, 1.0, 1.0, 1.0, 1.0, prior_pose=(R0, t0))
+
+        self.assertTrue(attempt.ok)
+        np.testing.assert_allclose(attempt.fit.R, R0, atol=1e-6)
+        np.testing.assert_allclose(attempt.fit.t, t0, atol=1e-6)
+
+
 class TablePoseTrackerTests(unittest.TestCase):
     """These test the tracker's state machine (hold-last-pose + stale flag)
     in isolation from real image detection, by mocking run_pose_fit."""
@@ -294,6 +381,25 @@ class TablePoseTrackerTests(unittest.TestCase):
         world, stale, age_s = tracker.apply((0.0, 0.0, 0.0), now=110.0)
         self.assertFalse(stale)
         self.assertAlmostEqual(age_s, 0.0)
+
+    def test_first_update_passes_no_prior_pose(self):
+        tracker = tp.TablePoseTracker()
+        with mock.patch.object(tp, "run_pose_fit", return_value=self._successful_attempt()) as mocked:
+            tracker.update(None, None, 1.0, 1.0, 1.0, 1.0, now=100.0)
+        self.assertIsNone(mocked.call_args.kwargs["prior_pose"])
+
+    def test_later_update_passes_previously_held_pose_as_prior(self):
+        tracker = tp.TablePoseTracker()
+        with mock.patch.object(tp, "run_pose_fit", return_value=self._successful_attempt()):
+            tracker.update(None, None, 1.0, 1.0, 1.0, 1.0, now=100.0)
+        R_before, t_before = tracker.R.copy(), tracker.t.copy()
+
+        with mock.patch.object(tp, "run_pose_fit", return_value=self._successful_attempt()) as mocked:
+            tracker.update(None, None, 1.0, 1.0, 1.0, 1.0, now=105.0)
+
+        prior_R, prior_t = mocked.call_args.kwargs["prior_pose"]
+        np.testing.assert_allclose(prior_R, R_before)
+        np.testing.assert_allclose(prior_t, t_before)
 
 
 class BallTrackerRegressionTests(unittest.TestCase):

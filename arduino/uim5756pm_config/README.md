@@ -1,8 +1,9 @@
 # UIM5756PM one-motor MCS configurator
 
-Dedicated Uno R3 firmware for changing one connected UIM5756PM motor from
-MCS=32 to MCS=8 without Windows. It disables all Stewart ENA outputs and never
-generates STEP pulses.
+Dedicated Uno R3 firmware for changing one connected UIM5756PM motor's MCS
+without Windows. It disables all Stewart ENA outputs and never generates STEP
+pulses. The experimental stack currently targets **MCS=4**; production still
+targets MCS=8.
 
 Protocol was derived from the official UIROBOT CFG344 v250730 executable:
 57600 baud, 8N1, 8-byte `AA CMD D0 D1 D2 D3 D4 CC` frames.
@@ -34,15 +35,15 @@ Use newline termination in the monitor:
 
 ```text
 get
-set 8 CONFIRM
+set 4 CONFIRM
 ```
 
 `set` first requires a valid MCS query response, then sends the MCS write and
 EEPROM-save frames. After configuring all three motors one at a time:
 
 1. Power-cycle the motor supply.
-2. Reconnect each motor UART and run `get`; each must report `MCS 8`.
-3. Flash `arduino/uim5756pm_stewart`.
+2. Reconnect each motor UART and run `get`; each must report the selected MCS.
+3. Flash firmware whose `STEPS_PER_CRANK_REV` matches that MCS.
 4. Recalibrate all three cranks before motion.
 
-Never run the Stewart motion firmware while motors have mixed MCS settings.
+Never run Stewart motion firmware while motors have mixed MCS settings.

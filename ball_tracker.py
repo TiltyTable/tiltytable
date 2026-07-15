@@ -36,14 +36,8 @@ import camera_geometry
 # Detection parameters
 # ---------------------------------------------------------------------------
 
-_IR_PERCENTILE_LOW  = 1     # scene floor for contrast stretch
-_IR_PERCENTILE_HIGH = 99    # scene ceiling for contrast stretch
-
-# Pixels above this fraction of the contrast-stretched (0–255) range are
-# treated as bright candidates.  The retro-reflective ball is significantly
-# brighter than the table surface.  Raise if tiles produce false positives;
-# lower if the ball is dim at large depth or off-axis.
-_BALL_BRIGHT_FRACTION = 0.90
+# Default raw uint16 IR count threshold — overridden at runtime via config/slider.
+_BALL_IR_THRESHOLD_DEFAULT = 3000
 
 # Inner fraction of the detected radius used when sampling depth.
 # Avoids edge pixels where depth reads the background.
@@ -54,12 +48,11 @@ _DEPTH_SAMPLE_FRACTION = 0.40
 _MIN_VALID_DEPTH_FRACTION = 0.10
 
 # Contour shape filters
-_MIN_CIRCULARITY  = 0.75   # 4π·Area/Perimeter²; perfect circle = 1.0
+_MIN_CIRCULARITY  = 0.50   # 4π·Area/Perimeter²; perfect circle = 1.0
 _MIN_CONTOUR_AREA = 15     # pixels²
 _MAX_CONTOUR_AREA = 4000   # pixels² — rejects merged ball+edge blobs
 _MIN_FILL_FRACTION = 0.60  # contour area / min-enclosing-circle area
 
-_IR_BLUR_SIGMA = 0.0       # disabled — retro-reflective ball doesn't need it; blur merges ball into frame edge
 
 # ---------------------------------------------------------------------------
 # Tracking parameters
@@ -196,6 +189,7 @@ class BallDetector:
         ppy: float,
         ball_radius_min_mm: float = 20.0,
         ball_radius_max_mm: float = 40.0,
+        ball_ir_threshold: int = _BALL_IR_THRESHOLD_DEFAULT,
     ):
         self.fx = fx
         self.fy = fy
@@ -203,6 +197,7 @@ class BallDetector:
         self.ppy = ppy
         self.ball_radius_min_mm = ball_radius_min_mm
         self.ball_radius_max_mm = ball_radius_max_mm
+        self.ball_ir_threshold = ball_ir_threshold
         self._debug_frame: Optional[np.ndarray] = None
         self.last_reject_counts: dict[str, int] = {}
 
@@ -245,28 +240,16 @@ class BallDetector:
         counts = {"shape": 0, "fill": 0, "depth": 0, "size": 0, "accepted": 0}
         self.last_reject_counts = counts
 
-        # Contrast-stretch 16-bit IR → 8-bit.
-        # Pixels outside the Kinect's circular FOV are exactly 0 (invalid).
-        # Erode the valid mask slightly to exclude the dim FOV-boundary ring.
-        ir_f = ir_uint16.astype(np.float32, copy=False)
         valid = ir_uint16 > 0
-        valid_px = ir_f[valid]
-        if valid_px.size == 0:
+        if not valid.any():
             self._debug_frame = None
             return None
-        p_lo = float(np.percentile(valid_px, _IR_PERCENTILE_LOW))
-        p_hi = float(np.percentile(valid_px, _IR_PERCENTILE_HIGH))
-        if p_hi <= p_lo:
-            self._debug_frame = None
-            return None
-        ir8 = np.clip((ir_f - p_lo) / (p_hi - p_lo) * 255.0, 0, 255).astype(np.uint8)
-        ir8[~valid] = 0
 
-        ir_blur = cv2.GaussianBlur(ir8, (0, 0), _IR_BLUR_SIGMA) if _IR_BLUR_SIGMA > 0 else ir8
+        ir_blurred = cv2.GaussianBlur(ir_uint16.astype(np.float32), (3, 3), 0).astype(np.uint16)
+        mask = np.where((ir_blurred >= self.ball_ir_threshold) & valid, np.uint8(255), np.uint8(0))
 
-        # Threshold for bright pixels (retro-reflective ball).
-        bright_thresh = int(_BALL_BRIGHT_FRACTION * 255)
-        mask = np.where((ir_blur >= bright_thresh) & valid, np.uint8(255), np.uint8(0))
+        # 8-bit display: same linear scale as the active brightness view (>> 8).
+        ir8 = (ir_uint16 >> 8).astype(np.uint8)
 
         # Debug frame: IR image with green tint over candidate pixels.
         dbg = cv2.cvtColor(ir8, cv2.COLOR_GRAY2BGR)
@@ -580,7 +563,7 @@ if __name__ == "__main__":
         )
         _tracker = BallTracker.from_k4a_calibration(_k4a.calibration)
         print(
-            f"Detector ready.  bright_threshold={_BALL_BRIGHT_FRACTION:.2f}  "
+            f"Detector ready.  ball_ir_threshold={_detector.ball_ir_threshold}  "
             f"radius=[{_args.ball_radius_min}, {_args.ball_radius_max}] mm"
         )
         print("Ctrl-C to stop.\n")

@@ -13,8 +13,6 @@ const trackerSection     = document.querySelector('#trackerSection');
 const irFeed             = document.querySelector('#irFeed');
 const trackerFeed        = document.querySelector('#trackerFeed');
 const irOverlay          = document.querySelector('#irOverlay');
-const irBrightnessSlider = document.querySelector('#irBrightnessSlider');
-const lblIrBrightness    = document.querySelector('#lblIrBrightness');
 
 const ballPill     = document.querySelector('#ballPill');
 const ballX        = document.querySelector('#ballX');
@@ -33,25 +31,40 @@ const poseResiduals       = document.querySelector('#poseResiduals');
 const calibDiagnostics    = document.querySelector('#calibDiagnostics');
 const markerThresholdSlider = document.querySelector('#markerThresholdSlider');
 const lblMarkerThreshold    = document.querySelector('#lblMarkerThreshold');
+const ballThresholdSlider   = document.querySelector('#ballThresholdSlider');
+const lblBallThreshold      = document.querySelector('#lblBallThreshold');
+const irPixelTooltip        = document.querySelector('#irPixelTooltip');
+const irStage               = document.querySelector('#irStage');
 
 let lastDiagnostics = null;
 
-// IR brightness slider — throttled POST: fires immediately, then at most every 50 ms while dragging.
-let irBrightnessThrottle = null;
-let irBrightnessPending  = null;
-async function sendIrBrightness(v) {
-  irBrightnessPending = null;
-  irBrightnessThrottle = setTimeout(() => {
-    irBrightnessThrottle = null;
-    if (irBrightnessPending !== null) sendIrBrightness(irBrightnessPending);
-  }, 50);
-  try { await postJson('/api/ir/brightness', { value: v }); } catch (_) {}
-}
-irBrightnessSlider.addEventListener('input', () => {
-  const v = Number(irBrightnessSlider.value);
-  lblIrBrightness.textContent = v;
-  if (!irBrightnessThrottle) sendIrBrightness(v); else irBrightnessPending = v;
+// AB pixel hover — draw one pixel from the MJPEG frame to a 1×1 offscreen
+// canvas and convert the 8-bit value back to raw IR counts.
+const _irSampleCanvas = document.createElement('canvas');
+_irSampleCanvas.width = _irSampleCanvas.height = 1;
+const _irSampleCtx = _irSampleCanvas.getContext('2d', { willReadFrequently: true });
+
+irStage.addEventListener('mousemove', (e) => {
+  const rect = irFeed.getBoundingClientRect();
+  const nw = irFeed.naturalWidth;
+  const nh = irFeed.naturalHeight;
+  if (!nw || !nh) return;
+  const px = Math.round((e.clientX - rect.left) / rect.width  * nw);
+  const py = Math.round((e.clientY - rect.top)  / rect.height * nh);
+  try {
+    _irSampleCtx.drawImage(irFeed, px, py, 1, 1, 0, 0, 1, 1);
+    const val8 = _irSampleCtx.getImageData(0, 0, 1, 1).data[0];
+    const counts = val8 << 8;
+    irPixelTooltip.textContent = `${counts} cts`;
+    irPixelTooltip.style.display = 'block';
+    irPixelTooltip.style.left = `${e.clientX - rect.left}px`;
+    irPixelTooltip.style.top  = `${e.clientY - rect.top}px`;
+  } catch (_) {}
 });
+irStage.addEventListener('mouseleave', () => {
+  irPixelTooltip.style.display = 'none';
+});
+
 
 // Marker IR threshold slider — same throttled-POST pattern as IR brightness.
 let markerThresholdThrottle = null;
@@ -69,6 +82,23 @@ markerThresholdSlider.addEventListener('input', () => {
   lblMarkerThreshold.textContent = v;
   if (!markerThresholdThrottle) sendMarkerThreshold(v); else markerThresholdPending = v;
   renderDiagnostics(lastDiagnostics);
+});
+
+// Ball IR threshold slider.
+let ballThresholdThrottle = null;
+let ballThresholdPending  = null;
+async function sendBallThreshold(v) {
+  ballThresholdPending = null;
+  ballThresholdThrottle = setTimeout(() => {
+    ballThresholdThrottle = null;
+    if (ballThresholdPending !== null) sendBallThreshold(ballThresholdPending);
+  }, 50);
+  try { await postJson('/api/ball/threshold', { value: v }); } catch (_) {}
+}
+ballThresholdSlider.addEventListener('input', () => {
+  const v = Number(ballThresholdSlider.value);
+  lblBallThreshold.textContent = v;
+  if (!ballThresholdThrottle) sendBallThreshold(v); else ballThresholdPending = v;
 });
 
 // Keep IR overlay canvas sized to the image element.
@@ -360,10 +390,6 @@ function renderBall(ball) {
     return;
   }
 
-  if (ball.ir_brightness !== undefined && document.activeElement !== irBrightnessSlider) {
-    irBrightnessSlider.value    = ball.ir_brightness;
-    lblIrBrightness.textContent = ball.ir_brightness;
-  }
 
   if (!ball.enabled) {
     ballPill.textContent = 'ball tracking disabled';
@@ -402,6 +428,11 @@ function renderBall(ball) {
   } else {
     ballWorld.textContent = 'tracking — ball not detected';
   }
+
+  if (ball.ball_ir_threshold !== undefined && document.activeElement !== ballThresholdSlider) {
+    ballThresholdSlider.value    = ball.ball_ir_threshold;
+    lblBallThreshold.textContent = ball.ball_ir_threshold;
+  }
 }
 
 function renderTablePose(pose) {
@@ -433,9 +464,9 @@ function renderTablePose(pose) {
     }
   }
 
-  if (pose.marker_ir_min_counts !== undefined && document.activeElement !== markerThresholdSlider) {
-    markerThresholdSlider.value    = pose.marker_ir_min_counts;
-    lblMarkerThreshold.textContent = pose.marker_ir_min_counts;
+  if (pose.marker_ir_threshold !== undefined && document.activeElement !== markerThresholdSlider) {
+    markerThresholdSlider.value    = pose.marker_ir_threshold;
+    lblMarkerThreshold.textContent = pose.marker_ir_threshold;
   }
 
   lastDiagnostics = pose.diagnostics || null;

@@ -45,7 +45,6 @@ TOOLTIP_OFFSET = (12, 18)
 TOOLTIP_PADDING = (8, 6)
 TOOLTIP_FONT_SCALE = 0.55
 TOOLTIP_FONT_THICKNESS = 1
-DEFAULT_MAX_BRIGHTNESS = 3600
 CV2_ERROR = getattr(cv2, "error", RuntimeError)
 
 
@@ -86,12 +85,7 @@ def parse_args():
         default=4000,
         help="Depth display range in millimeters",
     )
-    parser.add_argument(
-        "--max-brightness",
-        type=int,
-        default=DEFAULT_MAX_BRIGHTNESS,
-        help="Active-brightness value displayed as white",
-    )
+
     parser.add_argument(
         "--resize-width",
         type=int,
@@ -112,8 +106,7 @@ def parse_args():
     args = parser.parse_args()
     if args.max_depth <= 0:
         parser.error("--max-depth must be greater than 0")
-    if args.max_brightness <= 0:
-        parser.error("--max-brightness must be greater than 0")
+
     return args
 
 
@@ -153,13 +146,9 @@ def depth_to_display(depth_mm, max_depth_mm):
     return display
 
 
-def brightness_to_display(brightness, max_brightness):
+def brightness_to_display(brightness):
     """Convert the Kinect's 16-bit active-IR brightness image to grayscale BGR."""
-    values = brightness.astype(np.float32, copy=False)
-    invalid = ~np.isfinite(values) | (values < 0)
-    scaled = np.clip(values, 0, max_brightness) * (255.0 / max_brightness)
-    scaled[invalid] = 0
-    return cv2.cvtColor(scaled.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+    return cv2.cvtColor((brightness >> 8).astype(np.uint8), cv2.COLOR_GRAY2BGR)
 
 
 def resize_to_width(img, width, interpolation):
@@ -209,13 +198,12 @@ def make_view(
     color_bgr,
     brightness,
     depth_mm,
-    max_brightness,
     max_depth_mm,
     resize_width,
     aligned_depth,
 ):
     color_display = resize_to_width(color_bgr, resize_width, cv2.INTER_AREA)
-    brightness_display = brightness_to_display(brightness, max_brightness)
+    brightness_display = brightness_to_display(brightness)
     brightness_display = resize_to_width(
         brightness_display,
         resize_width,
@@ -472,7 +460,6 @@ def main():
                             color_bgr,
                             brightness,
                             current_depth_mm,
-                            args.max_brightness,
                             args.max_depth,
                             args.resize_width,
                             args.aligned_depth,

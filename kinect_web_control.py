@@ -39,7 +39,6 @@ from table_pose import (
 )
 from live_capture_viewer import (
     COLOR_RESOLUTIONS,
-    DEFAULT_MAX_BRIGHTNESS,
     DEPTH_ENGINE_DISPLAY,
     DEPTH_MODES,
     FPS_VALUES,
@@ -336,8 +335,6 @@ class KinectFrameHub:
         self.placeholder_ir = make_placeholder_jpeg(640, 576, "Waiting for Kinect IR")
         self.tracker_jpeg = None
         self.placeholder_tracker = make_placeholder_jpeg(640, 576, "Ball tracking not enabled")
-        self.max_ir_brightness = args.max_ir_brightness
-
         self._last_ir_frame = None
         self._last_depth_for_tracker = None
         self._intrinsics = None   # (fx, fy, ppx, ppy) — set once camera starts
@@ -348,7 +345,8 @@ class KinectFrameHub:
         self._pose_debug_jpeg = None
         self._pose_frame_counter = 0
         self.placeholder_pose = make_placeholder_jpeg(640, 576, "No pose attempt yet")
-        self.marker_ir_min_counts = args.marker_ir_min_counts
+        self.marker_ir_threshold = args.marker_ir_threshold
+        self.ball_ir_threshold = args.ball_ir_threshold
 
     def start(self):
         self.thread = threading.Thread(target=self._run, name="kinect-capture", daemon=True)
@@ -410,6 +408,7 @@ class KinectFrameHub:
                         self.k4a.calibration,
                         ball_radius_min_mm=args.ball_radius_min,
                         ball_radius_max_mm=args.ball_radius_max,
+                        ball_ir_threshold=self.ball_ir_threshold,
                     )
                     trk = BallTracker.from_k4a_calibration(self.k4a.calibration)
                     with self.lock:
@@ -435,7 +434,7 @@ class KinectFrameHub:
 
                 ir_bgr = None
                 if ir_frame is not None:
-                    ir_bgr = brightness_to_display(ir_frame, self.max_ir_brightness)
+                    ir_bgr = brightness_to_display(ir_frame)
 
                 color_jpeg = self.placeholder_color
                 if capture.color is not None:
@@ -486,7 +485,7 @@ class KinectFrameHub:
                     fx, fy, ppx, ppy = self._intrinsics
                     pose_attempt = self.table_pose.update(
                         ir_frame, depth_for_tracker, fx, fy, ppx, ppy,
-                        marker_ir_min_counts=self.marker_ir_min_counts,
+                        marker_ir_threshold=self.marker_ir_threshold,
                     )
                     if pose_attempt.debug_frame is not None:
                         pose_jpeg = encode_jpeg(pose_attempt.debug_frame, args.jpeg_quality)
@@ -576,21 +575,24 @@ class KinectFrameHub:
         with self.lock:
             return {"status": self.status, "error": self.error, "fps": self.fps, "frame_seq": self.seq}
 
-    def set_ir_brightness(self, value: int) -> None:
-        with self.lock:
-            self.max_ir_brightness = max(1, int(value))
 
-    def set_marker_ir_min_counts(self, value: float) -> None:
+    def set_marker_ir_threshold(self, value: float) -> None:
         with self.lock:
-            self.marker_ir_min_counts = max(0.0, float(value))
+            self.marker_ir_threshold = max(0, int(value))
+
+    def set_ball_ir_threshold(self, value: int) -> None:
+        with self.lock:
+            self.ball_ir_threshold = max(0, int(value))
+            if self.detector is not None:
+                self.detector.ball_ir_threshold = self.ball_ir_threshold
 
     def get_ball_state(self):
         with self.lock:
             if self.detector is None:
-                return {"enabled": False, "ir_brightness": self.max_ir_brightness}
+                return {"enabled": False}
             pos = self.ball_position
             det = self.ball_detection
-            ir_brightness = self.max_ir_brightness
+            ball_ir_threshold = self.ball_ir_threshold
             reject_counts = dict(self.detector.last_reject_counts)
 
         if pos is None:
@@ -599,7 +601,8 @@ class KinectFrameHub:
                 "table_tracking": self.table_pose.is_tracking, "pose_stale": None, "pose_age_s": None,
                 "cell": None,
                 "pixel": None, "radius_mm": None,
-                "ir_brightness": ir_brightness, "reject_counts": reject_counts,
+                "ball_ir_threshold": ball_ir_threshold,
+                "reject_counts": reject_counts,
             }
 
         world, stale, age_s = self.table_pose.apply(pos)
@@ -622,7 +625,7 @@ class KinectFrameHub:
             "cell": cell,
             "pixel": {"cx": round(det.cx), "cy": round(det.cy), "radius": round(det.radius_px)} if det else None,
             "radius_mm": round(det.radius_mm, 1) if det else None,
-            "ir_brightness": ir_brightness,
+            "ball_ir_threshold": ball_ir_threshold,
             "reject_counts": reject_counts,
         }
 
@@ -633,7 +636,7 @@ class KinectFrameHub:
     def pose_state_json(self):
         with self.lock:
             tracker = self.table_pose
-            marker_ir_min_counts = self.marker_ir_min_counts
+            marker_ir_threshold = self.marker_ir_threshold
             last_attempt = self._last_pose_attempt
         _, stale, age_s = tracker.apply((0.0, 0.0, 0.0))
         result = {
@@ -643,7 +646,7 @@ class KinectFrameHub:
             "rms_residual_mm": tracker.last_fit.rms_residual_mm if tracker.last_fit else None,
             "max_residual_mm": tracker.last_fit.max_residual_mm if tracker.last_fit else None,
             "last_error": tracker.last_error,
-            "marker_ir_min_counts": marker_ir_min_counts,
+            "marker_ir_threshold": marker_ir_threshold,
         }
         if last_attempt is not None and last_attempt.diagnostics is not None:
             result["diagnostics"] = {
@@ -844,10 +847,10 @@ class KinectWebHandler(BaseHTTPRequestHandler):
                     return handler(channel, data)
 
             handler = {
-                "/api/ir/brightness":         self._post_ir_brightness,
                 "/api/control/start":         self._post_control_start,
                 "/api/control/stop":          self._post_control_stop,
                 "/api/pose/threshold":        self._post_pose_threshold,
+                "/api/ball/threshold":        self._post_ball_threshold,
             }.get(path)
             if handler:
                 return handler(data)
@@ -881,9 +884,6 @@ class KinectWebHandler(BaseHTTPRequestHandler):
         self.state.set_target(channel, target)
         self._send_json({"ok": True})
 
-    def _post_ir_brightness(self, data):
-        self.camera.set_ir_brightness(int(data["value"]))
-        self._send_json({"ok": True, "ir_brightness": self.camera.max_ir_brightness})
 
     def _post_control_start(self, data):
         self._send_json({"ok": True, "started": self.control.start()})
@@ -893,8 +893,12 @@ class KinectWebHandler(BaseHTTPRequestHandler):
         self._send_json({"ok": True})
 
     def _post_pose_threshold(self, data):
-        self.camera.set_marker_ir_min_counts(float(data["value"]))
-        self._send_json({"ok": True, "marker_ir_min_counts": self.camera.marker_ir_min_counts})
+        self.camera.set_marker_ir_threshold(int(data["value"]))
+        self._send_json({"ok": True, "marker_ir_threshold": self.camera.marker_ir_threshold})
+
+    def _post_ball_threshold(self, data):
+        self.camera.set_ball_ir_threshold(int(data["value"]))
+        self._send_json({"ok": True, "ball_ir_threshold": self.camera.ball_ir_threshold})
 
     # ------------------------------------------------------------------
     # Helpers
@@ -1046,7 +1050,8 @@ def parse_args(argv=None):
     ball.add_argument("--ball-tracking", action="store_true", default=False)
     ball.add_argument("--ball-radius-min", type=float, default=20.0, metavar="MM")
     ball.add_argument("--ball-radius-max", type=float, default=40.0, metavar="MM")
-    ball.add_argument("--max-ir-brightness", type=int, default=DEFAULT_MAX_BRIGHTNESS, metavar="DN")
+    ball.add_argument("--ball-ir-threshold", type=int, default=3000, metavar="DN")
+
 
     calib = parser.add_argument_group("Table Pose Tracking")
     calib.add_argument("--pose-update-every-n-frames", type=int, default=3, metavar="N",
@@ -1097,7 +1102,7 @@ def parse_args(argv=None):
         parser.error("--step-shrink must be in the range (0, 1]")
     if args.pose_update_every_n_frames <= 0:
         parser.error("--pose-update-every-n-frames must be greater than 0")
-    if args.marker_ir_min_counts < 0:
+    if args.marker_ir_threshold < 0:
         parser.error("--marker-ir-min-counts cannot be negative")
     if args.marker_height_mm < 0:
         parser.error("--marker-height-mm cannot be negative")

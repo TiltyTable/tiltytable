@@ -14,7 +14,7 @@
 
   Commands:
     get
-    set 8 CONFIRM
+    set 4 CONFIRM
     help
 
   Protocol derived from UIROBOT CFG344 v250730:
@@ -163,7 +163,7 @@ void printHelp() {
   Serial.println(F("A5 TX -> green motor RX"));
   Serial.println(F("Commands:"));
   Serial.println(F("  get"));
-  Serial.println(F("  set 8 CONFIRM"));
+  Serial.println(F("  set 4 CONFIRM   (or another supported MCS)"));
   Serial.println(F("  help"));
   Serial.println(F("All Stewart motor outputs are DISABLED; no STEP pulses are generated."));
 }
@@ -187,7 +187,7 @@ void handleCommand(String command) {
     int firstSpace = command.indexOf(' ');
     int secondSpace = command.indexOf(' ', firstSpace + 1);
     if (secondSpace < 0) {
-      Serial.println(F("ERR use: set 8 CONFIRM"));
+      Serial.println(F("ERR use: set <MCS> CONFIRM"));
       return;
     }
     long requested = command.substring(firstSpace + 1, secondSpace).toInt();
