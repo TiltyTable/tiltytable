@@ -14,32 +14,6 @@
     "depth_engine_display": ":0",
     "jpeg_quality": 82
   },
-  "depth": {
-    "servo_config": "web_control_config.json",
-    "default_box_size": 25,
-    "min_valid_pixels": 1,
-    "max_valid_depth": 0
-  },
-  "servo": {
-    "servo_port": "/dev/ttyACM0",
-    "baud": 115200,
-    "start_angle": 90.0,
-    "min_angle": 10.0,
-    "max_angle": 170.0,
-    "step_deg": 2.0,
-    "min_step_deg": 0.25,
-    "reverse": false,
-    "move_delay": 0.03,
-    "ready_timeout": 4.0,
-    "response_wait": 0.03,
-    "response_idle": 0.004,
-    "dry_run_servo": false,
-    "tolerance_mm": 1.0,
-    "max_invalid": 10,
-    "auto_reverse": true,
-    "worse_margin_mm": 25.0,
-    "step_shrink": 0.5
-  },
   "ball": {
     "ball_tracking": true,
     "ball_radius_min": 17.5,
@@ -50,11 +24,14 @@
     "pose_update_every_n_frames": 3,
     "marker_ir_threshold": 30000.0,
     "marker_height_mm": 50.8,
-    "marker_mount_radius_mm": 12.7,
-    "wall_thickness_mm": 4.7625,
+    "marker_world_points": {
+      "corner_origin": [0.0, 0.0, 50.8],
+      "corner_x": [-775.0, 0.0, 50.8],
+      "corner_xy": [-775.0, 775.0, 50.8],
+      "corner_y": [0.0, 775.0, 50.8],
+      "edge_x_third": [-258.333333, 0.0, 50.8]
+    },
     "max_marker_radius_mm": 15.0,
-    "table_long_side_mm": 775.0,
-    "table_short_side_mm": 775.0,
     "gravity_sign": 1.0
   }
 }

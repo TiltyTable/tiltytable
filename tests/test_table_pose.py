@@ -165,19 +165,11 @@ class MatchPointsTests(unittest.TestCase):
 
 
 class WorldToCellTests(unittest.TestCase):
-    """Grid (0,0) is the table corner diagonal from the marker "origin"
-    corner: col increases toward origin along the long/X wall (world X runs
-    0..-TABLE_LONG_SIDE_MM), row increases toward origin along the short/Y
-    wall (world Y runs 0..+TABLE_SHORT_SIDE_MM)."""
-
-    def setUp(self):
-        tp.configure_table_geometry(
-            table_long_side_mm=800.0,
-            table_short_side_mm=800.0,
-        )
+    """The four corner fiducials define the grid extent; no separate table
+    length configuration is required."""
 
     def test_far_corner_from_origin_is_grid_zero_zero(self):
-        row, col = tp.world_to_cell(-tp.TABLE_LONG_SIDE_MM, tp.TABLE_SHORT_SIDE_MM)
+        row, col = tp.world_to_cell(-775.0, 775.0)
         self.assertEqual((row, col), (0, 0))
 
     def test_marker_origin_corner_is_last_row_and_col(self):
@@ -185,21 +177,33 @@ class WorldToCellTests(unittest.TestCase):
         self.assertEqual((row, col), (tp.GRID_ROWS - 1, tp.GRID_COLS - 1))
 
     def test_center_of_table_is_middle_cell(self):
-        row, col = tp.world_to_cell(-tp.TABLE_LONG_SIDE_MM / 2.0, tp.TABLE_SHORT_SIDE_MM / 2.0)
+        row, col = tp.world_to_cell(-775.0 / 2.0, 775.0 / 2.0)
         self.assertEqual((row, col), (tp.GRID_ROWS // 2, tp.GRID_COLS // 2))
 
     def test_out_of_bounds_positions_are_clamped_not_raised(self):
         row, col = tp.world_to_cell(1000.0, -1000.0)
         self.assertEqual((row, col), (tp.GRID_ROWS - 1, tp.GRID_COLS - 1))
-        row, col = tp.world_to_cell(-tp.TABLE_LONG_SIDE_MM - 1000.0, tp.TABLE_SHORT_SIDE_MM + 1000.0)
+        row, col = tp.world_to_cell(-1775.0, 1775.0)
         self.assertEqual((row, col), (0, 0))
 
-    def test_configured_table_extent_controls_cell_mapping(self):
-        tp.configure_table_geometry(
-            table_long_side_mm=1000.0,
-            table_short_side_mm=600.0,
-        )
-        self.assertEqual(tp.world_to_cell(-500.0, 300.0), (6, 6))
+    def test_corner_geometry_controls_cell_mapping(self):
+        self.assertEqual(tp.world_to_cell(-775.0 / 2.0, 775.0 / 2.0), (6, 6))
+
+
+class ConfiguredMarkerGeometryTests(unittest.TestCase):
+    def test_accepts_named_marker_coordinates(self):
+        geometry = tp.TableGeometry(marker_world_points={
+            "corner_origin": [10, 20, 30],
+            "corner_x": [-990, 20, 30],
+            "corner_xy": [-990, 620, 30],
+            "corner_y": [10, 620, 30],
+            "edge_x_third": [-323.333, 20, 30],
+        })
+        self.assertEqual(geometry.world_points["corner_xy"], (-990.0, 620.0, 30.0))
+
+    def test_rejects_incomplete_marker_coordinates(self):
+        with self.assertRaisesRegex(ValueError, "must contain exactly"):
+            tp.TableGeometry(marker_world_points={"corner_origin": [0, 0, 0]})
 
 
 class DetectMarkersBallRejectionTests(unittest.TestCase):
@@ -265,7 +269,7 @@ class SelectInlierMarkersTests(unittest.TestCase):
 
         blobs = [_FakeBlob(*cam_pts[name]) for name in cam_pts]
         # A spurious blob nowhere near any predicted marker position.
-        spurious = _FakeBlob(cam_pts["origin"][0] + 500.0, cam_pts["origin"][1] + 500.0, cam_pts["origin"][2])
+        spurious = _FakeBlob(cam_pts["corner_origin"][0] + 500.0, cam_pts["corner_origin"][1] + 500.0, cam_pts["corner_origin"][2])
         blobs.append(spurious)
 
         selected = tp.select_inlier_markers(blobs, R0, t0)
@@ -282,8 +286,8 @@ class SelectInlierMarkersTests(unittest.TestCase):
         cam_pts = _camera_points_from_pose(R0, t0)
 
         blobs = [_FakeBlob(*cam_pts[name]) for name in cam_pts]
-        spurious_a = _FakeBlob(cam_pts["x1"][0] + 300.0, cam_pts["x1"][1], cam_pts["x1"][2])
-        spurious_b = _FakeBlob(cam_pts["y2"][0], cam_pts["y2"][1] + 300.0, cam_pts["y2"][2])
+        spurious_a = _FakeBlob(cam_pts["corner_x"][0] + 300.0, cam_pts["corner_x"][1], cam_pts["corner_x"][2])
+        spurious_b = _FakeBlob(cam_pts["corner_y"][0], cam_pts["corner_y"][1] + 300.0, cam_pts["corner_y"][2])
         blobs.extend([spurious_a, spurious_b])
 
         selected = tp.select_inlier_markers(blobs, R0, t0)
@@ -301,7 +305,7 @@ class RunPoseFitPriorPoseTests(unittest.TestCase):
     def _blobs_with_one_spurious(self, R0, t0):
         cam_pts = _camera_points_from_pose(R0, t0)
         blobs = [_FakeBlob(*cam_pts[name]) for name in cam_pts]
-        blobs.append(_FakeBlob(cam_pts["origin"][0] + 500.0, cam_pts["origin"][1] + 500.0, cam_pts["origin"][2]))
+        blobs.append(_FakeBlob(cam_pts["corner_origin"][0] + 500.0, cam_pts["corner_origin"][1] + 500.0, cam_pts["corner_origin"][2]))
         return blobs
 
     def test_over_count_without_prior_pose_fails(self):

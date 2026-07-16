@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 import argparse
 import json
-import math
 import mimetypes
 import sys
 import threading
 import time
-from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -24,17 +22,10 @@ from pyk4a import (
     connected_device_count,
 )
 
-from depth_servo_control import (
-    BAUD_RATES,
-    DEPTH_PIXEL_WINDOW,
-    MIN_VALID_DEPTH_PIXELS,
-    SERVO_CHANNELS,
-    SERVO_DEPTH_PIXELS,
-    ServoController,
-)
 from table_pose import (
     GravityEstimator,
     PoseFitAttempt,
+    TableGeometry,
     TablePoseTracker,
     configure_table_geometry,
     world_to_cell,
@@ -53,10 +44,7 @@ from live_capture_viewer import (
 ROOT_DIR = Path(__file__).resolve().parent
 WEB_DIR = ROOT_DIR / "web"
 APP_CONFIG_PATH = ROOT_DIR / "config.json"
-DEFAULT_SERVO_CONFIG_PATH = ROOT_DIR / "web_control_config.json"
 WEB_COLOR_RESOLUTIONS = {**COLOR_RESOLUTIONS, "off": ColorResolution.OFF}
-SERVO_COLORS = {0: "#ffcc4d", 1: "#ff6b6b", 2: "#44d7b6", 3: "#78a6ff"}
-DEFAULT_DEPTH_BOX_SIZE = 25
 
 
 # ---------------------------------------------------------------------------
@@ -76,70 +64,6 @@ def _load_config_file(path: Path) -> dict:
     return flat
 
 
-# ---------------------------------------------------------------------------
-# Data classes
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class DepthReading:
-    depth_mm: float | None
-    valid_pixels: int
-    total_pixels: int
-    bounds: tuple[int, int, int, int] | None
-
-
-# ---------------------------------------------------------------------------
-# Utility functions
-# ---------------------------------------------------------------------------
-
-def clamp(value, low, high):
-    return max(low, min(high, value))
-
-
-def normalize_box(box):
-    x, y, w, h = (int(round(float(v))) for v in box)
-    if w <= 0 or h <= 0:
-        raise ValueError("box width and height must be greater than 0")
-    if x < 0 or y < 0:
-        raise ValueError("box x and y cannot be negative")
-    return x, y, w, h
-
-
-def box_from_center_pixel(pixel, size):
-    x, y = pixel
-    size = max(1, int(size))
-    half = size // 2
-    return normalize_box((max(0, int(x) - half), max(0, int(y) - half), size, size))
-
-
-def clip_box_to_depth(depth_shape, box):
-    x, y, w, h = normalize_box(box)
-    ih, iw = depth_shape[:2]
-    x0, y0 = clamp(x, 0, iw), clamp(y, 0, ih)
-    x1, y1 = clamp(x + w, 0, iw), clamp(y + h, 0, ih)
-    if x1 <= x0 or y1 <= y0:
-        return None
-    return int(x0), int(y0), int(x1), int(y1)
-
-
-def measure_depth_in_box(depth_mm, box, min_valid_pixels, max_valid_depth):
-    if depth_mm is None:
-        return DepthReading(None, 0, 0, None)
-    bounds = clip_box_to_depth(depth_mm.shape, box)
-    if bounds is None:
-        return DepthReading(None, 0, 0, None)
-    x0, y0, x1, y1 = bounds
-    sample = depth_mm[y0:y1, x0:x1].astype(np.float32, copy=False)
-    valid = np.isfinite(sample) & (sample > 0)
-    if max_valid_depth > 0:
-        valid &= sample <= max_valid_depth
-    valid_count = int(np.count_nonzero(valid))
-    total_count = int(sample.size)
-    if valid_count < min_valid_pixels:
-        return DepthReading(None, valid_count, total_count, bounds)
-    return DepthReading(float(np.mean(sample[valid])), valid_count, total_count, bounds)
-
-
 def encode_jpeg(image_bgr, quality):
     ok, encoded = cv2.imencode(".jpg", image_bgr, [cv2.IMWRITE_JPEG_QUALITY, int(quality)])
     if not ok:
@@ -152,154 +76,6 @@ def make_placeholder_jpeg(width, height, text):
     img[:] = (20, 32, 30)
     cv2.putText(img, text, (32, height // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (220, 230, 220), 2, cv2.LINE_AA)
     return encode_jpeg(img, 85)
-
-
-# ---------------------------------------------------------------------------
-# WebState — servo box/target persistence and status
-# ---------------------------------------------------------------------------
-
-class WebState:
-    def __init__(self, servo_config_path, default_box_size=DEFAULT_DEPTH_BOX_SIZE):
-        self.config_path = Path(servo_config_path)
-        self.default_box_size = int(default_box_size)
-        self.lock = threading.RLock()
-        self.boxes = {
-            ch: box_from_center_pixel(SERVO_DEPTH_PIXELS[ch], self.default_box_size)
-            for ch in SERVO_CHANNELS
-        }
-        self.targets = {ch: 1000.0 for ch in SERVO_CHANNELS}
-        self.angles = {ch: None for ch in SERVO_CHANNELS}
-        self.reached = {ch: False for ch in SERVO_CHANNELS}
-        self.last_control_error = {ch: None for ch in SERVO_CHANNELS}
-        self.control_running = False
-        self.control_message = "idle"
-        self.control_error = ""
-        self.load()
-
-    def load(self):
-        if not self.config_path.exists():
-            return
-        try:
-            data = json.loads(self.config_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as exc:
-            print(f"Could not load {self.config_path}: {exc}", file=sys.stderr)
-            return
-        with self.lock:
-            for ch in SERVO_CHANNELS:
-                item = data.get("servos", {}).get(str(ch), {})
-                box = item.get("box")
-                if isinstance(box, list) and len(box) == 4:
-                    try:
-                        self.boxes[ch] = normalize_box(box)
-                    except (TypeError, ValueError):
-                        pass
-                else:
-                    pixel = item.get("pixel")
-                    if isinstance(pixel, list) and len(pixel) == 2:
-                        try:
-                            self.boxes[ch] = box_from_center_pixel(pixel, self.default_box_size)
-                        except (TypeError, ValueError):
-                            pass
-                target = item.get("target_depth_mm")
-                if isinstance(target, (int, float)) and target > 0:
-                    self.targets[ch] = float(target)
-
-    def save(self):
-        with self.lock:
-            data = {
-                "servos": {
-                    str(ch): {"box": list(self.boxes[ch]), "target_depth_mm": self.targets[ch]}
-                    for ch in SERVO_CHANNELS
-                }
-            }
-        tmp = self.config_path.with_suffix(self.config_path.suffix + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        tmp.replace(self.config_path)
-
-    def set_box(self, channel, box):
-        with self.lock:
-            self.boxes[channel] = normalize_box(box)
-        self.save()
-
-    def set_target(self, channel, target_depth_mm):
-        with self.lock:
-            self.targets[channel] = float(target_depth_mm)
-        self.save()
-
-    def set_angle(self, channel, angle):
-        with self.lock:
-            self.angles[channel] = float(angle)
-
-    def set_channel_status(self, channel, reached=None, error=None):
-        with self.lock:
-            if reached is not None:
-                self.reached[channel] = bool(reached)
-            if error is not None:
-                self.last_control_error[channel] = float(error)
-
-    def set_control(self, running, message=None, error=""):
-        with self.lock:
-            self.control_running = bool(running)
-            if message is not None:
-                self.control_message = message
-            self.control_error = error
-
-    def snapshot_config(self):
-        with self.lock:
-            return {
-                ch: {"box": self.boxes[ch], "target_depth_mm": self.targets[ch]}
-                for ch in SERVO_CHANNELS
-            }
-
-    def to_json(self, camera, args):
-        depth_mm = camera.get_depth_snapshot()
-        depth_shape = camera.get_depth_shape()
-        with self.lock:
-            config = self.snapshot_config()
-            angles = dict(self.angles)
-            reached = dict(self.reached)
-            control_errors = dict(self.last_control_error)
-            control_running = self.control_running
-            control_message = self.control_message
-            control_error = self.control_error
-
-        servos = []
-        for ch in SERVO_CHANNELS:
-            box = config[ch]["box"]
-            target = config[ch]["target_depth_mm"]
-            reading = measure_depth_in_box(depth_mm, box, args.min_valid_pixels, args.max_valid_depth)
-            servos.append({
-                "channel": ch,
-                "color": SERVO_COLORS[ch],
-                "box": {"x": box[0], "y": box[1], "width": box[2], "height": box[3]},
-                "target_depth_mm": target,
-                "current_depth_mm": reading.depth_mm,
-                "current_error_mm": None if reading.depth_mm is None else reading.depth_mm - target,
-                "valid_pixels": reading.valid_pixels,
-                "total_pixels": reading.total_pixels,
-                "sample_bounds": reading.bounds,
-                "angle_deg": angles[ch],
-                "reached": reached[ch],
-                "control_error_mm": control_errors[ch],
-            })
-
-        w = depth_shape[1] if depth_shape else None
-        h = depth_shape[0] if depth_shape else None
-        return {
-            "servos": servos,
-            "servo_channels": list(SERVO_CHANNELS),
-            "depth_image": {"width": w, "height": h},
-            "ball": camera.get_ball_state(),
-            "camera": camera.status_snapshot(),
-            "table_pose": camera.pose_state_json(),
-            "control": {"running": control_running, "message": control_message, "error": control_error},
-            "settings": {
-                "default_box_size": args.default_box_size,
-                "min_valid_pixels": args.min_valid_pixels,
-                "max_valid_depth": args.max_valid_depth,
-                "tolerance_mm": args.tolerance_mm,
-            },
-        }
 
 
 # ---------------------------------------------------------------------------
@@ -706,133 +482,11 @@ class KinectFrameHub:
 
 
 # ---------------------------------------------------------------------------
-# ServoControlRunner
-# ---------------------------------------------------------------------------
-
-class ServoControlRunner:
-    def __init__(self, state, camera, args):
-        self.state = state
-        self.camera = camera
-        self.args = args
-        self.lock = threading.Lock()
-        self.stop_event = threading.Event()
-        self.thread = None
-
-    def start(self):
-        with self.lock:
-            if self.thread is not None and self.thread.is_alive():
-                return False
-            self.stop_event.clear()
-            self.thread = threading.Thread(target=self._run, name="servo-control", daemon=True)
-            self.thread.start()
-            return True
-
-    def stop(self):
-        self.stop_event.set()
-        with self.lock:
-            thread = self.thread
-        if thread is not None:
-            thread.join(timeout=2.0)
-
-    def _run(self):
-        args = self.args
-        controller = ServoController(
-            port=args.servo_port,
-            baud=args.baud,
-            ready_timeout=args.ready_timeout,
-            response_wait=args.response_wait,
-            response_idle=args.response_idle,
-            dry_run=args.dry_run_servo,
-            verbose=args.verbose,
-        )
-        angles = {ch: args.start_angle for ch in SERVO_CHANNELS}
-        steps = {ch: args.step_deg for ch in SERVO_CHANNELS}
-        directions = {ch: -1.0 if args.reverse else 1.0 for ch in SERVO_CHANNELS}
-        last_abs_errors = {ch: None for ch in SERVO_CHANNELS}
-        invalid_streaks = {ch: 0 for ch in SERVO_CHANNELS}
-
-        try:
-            self.state.set_control(True, "opening serial")
-            controller.open()
-            for ch in SERVO_CHANNELS:
-                controller.write_angle(ch, angles[ch])
-                self.state.set_angle(ch, angles[ch])
-            if args.move_delay > 0:
-                time.sleep(args.move_delay)
-
-            self.state.set_control(True, "running")
-            while not self.stop_event.is_set():
-                depth_mm = self.camera.get_depth_snapshot()
-                if depth_mm is None:
-                    self.state.set_control(True, "waiting for depth frame")
-                    time.sleep(0.03)
-                    continue
-
-                configs = self.state.snapshot_config()
-                moves = []
-                reached_count = 0
-
-                for ch in SERVO_CHANNELS:
-                    box = configs[ch]["box"]
-                    target = configs[ch]["target_depth_mm"]
-                    reading = measure_depth_in_box(depth_mm, box, args.min_valid_pixels, args.max_valid_depth)
-
-                    if reading.depth_mm is None:
-                        invalid_streaks[ch] += 1
-                        self.state.set_channel_status(ch, reached=False)
-                        if invalid_streaks[ch] >= args.max_invalid:
-                            self.state.set_control(True, f"channel {ch} has invalid depth; waiting")
-                        continue
-
-                    invalid_streaks[ch] = 0
-                    error = reading.depth_mm - target
-                    abs_error = abs(error)
-                    self.state.set_channel_status(ch, reached=abs_error <= args.tolerance_mm, error=error)
-
-                    if abs_error <= args.tolerance_mm:
-                        reached_count += 1
-                        continue
-
-                    if (
-                        args.auto_reverse
-                        and last_abs_errors[ch] is not None
-                        and abs_error > last_abs_errors[ch] + args.worse_margin_mm
-                    ):
-                        directions[ch] *= -1.0
-                        steps[ch] = max(args.min_step_deg, steps[ch] * args.step_shrink)
-
-                    delta = directions[ch] * math.copysign(steps[ch], error)
-                    next_angle = clamp(angles[ch] + delta, args.min_angle, args.max_angle)
-                    if not math.isclose(next_angle, angles[ch], abs_tol=1e-9):
-                        moves.append((ch, next_angle, abs_error))
-
-                for ch, next_angle, abs_error in moves:
-                    controller.write_angle(ch, next_angle)
-                    angles[ch] = next_angle
-                    last_abs_errors[ch] = abs_error
-                    self.state.set_angle(ch, next_angle)
-
-                self.state.set_control(True, f"running; {reached_count}/4 within tolerance")
-                time.sleep(args.move_delay if moves else 0.03)
-
-        except PermissionError as exc:
-            self.state.set_control(False, "serial permission error", str(exc))
-        except (RuntimeError, OSError, ValueError) as exc:
-            self.state.set_control(False, "control stopped", str(exc))
-        finally:
-            controller.close()
-            if self.stop_event.is_set():
-                self.state.set_control(False, "stopped")
-
-
-# ---------------------------------------------------------------------------
 # HTTP handler
 # ---------------------------------------------------------------------------
 
 class KinectWebHandler(BaseHTTPRequestHandler):
     camera: "KinectFrameHub" = None
-    state: "WebState" = None
-    control: "ServoControlRunner" = None
     args = None
     static_dir: Path = WEB_DIR
 
@@ -862,7 +516,11 @@ class KinectWebHandler(BaseHTTPRequestHandler):
             return self._serve_mjpeg(streams[path])
 
         api = {
-            "/api/state": lambda: self._send_json(self.state.to_json(self.camera, self.args)),
+            "/api/state": lambda: self._send_json({
+                "ball": self.camera.get_ball_state(),
+                "camera": self.camera.status_snapshot(),
+                "table_pose": self.camera.pose_state_json(),
+            }),
             "/api/pose/state": lambda: self._send_json(self.camera.pose_state_json()),
         }
         if path in api:
@@ -876,20 +534,7 @@ class KinectWebHandler(BaseHTTPRequestHandler):
             data = self._read_json()
             parts = path.strip("/").split("/")
 
-            # /api/servos/<channel>/<action>
-            if len(parts) == 4 and parts[:2] == ["api", "servos"]:
-                channel = self._parse_channel(parts[2])
-                handler = {
-                    "box":    self._post_servo_box,
-                    "pixel":  self._post_servo_pixel,
-                    "target": self._post_servo_target,
-                }.get(parts[3])
-                if handler:
-                    return handler(channel, data)
-
             handler = {
-                "/api/control/start":         self._post_control_start,
-                "/api/control/stop":          self._post_control_stop,
                 "/api/pose/threshold":        self._post_pose_threshold,
                 "/api/ball/threshold":        self._post_ball_threshold,
             }.get(path)
@@ -905,33 +550,6 @@ class KinectWebHandler(BaseHTTPRequestHandler):
     # ------------------------------------------------------------------
     # POST handlers
     # ------------------------------------------------------------------
-
-    def _post_servo_box(self, channel, data):
-        box = normalize_box((int(data["x"]), int(data["y"]), int(data["width"]), int(data["height"])))
-        self._validate_box(box)
-        self.state.set_box(channel, box)
-        self._send_json({"ok": True})
-
-    def _post_servo_pixel(self, channel, data):
-        box = box_from_center_pixel((int(data["x"]), int(data["y"])), self.args.default_box_size)
-        self._validate_box(box)
-        self.state.set_box(channel, box)
-        self._send_json({"ok": True})
-
-    def _post_servo_target(self, channel, data):
-        target = float(data["target_depth_mm"])
-        if target <= 0:
-            raise ValueError("target_depth_mm must be greater than 0")
-        self.state.set_target(channel, target)
-        self._send_json({"ok": True})
-
-
-    def _post_control_start(self, data):
-        self._send_json({"ok": True, "started": self.control.start()})
-
-    def _post_control_stop(self, data):
-        self.control.stop()
-        self._send_json({"ok": True})
 
     def _post_pose_threshold(self, data):
         self.camera.set_marker_ir_threshold(int(data["value"]))
@@ -994,24 +612,6 @@ class KinectWebHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _parse_channel(self, text):
-        channel = int(text)
-        if channel not in SERVO_CHANNELS:
-            raise ValueError(f"channel must be one of {sorted(SERVO_CHANNELS)}")
-        return channel
-
-    def _validate_box(self, box):
-        x, y, w, h = box  # already normalized
-        if w * h < self.args.min_valid_pixels:
-            raise ValueError(f"box area must be at least {self.args.min_valid_pixels} pixels")
-        shape = self.camera.get_depth_shape()
-        if shape is None:
-            return
-        ih, iw = shape
-        if x + w > iw or y + h > ih:
-            raise ValueError(f"box ({x}, {y}, {w}, {h}) is outside depth image {iw}x{ih}")
-
-
 class KinectThreadingHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
     daemon_threads = True
@@ -1036,7 +636,7 @@ def parse_args(argv=None):
             print(f"Warning: could not load config {cfg_path}: {exc}", file=sys.stderr)
 
     parser = argparse.ArgumentParser(
-        description="Web UI for Azure Kinect depth boxes and four-servo depth control.",
+        description="Web UI for Azure Kinect ball and table tracking.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument("--config", default=str(APP_CONFIG_PATH),
@@ -1058,35 +658,6 @@ def parse_args(argv=None):
     kinect.add_argument("--depth-engine-display", default=DEPTH_ENGINE_DISPLAY)
     kinect.add_argument("--jpeg-quality", type=int, default=82)
 
-    depth = parser.add_argument_group("Depth Boxes")
-    depth.add_argument("--servo-config", default=str(DEFAULT_SERVO_CONFIG_PATH),
-                       help="JSON file for saved servo box positions and depth targets")
-    depth.add_argument("--default-box-size", type=int,
-                       default=max(DEFAULT_DEPTH_BOX_SIZE, DEPTH_PIXEL_WINDOW))
-    depth.add_argument("--min-valid-pixels", type=int, default=MIN_VALID_DEPTH_PIXELS)
-    depth.add_argument("--max-valid-depth", type=float, default=0.0,
-                       help="ignore depth above this many mm; 0 disables")
-
-    servo = parser.add_argument_group("Servo Control")
-    servo.add_argument("--servo-port", default="/dev/ttyACM0")
-    servo.add_argument("--baud", type=int, default=115200, choices=sorted(BAUD_RATES))
-    servo.add_argument("--start-angle", type=float, default=90.0)
-    servo.add_argument("--min-angle", type=float, default=10.0)
-    servo.add_argument("--max-angle", type=float, default=170.0)
-    servo.add_argument("--step-deg", type=float, default=2.0)
-    servo.add_argument("--min-step-deg", type=float, default=0.25)
-    servo.add_argument("--reverse", action="store_true", default=False)
-    servo.add_argument("--move-delay", type=float, default=0.03)
-    servo.add_argument("--ready-timeout", type=float, default=4.0)
-    servo.add_argument("--response-wait", type=float, default=0.03)
-    servo.add_argument("--response-idle", type=float, default=0.004)
-    servo.add_argument("--dry-run-servo", action="store_true", default=False)
-    servo.add_argument("--tolerance-mm", type=float, default=1.0)
-    servo.add_argument("--max-invalid", type=int, default=10)
-    servo.add_argument("--no-auto-reverse", dest="auto_reverse", action="store_false")
-    servo.add_argument("--worse-margin-mm", type=float, default=25.0)
-    servo.add_argument("--step-shrink", type=float, default=0.5)
-
     ball = parser.add_argument_group("Ball Tracking")
     ball.add_argument("--ball-tracking", action="store_true", default=False)
     ball.add_argument("--ball-radius-min", type=float, default=20.0, metavar="MM")
@@ -1102,22 +673,13 @@ def parse_args(argv=None):
                        help="flip if a level table doesn't read ~0 tilt_deg (IMU accelerometer "
                             "sign convention can't be verified without real hardware)")
     calib.add_argument("--marker-height-mm", type=float, default=50.8, metavar="MM",
-                       help="height of the wall-mounted markers above the table surface")
-    calib.add_argument("--marker-mount-radius-mm", type=float, default=12.7, metavar="MM",
-                       help="physical marker disc radius; offsets each marker's mounted "
-                            "position off the nominal wall line by this much")
-    calib.add_argument("--wall-thickness-mm", type=float, default=4.7625, metavar="MM",
-                       help="thickness of the foam wall the markers are mounted on; "
-                            "adds to --marker-mount-radius-mm for the total mounting offset")
+                       help="height of the fiducial centers above the table surface")
+    calib.add_argument("--marker-world-points", type=json.loads, default=None, metavar="JSON",
+                       help="five named marker-center [x_mm, y_mm, z_mm] coordinates; normally set in config.json")
     calib.add_argument("--max-marker-radius-mm", type=float, default=15.0, metavar="MM",
                        help="reject IR blobs larger than this physical radius (excludes the ball)")
-    calib.add_argument("--table-long-side-mm", type=float, default=None, metavar="MM",
-                       help="physical X/long extent used to map ball positions to grid cells")
-    calib.add_argument("--table-short-side-mm", type=float, default=None, metavar="MM",
-                       help="physical Y/short extent used to map ball positions to grid cells")
 
     # Config file values override argparse defaults; CLI args override everything.
-    parser.set_defaults(auto_reverse=True)
     parser.set_defaults(**file_cfg)
 
     args = parser.parse_args(argv)
@@ -1128,43 +690,19 @@ def parse_args(argv=None):
         parser.error("--jpeg-quality must be 1-100")
     if args.max_depth <= 0:
         parser.error("--max-depth must be greater than 0")
-    if args.default_box_size <= 0:
-        parser.error("--default-box-size must be greater than 0")
-    if args.min_valid_pixels <= 0:
-        parser.error("--min-valid-pixels must be greater than 0")
-    if not 0 <= args.min_angle < args.max_angle <= 180:
-        parser.error("--min-angle and --max-angle must satisfy 0 <= min < max <= 180")
-    if not args.min_angle <= args.start_angle <= args.max_angle:
-        parser.error("--start-angle must be inside --min-angle and --max-angle")
-    if args.step_deg <= 0:
-        parser.error("--step-deg must be greater than 0")
-    if args.min_step_deg <= 0 or args.min_step_deg > args.step_deg:
-        parser.error("--min-step-deg must be greater than 0 and no larger than --step-deg")
-    if args.move_delay < 0 or args.response_wait < 0 or args.response_idle < 0:
-        parser.error("timing values cannot be negative")
-    if args.tolerance_mm <= 0:
-        parser.error("--tolerance-mm must be greater than 0")
-    if args.max_invalid <= 0:
-        parser.error("--max-invalid must be greater than 0")
-    if not 0 < args.step_shrink <= 1:
-        parser.error("--step-shrink must be in the range (0, 1]")
     if args.pose_update_every_n_frames <= 0:
         parser.error("--pose-update-every-n-frames must be greater than 0")
     if args.marker_ir_threshold < 0:
         parser.error("--marker-ir-threshold cannot be negative")
     if args.marker_height_mm < 0:
         parser.error("--marker-height-mm cannot be negative")
-    if args.marker_mount_radius_mm < 0:
-        parser.error("--marker-mount-radius-mm cannot be negative")
-    if args.wall_thickness_mm < 0:
-        parser.error("--wall-thickness-mm cannot be negative")
     if args.max_marker_radius_mm <= 0:
         parser.error("--max-marker-radius-mm must be greater than 0")
-    if args.table_long_side_mm is None or args.table_long_side_mm <= 0:
-        parser.error("--table-long-side-mm must be configured and greater than 0")
-    if args.table_short_side_mm is None or args.table_short_side_mm <= 0:
-        parser.error("--table-short-side-mm must be configured and greater than 0")
-
+    if args.marker_world_points is not None:
+        try:
+            TableGeometry._validated_world_points(args.marker_world_points)
+        except ValueError as exc:
+            parser.error(str(exc))
     return args
 
 
@@ -1176,19 +714,12 @@ def main():
     args = parse_args()
     configure_table_geometry(
         marker_height_mm=args.marker_height_mm,
-        marker_mount_radius_mm=args.marker_mount_radius_mm,
-        wall_thickness_mm=args.wall_thickness_mm,
+        marker_world_points=args.marker_world_points,
         max_marker_radius_mm=args.max_marker_radius_mm,
-        table_long_side_mm=args.table_long_side_mm,
-        table_short_side_mm=args.table_short_side_mm,
     )
-    state = WebState(args.servo_config, args.default_box_size)
     camera = KinectFrameHub(args)
-    control = ServoControlRunner(state, camera, args)
 
     KinectWebHandler.camera = camera
-    KinectWebHandler.state = state
-    KinectWebHandler.control = control
     KinectWebHandler.args = args
 
     camera.start()
@@ -1200,7 +731,6 @@ def main():
     except KeyboardInterrupt:
         print("\nStopping web control...")
     finally:
-        control.stop()
         camera.stop()
         server.server_close()
     return 0

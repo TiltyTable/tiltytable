@@ -63,9 +63,6 @@ The live module grid requires all of these calibration files:
 Arcade preflight rejects live mode unless both grids cover 144 cells, all nine
 LED strands exist, and every mapped servo has all three calibrated positions.
 
-`kinect_web_control.py` also imports optional depth-servo UI support from
-`depth_servo_control.py`. That four-servo depth loop is not started by the game
-and must not be pointed at `/dev/arduino-modules` while the arcade owns it.
 No active code imports anything under `archive/arduino/`.
 
 ### Present in the repository but not required at runtime
@@ -321,12 +318,18 @@ to require the `START` confirmation.
 
 ### 7. Azure Kinect ball and table tracking
 
-Mount five retroreflective markers in the geometry documented at the top of
-`table_pose.py`. Verify the measured marker locations in
-`TableGeometry._rebuild()` and the `table_long_side_mm`/`table_short_side_mm`
-values used by `world_to_cell()` match the physical build. Adjustable table
-and marker dimensions, thresholds, ball radius, and camera settings live in
-`config.json`.
+Mount five retroreflective fiducials: one at each table corner and one more
+along an edge, in the geometry documented at the top of `table_pose.py`.
+Verify the measured marker-center locations in `TableGeometry._rebuild()`;
+the four corner fiducials define the cell-map bounds, so no separate table
+length configuration is needed. Thresholds, ball radius, and camera settings
+live in `config.json`.
+
+Set `table_pose.marker_world_points` in `config.json` to the measured center
+of each fiducial, in millimetres: `corner_origin`, `corner_x`, `corner_xy`,
+`corner_y`, and `edge_x_third`. Each value is `[x, y, z]` in the table frame.
+The fifth marker must not be at the midpoint of a symmetric edge, or the
+distance-only marker matcher cannot distinguish the corner assignments.
 
 Start the camera service on port 8080:
 

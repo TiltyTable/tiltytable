@@ -1,48 +1,29 @@
 #!/usr/bin/env python3
 """
 Continuous tracking of the table's pose relative to the (tripod-fixed) Azure
-Kinect, using 5 retroreflective markers mounted on the vertical faces of
-~2 inch tall walls built around two adjacent edges of the table — not flat
-tape on the table's top surface.
+Kinect, using five retroreflective fiducial markers: one at each table
+corner, plus a fifth marker on an edge.
 
 The table sits on a 3-leg Stewart platform and tilts/heaves during normal
 operation, so the camera-to-table transform is *not* fixed for a session —
-it changes continuously as the platform moves. Because the markers are on
-raised wall faces (above the play surface, facing outward/upward) they stay
-visible to the camera across the platform's tilt range, which is what makes
+it changes continuously as the platform moves. Mount the fiducials where they
+remain visible across the platform's tilt range; that is what makes
 *continuous* re-tracking (rather than a one-time calibration) practical.
 
-Marker layout (world frame = the table's own body-fixed frame; long wall is
-the X axis, short wall is the Y axis, meeting at the origin corner). Each
-marker is a physical disc mounted flush against the *outside* face of a foam
-wall, so its center sits r = (wall thickness + marker radius) off the nominal
-wall line, perpendicular to that wall — the origin marker touches both walls
-and so is offset on both axes, split evenly between them (45 degrees):
-
-                                              y2 (r, measured, h)
-                                                |
-                                              y1 (r, measured, h)
-                                                |
-    x2 (-measured, -r, h) ------ x1 (-measured, -r, h) ------ origin (r/sqrt2, -r/sqrt2, h)
-
-h = TableGeometry.marker_height_mm (~50.8mm, 2 inch wall height). x1/x2/y1/y2's
-along-wall distance from origin is hardcoded directly in
-TableGeometry._rebuild() from measured tape-measure readings (not derived
-from an overall wall length or assumed fractional spacing) — update those
-literals there when remeasured. r = marker_mount_radius_mm + wall_thickness_mm.
-TABLE_LONG_SIDE_MM/TABLE_SHORT_SIDE_MM are a separate measurement (the
-table's overall play-surface extent) used only by world_to_cell()'s grid
-mapping below, not by the marker geometry. marker_height_mm/
-marker_mount_radius_mm/wall_thickness_mm/max_marker_radius_mm are set from
-config.json's "table_pose" section via configure_table_geometry() at
-startup; everything else derives from them.
+Marker layout (world frame = the table's own body-fixed frame) uses
+``corner_origin``, ``corner_x``, ``corner_xy``, and ``corner_y`` at the four
+play-surface corners, plus ``edge_x_third`` one-third along one edge. The named
+corner coordinates are both the pose-fit geometry and the authoritative grid
+boundary: ``world_to_cell()`` derives its axes directly from them, so it does
+not need independently configured table-length values. Update the measured
+corner coordinates in ``TableGeometry._rebuild()`` if the physical build
+changes. Markers remain at ``marker_height_mm`` above the play surface.
 
 World-frame convention: Z=0 is defined at the table's own play surface, not
-at the markers — the markers sit at Z=h, i.e. h above the table, since
-they're mounted on top of the walls. +X runs from origin *away* from the
-x-wall markers (x1/x2 sit at negative X), +Y runs from origin *toward*
-the y-wall markers (y1/y2 sit at positive Y), +Z is "up" out of the table
-via the right-hand rule (X cross Y). Getting the physical orientation
+at the markers — the markers sit at Z=h. +X runs from ``corner_origin`` to
+``corner_x`` (negative X in the current layout), +Y runs from
+``corner_origin`` to ``corner_y`` (positive Y), and +Z is "up" out of the
+table via the right-hand rule (X cross Y). Getting the physical orientation
 backwards silently mirrors the fitted pose; the Kabsch reflection-guard in
 fit_rigid_transform only corrects the SVD's internal sign ambiguity, it
 cannot detect a wrong physical convention.
@@ -93,51 +74,50 @@ import camera_geometry
 # ---------------------------------------------------------------------------
 
 class TableGeometry:
-    """Physical layout of the 5 named wall-mounted markers, plus the
+    """Physical layout of the 5 named table fiducials, plus the
     pairwise-distance-signature matching that recovers point identity.
 
-    Each marker is a physical disc of radius `marker_mount_radius_mm`
-    mounted flush against the *outside* face of a foam wall of thickness
-    `wall_thickness_mm`, so its center isn't on the nominal wall/corner line
-    — it's pushed out by r = (wall thickness + marker radius), perpendicular
-    to whichever wall(s) it's mounted against:
-      - x1/x2 sit only against the X wall (whose outward normal is -Y, since
-        the table's short arm runs toward +Y) -> shifted -r in Y.
-      - y1/y2 sit only against the Y wall (whose outward normal is +X, since
-        the table's long arm runs toward -X) -> shifted +r in X.
-      - origin sits at the corner shared by both walls, at 45 degrees, so
-        its total displacement is r but split evenly between the two axes:
-        (r/sqrt(2) in X, -r/sqrt(2) in Y), i.e. each component is sqrt(r^2/2).
+    The four named corner markers define the play-surface rectangle. The
+    fifth edge marker is deliberately not used as a grid boundary; it adds a
+    well-distributed fifth point to the rigid fit.
     """
 
     # Matching tolerances (pairwise-distance-signature match).
     DISTANCE_MATCH_TOL_MM = 50.0        # max per-pair distance error allowed for the best assignment
     DISTANCE_MATCH_AMBIGUITY_MM = 15.0  # runner-up assignment must be at least this much worse
+    REQUIRED_POINT_NAMES = (
+        "corner_origin", "corner_x", "corner_xy", "corner_y", "edge_x_third",
+    )
 
     def __init__(
         self,
         marker_height_mm: float = 50.8,
-        marker_mount_radius_mm: float = 12.7,
-        wall_thickness_mm: float = 4.7625,
+        marker_world_points: Optional[dict] = None,
     ):
         self.marker_height_mm = marker_height_mm
-        self.marker_mount_radius_mm = marker_mount_radius_mm
-        self.wall_thickness_mm = wall_thickness_mm
+        self.marker_world_points = marker_world_points
         self._rebuild()
 
     def _rebuild(self) -> None:
         """Recompute the named world points and the lookup tables built from
         them. Called once at construction and again by reconfigure()."""
-        IN_TO_MM = 25.4
-        r = self.marker_mount_radius_mm + self.wall_thickness_mm
         h = self.marker_height_mm
-        self.world_points: dict[str, tuple[float, float, float]] = {
-            "origin": (0.625 * IN_TO_MM, -0.625 * IN_TO_MM, h),   # 5/8"
-            "x1": (-10.9375 * IN_TO_MM, -r, h),                   # 10 15/16"
-            "x2": (-21.75 * IN_TO_MM, -r, h),                     # 21 3/4"
-            "y1": (r, 8.375 * IN_TO_MM, h),                       # 8 3/8"
-            "y2": (r, 16.5625 * IN_TO_MM, h),                     # 16 9/16"
+        # Default marker-center locations for the current 775 mm square
+        # table. Deployments should override these through config.json's
+        # table_pose.marker_world_points setting.
+        side_mm = 775.0
+        default_points = {
+            "corner_origin": (0.0, 0.0, h),
+            "corner_x": (-side_mm, 0.0, h),
+            "corner_xy": (-side_mm, side_mm, h),
+            "corner_y": (0.0, side_mm, h),
+            # Keep this off the edge midpoint so the otherwise symmetric
+            # corner layout has a unique distance signature.
+            "edge_x_third": (-side_mm / 3.0, 0.0, h),
         }
+        self.world_points = self._validated_world_points(
+            default_points if self.marker_world_points is None else self.marker_world_points
+        )
         self.point_names = list(self.world_points.keys())
         pts = np.array([self.world_points[name] for name in self.point_names], dtype=np.float64)
         self.dist_matrix = np.linalg.norm(pts[:, None, :] - pts[None, :, :], axis=-1)
@@ -146,19 +126,47 @@ class TableGeometry:
     def reconfigure(
         self,
         marker_height_mm: Optional[float] = None,
-        marker_mount_radius_mm: Optional[float] = None,
-        wall_thickness_mm: Optional[float] = None,
+        marker_world_points: Optional[dict] = None,
     ) -> None:
         """Override the physical marker measurements (normally sourced from
         config.json) and rebuild every lookup table derived from them.
         Intended to be called once at startup, before tracking begins."""
         if marker_height_mm is not None:
             self.marker_height_mm = marker_height_mm
-        if marker_mount_radius_mm is not None:
-            self.marker_mount_radius_mm = marker_mount_radius_mm
-        if wall_thickness_mm is not None:
-            self.wall_thickness_mm = wall_thickness_mm
+        if marker_world_points is not None:
+            self.marker_world_points = marker_world_points
         self._rebuild()
+
+    @classmethod
+    def _validated_world_points(cls, points: dict) -> dict[str, tuple[float, float, float]]:
+        """Validate and normalize the five named marker centers from config."""
+        if not isinstance(points, dict) or set(points) != set(cls.REQUIRED_POINT_NAMES):
+            raise ValueError(
+                "marker_world_points must contain exactly: "
+                + ", ".join(cls.REQUIRED_POINT_NAMES)
+            )
+        normalized = {}
+        for name in cls.REQUIRED_POINT_NAMES:
+            point = points[name]
+            if not isinstance(point, (list, tuple)) or len(point) != 3:
+                raise ValueError(f"marker_world_points.{name} must be an [x_mm, y_mm, z_mm] triple")
+            try:
+                xyz = tuple(float(value) for value in point)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"marker_world_points.{name} must contain numeric coordinates") from exc
+            if not np.all(np.isfinite(xyz)):
+                raise ValueError(f"marker_world_points.{name} must contain finite coordinates")
+            normalized[name] = xyz
+
+        origin = np.asarray(normalized["corner_origin"][:2])
+        x_corner = np.asarray(normalized["corner_x"][:2])
+        y_corner = np.asarray(normalized["corner_y"][:2])
+        x_axis = x_corner - origin
+        y_axis = y_corner - origin
+        area = x_axis[0] * y_axis[1] - x_axis[1] * y_axis[0]
+        if abs(float(area)) < 1e-6:
+            raise ValueError("corner_origin, corner_x, and corner_y must define a non-degenerate table plane")
+        return normalized
 
     def select_inliers(
         self, blobs: list["MarkerBlob"], R: np.ndarray, t: np.ndarray,
@@ -205,7 +213,7 @@ class TableGeometry:
     def match(self, blobs: list) -> dict:
         """
         Match detected marker blobs (or any object exposing .x_mm/.y_mm/.z_mm)
-        to named table marker points ("origin", "x1", "x2", "y1", "y2") using
+        to named table fiducial points using
         only the blobs' relative 3D geometry — no assumption about right
         angles or arm shapes.
 
@@ -250,55 +258,32 @@ class TableGeometry:
         return {self.point_names[i]: blobs[best_perm[i]] for i in range(n)}
 
 
-# The table's own physical extent is configured separately from marker
-# mounting geometry. These are populated from config.json at application
-# startup and used by world_to_cell() to normalize into the logical grid.
-TABLE_LONG_SIDE_MM: float | None = None
-TABLE_SHORT_SIDE_MM: float | None = None
-
 _GEOMETRY = TableGeometry()
 
 
 def configure_table_geometry(
     marker_height_mm: Optional[float] = None,
-    marker_mount_radius_mm: Optional[float] = None,
-    wall_thickness_mm: Optional[float] = None,
+    marker_world_points: Optional[dict] = None,
     max_marker_radius_mm: Optional[float] = None,
-    table_long_side_mm: Optional[float] = None,
-    table_short_side_mm: Optional[float] = None,
 ) -> None:
     """Override the physical marker measurements (normally sourced from
     config.json) and rebuild every lookup table derived from them. Intended
     to be called once at startup, before tracking begins."""
-    global TABLE_LONG_SIDE_MM, TABLE_SHORT_SIDE_MM
     _GEOMETRY.reconfigure(
         marker_height_mm=marker_height_mm,
-        marker_mount_radius_mm=marker_mount_radius_mm,
-        wall_thickness_mm=wall_thickness_mm,
+        marker_world_points=marker_world_points,
     )
     if max_marker_radius_mm is not None:
         _DETECTOR.max_marker_radius_mm = max_marker_radius_mm
-    if table_long_side_mm is not None:
-        if table_long_side_mm <= 0:
-            raise ValueError("table_long_side_mm must be greater than zero")
-        TABLE_LONG_SIDE_MM = table_long_side_mm
-    if table_short_side_mm is not None:
-        if table_short_side_mm <= 0:
-            raise ValueError("table_short_side_mm must be greater than zero")
-        TABLE_SHORT_SIDE_MM = table_short_side_mm
 
 
 # ---------------------------------------------------------------------------
-# Cell grid — same 12x12 logical grid the LED/servo modules address (see
-# .cursor/rules/module-grid-mapping.mdc), overlaid on the physical table so
+# Cell grid — same 12x12 logical game grid, overlaid on the physical table so
 # ball position can be reported as (row, col) instead of just raw mm.
 #
-# Grid (0, 0) is the table corner *diagonal* from the marker "origin" corner
-# (i.e. the far corner along both walls) -- not the marker origin itself.
-# Column increases toward the marker-origin corner along the long/X wall;
-# row increases toward the marker-origin corner along the short/Y wall.
-# World X runs 0 (origin) to -TABLE_LONG_SIDE_MM (far corner, x2 side); world
-# Y runs 0 (origin) to +TABLE_SHORT_SIDE_MM (far corner, y2 side).
+# Grid (0, 0) is ``corner_xy``, diagonal from ``corner_origin``. Column and
+# row increase toward ``corner_origin``. The corner fiducials supply both
+# grid axes and their extents.
 # ---------------------------------------------------------------------------
 GRID_ROWS = 12
 GRID_COLS = 12
@@ -308,10 +293,14 @@ def world_to_cell(x_mm: float, y_mm: float) -> tuple[int, int]:
     """Convert a table-frame (world) X/Y position in mm to a (row, col) cell
     index on the GRID_ROWS x GRID_COLS grid. Out-of-bounds positions are
     clamped to the nearest edge cell rather than raising."""
-    if TABLE_LONG_SIDE_MM is None or TABLE_SHORT_SIDE_MM is None:
-        raise RuntimeError("table dimensions were not configured")
-    col_frac = (x_mm + TABLE_LONG_SIDE_MM) / TABLE_LONG_SIDE_MM
-    row_frac = (TABLE_SHORT_SIDE_MM - y_mm) / TABLE_SHORT_SIDE_MM
+    origin = np.asarray(_GEOMETRY.world_points["corner_origin"][:2])
+    x_corner = np.asarray(_GEOMETRY.world_points["corner_x"][:2])
+    y_corner = np.asarray(_GEOMETRY.world_points["corner_y"][:2])
+    position = np.asarray((x_mm, y_mm))
+    x_axis = origin - x_corner
+    y_axis = origin - y_corner
+    col_frac = float(np.dot(position - x_corner, x_axis) / np.dot(x_axis, x_axis))
+    row_frac = float(np.dot(position - y_corner, y_axis) / np.dot(y_axis, y_axis))
     col = int(np.clip(np.floor(col_frac * GRID_COLS), 0, GRID_COLS - 1))
     row = int(np.clip(np.floor(row_frac * GRID_ROWS), 0, GRID_ROWS - 1))
     return row, col
@@ -832,8 +821,6 @@ def __getattr__(name):
     proxies = {
         "TABLE_MARKER_WORLD_POINTS": lambda: _GEOMETRY.world_points,
         "MARKER_HEIGHT_MM": lambda: _GEOMETRY.marker_height_mm,
-        "MARKER_MOUNT_RADIUS_MM": lambda: _GEOMETRY.marker_mount_radius_mm,
-        "WALL_THICKNESS_MM": lambda: _GEOMETRY.wall_thickness_mm,
         "_EXPECTED_MARKER_COUNT": lambda: _GEOMETRY.expected_marker_count,
         "_MARKER_IR_THRESHOLD": lambda: _DETECTOR.ir_threshold,
         "_MAX_MARKER_RADIUS_MM": lambda: _DETECTOR.max_marker_radius_mm,
