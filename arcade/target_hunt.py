@@ -21,6 +21,9 @@ class TargetHuntParams:
     points_per_target: int = 100
     spawn_pit_count: int = 1
     spawn_wall_count: int = 1
+    max_time_seconds: float = 30.0
+    minimum_reachable_cells: int = 8
+    minimum_target_distance: int = 4
     seed: int = 1
 
 
@@ -76,6 +79,24 @@ def reachable_cells(
     return seen
 
 
+def reachable_distances(
+    start: str,
+    cells: dict[str, dict[str, Any]],
+    row_col: dict[str, tuple[int, int]],
+) -> dict[str, int]:
+    if start not in cells or int(cells[start].get("value", 0)) != 0:
+        return {}
+    distance = {start: 0}
+    queue = deque([start])
+    while queue:
+        current = queue.popleft()
+        for neighbor in _neighbors(current, row_col):
+            if neighbor not in distance and int(cells[neighbor].get("value", 0)) == 0:
+                distance[neighbor] = distance[current] + 1
+                queue.append(neighbor)
+    return distance
+
+
 def _entry(
     key: str, row_col: dict[str, tuple[int, int]], value: int, color: str
 ) -> dict[str, Any]:
@@ -84,10 +105,15 @@ def _entry(
 
 
 def _choose_target(session: TargetHuntSession, ball_cell: str) -> str | None:
-    reachable = sorted(reachable_cells(ball_cell, session.cells, session.row_col) - {ball_cell})
-    if not reachable:
+    distances = reachable_distances(ball_cell, session.cells, session.row_col)
+    candidates = sorted(
+        key
+        for key, distance in distances.items()
+        if distance >= session.params.minimum_target_distance
+    )
+    if len(distances) < session.params.minimum_reachable_cells or not candidates:
         return None
-    return session.rng.choice(reachable)
+    return session.rng.choice(candidates)
 
 
 def _place_obstacles(
@@ -110,7 +136,10 @@ def _place_obstacles(
             for candidate in candidates:
                 original = session.cells[candidate]
                 session.cells[candidate] = {**original, "value": value, "color": color}
-                if len(reachable_cells(ball_cell, session.cells, session.row_col)) > 1:
+                if (
+                    len(reachable_cells(ball_cell, session.cells, session.row_col))
+                    >= session.params.minimum_reachable_cells
+                ):
                     updates.append(_entry(candidate, session.row_col, value, color))
                     placed = True
                     break
@@ -133,7 +162,7 @@ def start_target_hunt(
         row_col=row_col,
         rng=random.Random(params.seed),
         target_cell=None,
-        remaining_seconds=params.starting_seconds,
+        remaining_seconds=min(params.starting_seconds, params.max_time_seconds),
         last_tick_at=now,
     )
     session.target_cell = _choose_target(session, ball_cell)
@@ -159,7 +188,10 @@ def tick_target_hunt(
         elif now - session.pending_target_since >= session.params.target_confirm_seconds:
             previous = session.target_cell
             session.hits += 1
-            session.remaining_seconds += session.params.target_bonus_seconds
+            session.remaining_seconds = min(
+                session.params.max_time_seconds,
+                session.remaining_seconds + session.params.target_bonus_seconds,
+            )
             if previous:
                 updates.append(_entry(previous, session.row_col, 0, FLOOR_COLOR))
             updates.extend(
@@ -196,5 +228,8 @@ def params_from_dict(raw: dict[str, Any], seed: int = 1) -> TargetHuntParams:
         points_per_target=int(raw.get("pointsPerTarget", 100)),
         spawn_pit_count=int(raw.get("spawnPitCount", 1)),
         spawn_wall_count=int(raw.get("spawnWallCount", 1)),
+        max_time_seconds=float(raw.get("maxTimeSeconds", 30)),
+        minimum_reachable_cells=int(raw.get("minimumReachableCells", 8)),
+        minimum_target_distance=int(raw.get("minimumTargetDistance", 4)),
         seed=seed,
     )

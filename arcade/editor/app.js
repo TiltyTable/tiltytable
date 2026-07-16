@@ -1,6 +1,6 @@
 (() => {
   "use strict";
-  const { cellKeys, seededRandom, reachable, moveCell } = window.TiltyEditorLogic;
+  const { cellKeys, seededRandom, reachable, reachableDistances, moveCell } = window.TiltyEditorLogic;
   const $ = (selector) => document.querySelector(selector);
   const clone = (value) => JSON.parse(JSON.stringify(value));
 
@@ -28,9 +28,9 @@
     target_hunt: {
       label: "Snake",
       short: "Reach flashing targets for time; every success adds a permanent wall and pit.",
-      steps: ["Chase the flashing blue target.", "Targets add time and score.", "Each target makes the board harder."],
-      defaults: { startingSeconds: 20, targetBonusSeconds: 5, targetConfirmSeconds: 0.2, pointsPerTarget: 100, spawnPitCount: 1, spawnWallCount: 1 },
-      fields: [["startingSeconds", "Starting time"], ["targetBonusSeconds", "Time per target"], ["pointsPerTarget", "Points per target"], ["spawnPitCount", "New pits"], ["spawnWallCount", "New walls"]],
+      steps: ["Chase a distant flashing blue target.", "Time rewards are capped.", "The run ends when no meaningful route remains."],
+      defaults: { startingSeconds: 20, targetBonusSeconds: 5, targetConfirmSeconds: 0.2, pointsPerTarget: 100, spawnPitCount: 1, spawnWallCount: 1, maxTimeSeconds: 30, minimumReachableCells: 8, minimumTargetDistance: 4 },
+      fields: [["startingSeconds", "Starting time"], ["targetBonusSeconds", "Time per target"], ["maxTimeSeconds", "Maximum time"], ["pointsPerTarget", "Points per target"], ["spawnPitCount", "New pits"], ["spawnWallCount", "New walls"], ["minimumReachableCells", "Minimum floor area"], ["minimumTargetDistance", "Minimum target distance"]],
     },
   };
 
@@ -192,7 +192,16 @@
     updateHud(); renderBoard();
   }
   function chooseTarget() {
-    const options = [...reachable(sim.ball, sim.cells)].filter((key) => key !== sim.ball);
+    const distances = reachableDistances(sim.ball, sim.cells);
+    const minimumArea = Number(level.modeParams.minimumReachableCells || 8);
+    const minimumDistance = Number(level.modeParams.minimumTargetDistance || 4);
+    const options = Object.entries(distances)
+      .filter(([, distance]) => distance >= minimumDistance)
+      .map(([key]) => key);
+    if (Object.keys(distances).length < minimumArea) {
+      sim.target = null;
+      return;
+    }
     sim.target = options.length ? options[Math.floor(sim.rng() * options.length)] : null;
   }
   function placeObstacle(value, color) {
@@ -200,7 +209,10 @@
     for (let i = options.length - 1; i > 0; i--) { const j = Math.floor(sim.rng() * (i + 1)); [options[i], options[j]] = [options[j], options[i]]; }
     for (const key of options) {
       const old = sim.cells[key]; sim.cells[key] = { ...old, value, color };
-      if (reachable(sim.ball, sim.cells).size > 1) return;
+      if (
+        reachable(sim.ball, sim.cells).size
+        >= Number(level.modeParams.minimumReachableCells || 8)
+      ) return;
       sim.cells[key] = old;
     }
   }
@@ -221,11 +233,15 @@
   }
   function hitTarget() {
     sim.score += Number(level.modeParams.pointsPerTarget || 100);
-    sim.remaining += Number(level.modeParams.targetBonusSeconds || 5);
+    sim.remaining = Math.min(
+      Number(level.modeParams.maxTimeSeconds || 30),
+      sim.remaining + Number(level.modeParams.targetBonusSeconds || 5),
+    );
     for (let i = 0; i < Number(level.modeParams.spawnPitCount || 1); i++) placeObstacle(-1, "#FF0000");
     for (let i = 0; i < Number(level.modeParams.spawnWallCount || 1); i++) placeObstacle(1, "#4DFF00");
     chooseTarget();
-    $("#gameMessage").textContent = `Target reached. ${sim.remaining.toFixed(1)} seconds left.`;
+    if (!sim.target) endTest(false, "No distant reachable target remains. The snake is trapped.");
+    else $("#gameMessage").textContent = `Target reached. ${sim.remaining.toFixed(1)} seconds left.`;
   }
   function endTest(won, message) {
     sim.playing = false; sim.ended = true; sim.won = won;

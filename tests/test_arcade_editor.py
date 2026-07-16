@@ -118,6 +118,35 @@ class TargetHuntTests(unittest.TestCase):
         result = tick_target_hunt(session, None, 1.1)
         self.assertTrue(result.lost)
 
+    def test_target_bonus_is_capped(self) -> None:
+        params = TargetHuntParams(
+            starting_seconds=29,
+            max_time_seconds=30,
+            target_bonus_seconds=5,
+            target_confirm_seconds=0.1,
+            seed=4,
+        )
+        session = start_target_hunt(params, self.cells, self.row_col, "A1", 0.0)
+        target = session.target_cell
+        tick_target_hunt(session, target, 0.0)
+        result = tick_target_hunt(session, target, 0.2)
+        self.assertEqual(result.remaining_seconds, 30)
+
+    def test_tiny_island_has_no_farmable_target(self) -> None:
+        for key in self.cells:
+            self.cells[key]["value"] = 1
+        self.cells["A1"]["value"] = 0
+        self.cells["A2"]["value"] = 0
+        session = start_target_hunt(
+            TargetHuntParams(minimum_reachable_cells=8),
+            self.cells,
+            self.row_col,
+            "A1",
+            0.0,
+        )
+        self.assertIsNone(session.target_cell)
+        self.assertTrue(tick_target_hunt(session, "A1", 0.1).lost)
+
 
 class HexFallTests(unittest.TestCase):
     def test_touch_does_not_sink_trail(self) -> None:

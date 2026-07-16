@@ -37,6 +37,20 @@
     }
     return seen;
   }
+  function reachableDistances(start, cells) {
+    if (!cells[start] || cells[start].value !== 0) return {};
+    const distance = { [start]: 0 }, queue = [start];
+    while (queue.length) {
+      const current = queue.shift();
+      neighbors(current).forEach((next) => {
+        if (distance[next] === undefined && cells[next].value === 0) {
+          distance[next] = distance[current] + 1;
+          queue.push(next);
+        }
+      });
+    }
+    return distance;
+  }
   function moveCell(start, deltaRow, deltaCol, cells) {
     const [row, col] = keyToRowCol(start);
     const nextRow = row + deltaRow, nextCol = col + deltaCol;
@@ -47,7 +61,7 @@
     if (cells[key]?.value === 1) return { key: start, blocked: true };
     return { key, blocked: false };
   }
-  const api = { cellKeys, keyToRowCol, rowColToKey, seededRandom, reachable, moveCell };
+  const api = { cellKeys, keyToRowCol, rowColToKey, seededRandom, reachable, reachableDistances, moveCell };
   root.TiltyEditorLogic = api;
   if (typeof module !== "undefined") module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

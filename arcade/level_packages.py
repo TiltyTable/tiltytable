@@ -41,6 +41,9 @@ MODE_DEFAULTS: dict[str, dict[str, Any]] = {
         "pointsPerTarget": 100,
         "spawnPitCount": 1,
         "spawnWallCount": 1,
+        "maxTimeSeconds": 30.0,
+        "minimumReachableCells": 8,
+        "minimumTargetDistance": 4,
     },
 }
 
@@ -190,7 +193,8 @@ def validate_package(package: dict[str, Any], *, raise_on_error: bool = True) ->
     elif mode == "target_hunt":
         for key in (
             "startingSeconds", "targetBonusSeconds", "targetConfirmSeconds",
-            "pointsPerTarget",
+            "pointsPerTarget", "maxTimeSeconds", "minimumReachableCells",
+            "minimumTargetDistance",
         ):
             _positive_number(params, key, errors)
         for key in ("spawnPitCount", "spawnWallCount"):

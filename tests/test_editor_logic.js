@@ -4,6 +4,7 @@ const {
   rowColToKey,
   seededRandom,
   reachable,
+  reachableDistances,
   moveCell,
 } = require("../arcade/editor/logic.js");
 
@@ -27,6 +28,7 @@ for (let row = 0; row < 12; row++) {
 const left = reachable("A1", cells);
 assert(left.has("E12"));
 assert(!left.has("L12"));
+assert.strictEqual(reachableDistances("A1", cells).E1, 4);
 assert.deepStrictEqual(moveCell("A1", 0, -1, cells), { key: "A1", blocked: true });
 assert.deepStrictEqual(moveCell("E1", 0, 1, cells), { key: "E1", blocked: true });
 assert.deepStrictEqual(moveCell("A1", 1, 0, cells), { key: "A2", blocked: false });
