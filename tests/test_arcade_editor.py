@@ -132,6 +132,18 @@ class HexFallTests(unittest.TestCase):
         b = tick_hex_fall(second, params, "A1", 1.1, mapping).hardware_updates
         self.assertEqual([u["key"] for u in a], [u["key"] for u in b])
         self.assertNotIn("A1", [u["key"] for u in a])
+        self.assertTrue(all(update["value"] == 0 for update in a))
+        sunk = tick_hex_fall(first, params, "A1", 2.2, mapping).hardware_updates
+        self.assertTrue(any(update["value"] == -1 for update in sunk))
+        active = {
+            key
+            for key in mapping
+            if first.lava.cells.get(key) is None
+            or first.lava.cells[key].phase != "sunk"
+        }
+        from arcade.hex_fall import _connected_from
+
+        self.assertEqual(_connected_from("A1", active, mapping), active)
 
 
 class EditorRouteTests(unittest.TestCase):

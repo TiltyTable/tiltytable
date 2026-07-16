@@ -34,7 +34,7 @@ def start_mode(
     ball_cell: str | None,
 ) -> HexFallSession | TargetHuntSession:
     if mode == "hex_fall":
-        return start_hex_fall(hex_params(params, seed), now)
+        return start_hex_fall(hex_params(params, seed), now, cells)
     if mode == "target_hunt":
         start = ball_cell or next(
             (key for key, cell in cells.items() if int(cell.get("value", 0)) == 0),

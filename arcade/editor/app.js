@@ -22,8 +22,8 @@
       label: "Hex-A-Fall",
       short: "Random floor tiles disappear over time, but never the tile under the ball.",
       steps: ["Random tiles collapse every few seconds.", "Your current tile is always protected.", "Survive on the shrinking floor."],
-      defaults: { survivalSeconds: 45, pitConfirmSeconds: 0.5, collapseEverySeconds: 3, collapseCount: 1 },
-      fields: [["survivalSeconds", "Survive for"], ["collapseEverySeconds", "Collapse every"], ["collapseCount", "Tiles per collapse"]],
+      defaults: { survivalSeconds: 45, pitConfirmSeconds: 0.5, collapseEverySeconds: 3, collapseCount: 1, collapseWarnSeconds: 1 },
+      fields: [["survivalSeconds", "Survive for"], ["collapseEverySeconds", "Collapse every"], ["collapseCount", "Tiles per collapse"], ["collapseWarnSeconds", "Flash before falling"]],
     },
     target_hunt: {
       label: "Snake",
@@ -184,7 +184,7 @@
     sim = {
       playing: false, ended: false, won: false, time: 0, score: 0,
       remaining: Number(level.modeParams.survivalSeconds || level.modeParams.startingSeconds || 40),
-      cells: clone(level.cells), ball: level.meta.startCell, target: null, touched: {},
+      cells: clone(level.cells), ball: level.meta.startCell, target: null, touched: {}, pendingCollapse: {},
       rng: seededRandom(level.seed), nextCollapse: Number(level.modeParams.collapseEverySeconds || 0),
     };
     if (level.mode === "target_hunt") chooseTarget();
@@ -203,6 +203,21 @@
       if (reachable(sim.ball, sim.cells).size > 1) return;
       sim.cells[key] = old;
     }
+  }
+  function safeHexCandidate() {
+    const pending = new Set(Object.keys(sim.pendingCollapse));
+    const active = cellKeys.filter((key) => sim.cells[key].value === 0 && !pending.has(key));
+    const options = active.filter((key) => key !== sim.ball);
+    for (let i = options.length - 1; i > 0; i--) { const j = Math.floor(sim.rng() * (i + 1)); [options[i], options[j]] = [options[j], options[i]]; }
+    for (const candidate of options) {
+      const blocked = [...pending, candidate];
+      blocked.forEach((key) => { sim.cells[key]._savedValue = sim.cells[key].value; sim.cells[key].value = -1; });
+      const remaining = new Set(active.filter((key) => key !== candidate));
+      const connected = reachable(sim.ball, sim.cells);
+      blocked.forEach((key) => { sim.cells[key].value = sim.cells[key]._savedValue; delete sim.cells[key]._savedValue; });
+      if (connected.size === remaining.size) return candidate;
+    }
+    return null;
   }
   function hitTarget() {
     sim.score += Number(level.modeParams.pointsPerTarget || 100);
@@ -242,8 +257,21 @@
       });
       if (sim.cells[sim.ball].value === -1) { renderBoard(); endTest(false, "The floor disappeared under the ball."); return; }
     } else if (level.mode === "hex_fall") {
+      Object.entries(sim.pendingCollapse).forEach(([key, sinkAt]) => {
+        if (sim.time >= sinkAt) {
+          sim.cells[key] = { value: -1, color: "#FF0000" };
+          delete sim.pendingCollapse[key];
+        } else {
+          sim.cells[key].color = Math.floor(sim.time * 7) % 2 ? "#FF0000" : "#000000";
+        }
+      });
       if (sim.nextCollapse > 0 && sim.time >= sim.nextCollapse) {
-        for (let i = 0; i < Number(level.modeParams.collapseCount || 1); i++) placeObstacle(-1, "#FF0000");
+        for (let i = 0; i < Number(level.modeParams.collapseCount || 1); i++) {
+          const candidate = safeHexCandidate();
+          if (!candidate) break;
+          sim.pendingCollapse[candidate] = sim.time + Number(level.modeParams.collapseWarnSeconds || 1);
+          sim.cells[candidate].color = "#FF0000";
+        }
         sim.nextCollapse += Number(level.modeParams.collapseEverySeconds || 3);
       }
       if (sim.cells[sim.ball].value === -1) { renderBoard(); endTest(false, "The floor disappeared under the ball."); return; }
