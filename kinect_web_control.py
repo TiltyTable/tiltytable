@@ -23,12 +23,9 @@ from pyk4a import (
 )
 
 from table_pose import (
-    GravityEstimator,
+    ImageCellTracker,
     PoseFitAttempt,
     TableGeometry,
-    TablePoseTracker,
-    configure_table_geometry,
-    world_to_cell,
 )
 from live_capture_viewer import (
     COLOR_RESOLUTIONS,
@@ -124,7 +121,9 @@ class KinectFrameHub:
         self._intrinsics = None   # (fx, fy, ppx, ppy) — set once camera starts
         self._last_ball_r_px = None  # last known ball radius in pixels for miss-frame overlay
 
-        self.table_pose = TablePoseTracker()
+        self.table_pose = ImageCellTracker(
+            marker_world_points=args.marker_world_points,
+        )
         self._last_pose_attempt = None
         self._pose_debug_jpeg = None
         self._pose_frame_counter = 0
@@ -134,9 +133,6 @@ class KinectFrameHub:
         self.marker_ir_threshold = args.marker_ir_threshold
         self.ball_ir_threshold = args.ball_ir_threshold
 
-        self.gravity = GravityEstimator(sign=args.gravity_sign)
-        self._imu_thread = None
-        self._accel_to_depth_R = None  # set once calibration is available in _run()
 
     def start(self):
         self.thread = threading.Thread(target=self._run, name="kinect-capture", daemon=True)
@@ -148,39 +144,10 @@ class KinectFrameHub:
             self.lock.notify_all()
         if self.thread is not None:
             self.thread.join(timeout=2.0)
-        if self._imu_thread is not None:
-            self._imu_thread.join(timeout=2.0)
         if self.k4a is not None and self.k4a.is_running:
             self.k4a.stop()
         if self.tracker is not None:
             self.tracker.close()
-
-    # Azure Kinect's IMU streams at ~1.6kHz, far faster than the heavily
-    # smoothed gravity estimate (EMA factor 0.02, tracking something that
-    # shouldn't move at all -- a stationary tripod's "up" direction) needs.
-    # PyK4A defaults to thread_safe=True, which wraps *every* native device
-    # call -- get_capture() and get_imu_sample() alike -- in a shared lock,
-    # so draining every IMU sample as fast as they arrive would hammer that
-    # lock and starve the main capture loop's get_capture() calls, slowing
-    # ball tracking / table tracking / streaming (all downstream of that
-    # same loop). Throttling to a much lower poll rate avoids that.
-    _IMU_POLL_INTERVAL_S = 1.0 / 30.0
-
-    def _run_imu(self):
-        """Periodically samples the IMU into self.gravity so the camera's
-        accelerometer-derived "up" direction stays fresh — decoupled from
-        the depth-camera capture loop's cadence."""
-        while not self.stop_event.is_set():
-            try:
-                sample = self.k4a.get_imu_sample(timeout=100)
-            except K4ATimeoutException:
-                continue
-            except K4AException:
-                break
-            if sample is not None and self._accel_to_depth_R is not None:
-                acc_depth_frame = self._accel_to_depth_R @ np.array(sample["acc_sample"])
-                self.gravity.add_sample(acc_depth_frame)
-            time.sleep(self._IMU_POLL_INTERVAL_S)
 
     def _set_status(self, status, error=""):
         with self.lock:
@@ -216,19 +183,6 @@ class KinectFrameHub:
             self.k4a = PyK4A(config=config, device_id=args.device_id)
             self.k4a.start()
             self._set_status("running")
-
-            if not self.headless:
-                # The calibration UI displays table tilt from the IMU. The
-                # arcade only needs camera-to-table pose and skips this stream.
-                self._accel_to_depth_R, _ = self.k4a.calibration.get_extrinsic_parameters(
-                    CalibrationType.ACCEL, CalibrationType.DEPTH,
-                )
-                self._imu_thread = threading.Thread(
-                    target=self._run_imu,
-                    name="kinect-imu",
-                    daemon=True,
-                )
-                self._imu_thread.start()
 
             mat = self.k4a.calibration.get_camera_matrix(CalibrationType.DEPTH)
             with self.lock:
@@ -462,14 +416,15 @@ class KinectFrameHub:
                 "reject_counts": reject_counts,
             }
 
-        world, stale, age_s = self.table_pose.apply(pos)
+        age_s = self.table_pose.age_seconds()
+        stale = self.table_pose.last_error is not None
         position_world = None
         cell = None
-        if world is not None:
-            wx, wy, wz = world
-            position_world = {"x": round(wx, 1), "y": round(wy, 1), "z": round(wz, 1)}
-            row, col = world_to_cell(wx, wy)
-            cell = {"row": row, "col": col}
+        if det is not None:
+            mapped_cell = self.table_pose.cell_from_pixel(det.cx, det.cy)
+            if mapped_cell is not None:
+                row, col = mapped_cell
+                cell = {"row": row, "col": col}
 
         return {
             "enabled": True,
@@ -495,24 +450,23 @@ class KinectFrameHub:
             tracker = self.table_pose
             marker_ir_threshold = self.marker_ir_threshold
             last_attempt = self._last_pose_attempt
-        _, stale, age_s = tracker.apply((0.0, 0.0, 0.0))
-        tilt_deg = tracker.tilt_deg(self.gravity.up_vector)
-        roll_pitch = tracker.roll_pitch_deg(self.gravity.up_vector)
+        age_s = tracker.age_seconds()
+        stale = tracker.last_error is not None
         result = {
             "tracking": tracker.is_tracking,
             "stale": stale if tracker.is_tracking else None,
             "age_s": round(age_s, 1) if age_s is not None else None,
-            "rms_residual_mm": tracker.last_fit.rms_residual_mm if tracker.last_fit else None,
-            "max_residual_mm": tracker.last_fit.max_residual_mm if tracker.last_fit else None,
+            "rms_residual_px": tracker.last_fit.rms_residual_px if tracker.last_fit else None,
+            "max_residual_px": tracker.last_fit.max_residual_px if tracker.last_fit else None,
             "last_error": tracker.last_error,
             "marker_ir_threshold": marker_ir_threshold,
-            "tilt_deg": round(tilt_deg, 1) if tilt_deg is not None else None,
-            "roll_deg": round(roll_pitch[0], 1) if roll_pitch is not None else None,
-            "pitch_deg": round(roll_pitch[1], 1) if roll_pitch is not None else None,
+            "tilt_deg": None,
+            "roll_deg": None,
+            "pitch_deg": None,
         }
         if last_attempt is not None and last_attempt.ok and last_attempt.matched_points is not None:
             result["matched_points"] = {
-                name: {"residual_mm": info["residual_mm"]}
+                name: {"residual_px": info["residual_px"]}
                 for name, info in last_attempt.matched_points.items()
             }
         return result
@@ -706,13 +660,8 @@ def parse_args(argv=None):
     calib.add_argument("--pose-update-every-n-frames", type=int, default=3, metavar="N",
                        help="recompute the camera-to-table pose every N camera frames")
     calib.add_argument("--marker-ir-threshold", type=float, default=3800.0, metavar="COUNTS")
-    calib.add_argument("--gravity-sign", type=float, default=1.0, choices=(1.0, -1.0),
-                       help="flip if a level table doesn't read ~0 tilt_deg (IMU accelerometer "
-                            "sign convention can't be verified without real hardware)")
-    calib.add_argument("--marker-height-mm", type=float, default=50.8, metavar="MM",
-                       help="height of the fiducial centers above the table surface")
     calib.add_argument("--marker-world-points", type=json.loads, default=None, metavar="JSON",
-                       help="five named marker-center [x_mm, y_mm, z_mm] coordinates; normally set in config.json")
+                       help="six named fiducial-center [x_mm, y_mm, z_mm] coordinates from config.json")
     calib.add_argument("--max-marker-radius-mm", type=float, default=15.0, metavar="MM",
                        help="reject IR blobs larger than this physical radius (excludes the ball)")
 
@@ -731,15 +680,14 @@ def parse_args(argv=None):
         parser.error("--pose-update-every-n-frames must be greater than 0")
     if args.marker_ir_threshold < 0:
         parser.error("--marker-ir-threshold cannot be negative")
-    if args.marker_height_mm < 0:
-        parser.error("--marker-height-mm cannot be negative")
+    if args.marker_world_points is None:
+        parser.error("--marker-world-points must be configured")
+    try:
+        TableGeometry._validated_world_points(args.marker_world_points)
+    except ValueError as exc:
+        parser.error(str(exc))
     if args.max_marker_radius_mm <= 0:
         parser.error("--max-marker-radius-mm must be greater than 0")
-    if args.marker_world_points is not None:
-        try:
-            TableGeometry._validated_world_points(args.marker_world_points)
-        except ValueError as exc:
-            parser.error(str(exc))
     return args
 
 
@@ -749,11 +697,6 @@ def parse_args(argv=None):
 
 def main():
     args = parse_args()
-    configure_table_geometry(
-        marker_height_mm=args.marker_height_mm,
-        marker_world_points=args.marker_world_points,
-        max_marker_radius_mm=args.max_marker_radius_mm,
-    )
     camera = KinectFrameHub(args)
 
     KinectWebHandler.camera = camera

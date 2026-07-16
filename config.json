@@ -23,13 +23,13 @@
   "table_pose": {
     "pose_update_every_n_frames": 3,
     "marker_ir_threshold": 30000.0,
-    "marker_height_mm": 50.8,
     "marker_world_points": {
-      "corner_origin": [0.0, 0.0, 50.8],
-      "corner_x": [-775.0, 0.0, 50.8],
-      "corner_xy": [-775.0, 775.0, 50.8],
-      "corner_y": [0.0, 775.0, 50.8],
-      "edge_x_third": [-258.333333, 0.0, 50.8]
+      "corner_origin": [-15.88, 15.88, 44.45],
+      "corner_x": [844.55, 15.88, 44.45],
+      "corner_xy": [844.55, -844.55, 44.45],
+      "corner_y": [-15.88, -844.55, 44.45],
+      "edge_x": [279.4, 15.88, 44.45],
+      "edge_y": [-15.88, -419.1, 44.45]
     },
     "max_marker_radius_mm": 15.0,
     "gravity_sign": 1.0

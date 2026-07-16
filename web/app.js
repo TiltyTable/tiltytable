@@ -19,8 +19,8 @@ const poseStatusPill      = document.querySelector('#poseStatusPill');
 const poseResiduals       = document.querySelector('#poseResiduals');
 const poseRms             = document.querySelector('#poseRms');
 const poseMax             = document.querySelector('#poseMax');
-const poseRoll            = document.querySelector('#poseRoll');
-const posePitch           = document.querySelector('#posePitch');
+const poseAge             = document.querySelector('#poseAge');
+const poseMarkers         = document.querySelector('#poseMarkers');
 const markerThresholdSlider = document.querySelector('#markerThresholdSlider');
 const lblMarkerThreshold    = document.querySelector('#lblMarkerThreshold');
 const ballThresholdSlider   = document.querySelector('#ballThresholdSlider');
@@ -105,9 +105,9 @@ function fmtMm(value) {
   return `${Number(value).toFixed(1)} mm`;
 }
 
-function fmtDeg(value) {
+function fmtPx(value) {
   if (value === null || value === undefined) return '--';
-  return `${Number(value).toFixed(1)}°`;
+  return `${Number(value).toFixed(1)} px`;
 }
 
 async function postJson(path, body = {}) {
@@ -136,9 +136,9 @@ async function fetchState() {
 function renderState(state) {
   cameraDot.className = `status-dot ${state.camera.status}`;
   cameraStatus.textContent = state.camera.status;
-  const dims = state.depth_image.width && state.depth_image.height
+  const dims = state.depth_image?.width && state.depth_image?.height
     ? `${state.depth_image.width} x ${state.depth_image.height}`
-    : 'waiting for depth size';
+    : 'depth stream';
   const fps = state.camera.fps ? `${state.camera.fps.toFixed(1)} fps` : 'fps pending';
   cameraMeta.textContent = state.camera.error || `${dims}, ${fps}`;
 
@@ -193,6 +193,9 @@ function renderBall(ball) {
     const staleTag = ball.pose_stale ? ` (stale, ${ball.pose_age_s?.toFixed(1)}s)` : '';
     const cellTag = ball.cell ? ` cell=(${ball.cell.row},${ball.cell.col})` : '';
     ballWorld.textContent = `X=${fmtMm(w.x)} Y=${fmtMm(w.y)} Z=${fmtMm(w.z)}${cellTag}${staleTag}`;
+  } else if (ball.detected && ball.cell) {
+    const staleTag = ball.pose_stale ? ` (stale, ${ball.pose_age_s?.toFixed(1)}s)` : '';
+    ballWorld.textContent = `cell=(${ball.cell.row},${ball.cell.col})${staleTag}`;
   } else {
     ballWorld.textContent = 'tracking — ball not detected';
   }
@@ -221,18 +224,21 @@ function renderTablePose(pose) {
     poseStatus.textContent = 'fit ok';
   }
 
-  poseRms.textContent   = fmtMm(pose.rms_residual_mm);
-  poseMax.textContent   = fmtMm(pose.max_residual_mm);
-  poseRoll.textContent  = fmtDeg(pose.roll_deg);
-  posePitch.textContent = fmtDeg(pose.pitch_deg);
+  poseRms.textContent   = fmtPx(pose.rms_residual_px);
+  poseMax.textContent   = fmtPx(pose.max_residual_px);
+  poseAge.textContent   = pose.age_s === null || pose.age_s === undefined
+    ? '--'
+    : `${Number(pose.age_s).toFixed(1)} s`;
+  const markerCount = Object.keys(pose.matched_points || {}).length;
+  poseMarkers.textContent = markerCount ? `${markerCount} / 6` : '--';
 
   if (pose.tracking) {
     poseResiduals.innerHTML = '';
     const points = pose.matched_points || {};
     for (const [name, info] of Object.entries(points)) {
       const row = document.createElement('div');
-      row.className = 'calib-residual-row' + (info.residual_mm > 10.0 ? ' bad' : '');
-      row.innerHTML = `<span>${name}</span><span>${info.residual_mm.toFixed(1)} mm</span>`;
+      row.className = 'calib-residual-row' + (info.residual_px > 10.0 ? ' bad' : '');
+      row.innerHTML = `<span>${name}</span><span>${info.residual_px.toFixed(1)} px</span>`;
       poseResiduals.appendChild(row);
     }
   }

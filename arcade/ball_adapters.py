@@ -139,7 +139,6 @@ class InProcessKinectBallAdapter:
             if hub is None:
                 from kinect_web_control import (
                     KinectFrameHub,
-                    configure_table_geometry,
                     parse_args,
                 )
 
@@ -148,11 +147,6 @@ class InProcessKinectBallAdapter:
                 args.aligned_depth = False
                 args.depth_engine_display = ""
                 args.ball_tracking = True
-                configure_table_geometry(
-                    marker_height_mm=args.marker_height_mm,
-                    marker_world_points=args.marker_world_points,
-                    max_marker_radius_mm=args.max_marker_radius_mm,
-                )
                 hub = KinectFrameHub(args, headless=True)
                 self._hub = hub
             hub.start()
