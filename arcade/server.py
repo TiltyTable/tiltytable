@@ -9,10 +9,12 @@ from typing import Any
 
 from flask import Flask, jsonify, make_response, request, send_from_directory
 
-from .ball_adapters import HttpKinectBallAdapter, ManualBallAdapter
+from .ball_adapters import InProcessKinectBallAdapter, ManualBallAdapter
 from .engine import GameEngine
 from .hardware import BaseTableHardware, ModuleGridHardware, SimulatedTableHardware
+from .integrations import BallTrackingAdapter, TiltControlAdapter
 from .levels import load_levels
+from .stewart_tilt import StewartTiltService
 from .storage import ScoreStore
 
 STATIC_DIR = Path(__file__).with_name("static")
@@ -24,21 +26,43 @@ def create_app(
     hardware: BaseTableHardware | None = None,
     score_path: Path | None = None,
     start_ticker: bool = True,
-    ball_adapter: ManualBallAdapter | HttpKinectBallAdapter | None = None,
+    auto_setup: bool = False,
+    ball_adapter: BallTrackingAdapter | None = None,
+    tilt_adapter: TiltControlAdapter | None = None,
 ) -> Flask:
     app = Flask(__name__, static_folder=None)
     table = hardware or SimulatedTableHardware()
     scores = ScoreStore(score_path) if score_path else ScoreStore()
     tracking = ball_adapter or ManualBallAdapter()
-    engine = GameEngine(load_levels(), table, scores, ball_adapter=tracking)
+    engine = GameEngine(
+        load_levels(),
+        table,
+        scores,
+        ball_adapter=tracking,
+        tilt_adapter=tilt_adapter,
+    )
     app.config["GAME_ENGINE"] = engine
 
     stop_event = threading.Event()
+    tracking.start()
+    try:
+        if tilt_adapter is not None:
+            tilt_adapter.start()
+    except Exception:
+        tracking.stop()
+        raise
+    if auto_setup:
+        engine.setup()
+
+    def sync_tilt() -> None:
+        if tilt_adapter is not None:
+            tilt_adapter.set_active(engine.tilt_requested())
 
     def ticker() -> None:
-        while not stop_event.wait(0.1):
+        while not stop_event.wait(0.05):
             try:
                 engine.tick()
+                sync_tilt()
             except Exception:
                 # The next state response exposes hardware errors. Keep the
                 # server alive so the operator can recover or abandon.
@@ -54,6 +78,10 @@ def create_app(
     @app.get("/app.js")
     def app_js():
         return send_from_directory(STATIC_DIR, "app.js")
+
+    @app.get("/ui_logic.js")
+    def ui_logic_js():
+        return send_from_directory(STATIC_DIR, "ui_logic.js")
 
     @app.get("/styles.css")
     def styles_css():
@@ -105,6 +133,7 @@ def create_app(
                 return jsonify({"ok": False, "error": f"unknown action: {name}"}), 400
         except ValueError as exc:
             return jsonify({"ok": False, "error": str(exc)}), 400
+        sync_tilt()
         return jsonify({"ok": True, "game": engine.public_state()})
 
     @app.post("/api/leaderboard/reset")
@@ -139,6 +168,15 @@ def create_app(
 
     def shutdown() -> None:
         stop_event.set()
+        if tilt_adapter is not None:
+            try:
+                tilt_adapter.stop()
+            except Exception:
+                pass
+        try:
+            tracking.stop()
+        except Exception:
+            pass
         try:
             table.shutdown()
         except Exception:
@@ -155,11 +193,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8080, help="HTTP port")
     parser.add_argument("--hardware", action="store_true", help="connect live module grid")
     parser.add_argument("--module-port", default="/dev/arduino-modules")
-    parser.add_argument(
-        "--kinect-url",
-        default="",
-        help="Kinect web control base URL (e.g. http://127.0.0.1:8080) for survival ball tracking",
-    )
+    parser.add_argument("--config", type=Path, default=Path("config.json"))
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args(argv)
 
@@ -169,11 +203,22 @@ def main(argv: list[str] | None = None) -> int:
     else:
         hardware = SimulatedTableHardware()
 
-    ball_adapter: ManualBallAdapter | HttpKinectBallAdapter = ManualBallAdapter()
-    if args.kinect_url:
-        ball_adapter = HttpKinectBallAdapter(args.kinect_url)
+    ball_adapter: BallTrackingAdapter = (
+        InProcessKinectBallAdapter(args.config)
+        if args.hardware
+        else ManualBallAdapter()
+    )
 
-    app = create_app(hardware=hardware, ball_adapter=ball_adapter)
+    tilt_adapter: TiltControlAdapter | None = (
+        StewartTiltService() if args.hardware else None
+    )
+
+    app = create_app(
+        hardware=hardware,
+        ball_adapter=ball_adapter,
+        tilt_adapter=tilt_adapter,
+        auto_setup=True,
+    )
     url = f"http://{args.host}:{args.port}"
     mode = "LIVE MODULE GRID" if args.hardware else "SIMULATION"
     print(f"TiltyTable Arcade ({mode}) — {url}")

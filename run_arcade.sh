@@ -31,16 +31,13 @@ fi
 SERVER_ARGS=(--host 0.0.0.0 --port "$HTTP_PORT")
 PREFLIGHT_ARGS=(--port "$HTTP_PORT")
 if [[ -n "$MODE" ]]; then
+  systemctl --user start tiltytable-stewart-supervisor.service
   SERVER_ARGS+=("$MODE")
   PREFLIGHT_ARGS+=(--hardware)
 fi
 if [[ "$KIOSK" -eq 1 ]]; then
   PREFLIGHT_ARGS+=(--check-browser)
 fi
-if [[ -n "${TILTYTABLE_KINECT_URL:-}" ]]; then
-  SERVER_ARGS+=(--kinect-url "$TILTYTABLE_KINECT_URL")
-fi
-
 ".venv/bin/python3" -m arcade.preflight "${PREFLIGHT_ARGS[@]}"
 
 ".venv/bin/python3" -m arcade.server "${SERVER_ARGS[@]}" &

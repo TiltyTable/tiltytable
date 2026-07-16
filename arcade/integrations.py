@@ -7,19 +7,39 @@ or cabinet UI state model.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Protocol
 
 
+@dataclass(frozen=True)
+class BallObservation:
+    cell: str | None = None
+    confidence: float = 0.0
+    age_s: float | None = None
+    pose_fresh: bool = False
+
+
+@dataclass(frozen=True)
+class TiltStatus:
+    enabled: bool = False
+    active: bool = False
+    error: str = ""
+
+
 class BallTrackingAdapter(Protocol):
+    is_live: bool
+    label: str
+
     def start(self) -> None: ...
     def stop(self) -> None: ...
-    def current_cell(self) -> str | None: ...
-    def tracking_confidence(self) -> float: ...
+    def observation(self) -> BallObservation: ...
 
 
 class TiltControlAdapter(Protocol):
-    def initialize(self) -> None: ...
-    def enable_play(self) -> None: ...
-    def level(self) -> None: ...
-    def shutdown(self) -> None: ...
+    label: str
+
+    def start(self) -> None: ...
+    def set_active(self, active: bool) -> None: ...
+    def status(self) -> TiltStatus: ...
+    def stop(self) -> None: ...
 

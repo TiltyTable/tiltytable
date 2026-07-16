@@ -7,6 +7,8 @@ import socket
 from pathlib import Path
 
 from game_runner import load_table_configs
+from stewart_platform_control_common import find_trackball
+from stewart_supervisor_client import DEFAULT_SOCKET
 
 from .hardware import ModuleGridHardware
 from .levels import load_levels
@@ -29,6 +31,17 @@ def check_hardware(module_port: str) -> None:
         raise RuntimeError(f"module controller is not readable/writable: {module_port}")
     led, servo_grid, servo_configs = load_table_configs()
     ModuleGridHardware._validate_calibration(led, servo_grid, servo_configs)
+    if not DEFAULT_SOCKET.exists():
+        raise RuntimeError(f"Stewart supervisor is not ready: {DEFAULT_SOCKET}")
+    trackball = find_trackball()
+    if trackball is None or not os.access(trackball, os.R_OK):
+        raise RuntimeError("roller ball input device is not readable")
+    try:
+        from pyk4a import connected_device_count
+    except ImportError as exc:
+        raise RuntimeError("pyk4a is not installed") from exc
+    if connected_device_count() < 1:
+        raise RuntimeError("Azure Kinect was not found")
 
 
 def find_browser() -> str | None:

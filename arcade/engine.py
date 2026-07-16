@@ -7,9 +7,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable
 
-from .ball_adapters import HttpKinectBallAdapter
 from .hardware import BaseTableHardware, HardwareError
-from .integrations import BallTrackingAdapter
+from .integrations import BallObservation, BallTrackingAdapter, TiltControlAdapter
 from .game_modes import start_mode, tick_mode
 from .levels import Level, LevelCatalog, load_map
 from .storage import ScoreStore
@@ -21,6 +20,9 @@ from .survival_lava import (
     survival_score,
     tick_survival_lava,
 )
+
+TRACKING_CONFIDENCE_MIN = 0.7
+END_CELL_DWELL_SECONDS = 0.25
 
 
 class GameState(str, Enum):
@@ -71,6 +73,7 @@ class GameEngine:
         scores: ScoreStore,
         clock: Callable[[], float] = time.monotonic,
         ball_adapter: BallTrackingAdapter | None = None,
+        tilt_adapter: TiltControlAdapter | None = None,
     ) -> None:
         self.catalog = catalog
         self.levels = list(catalog.levels)
@@ -79,6 +82,7 @@ class GameEngine:
         self.scores = scores
         self.clock = clock
         self.ball_adapter = ball_adapter
+        self.tilt_adapter = tilt_adapter
         self.lock = threading.RLock()
 
         self.state = GameState.SETUP
@@ -103,10 +107,15 @@ class GameEngine:
         self._mode_session: Any | None = None
         self._mode_state: dict[str, Any] | None = None
         self._mode_score = 0
+        self._end_cell_since: float | None = None
 
     @property
     def current_level(self) -> Level:
         return self.levels[self.level_index]
+
+    def tilt_requested(self) -> bool:
+        with self.lock:
+            return self.state in (GameState.PLACEMENT, GameState.PLAYING)
 
     def setup(self) -> None:
         with self.lock:
@@ -204,6 +213,7 @@ class GameEngine:
                 self._fault(exc)
                 return
             self.attempt_started_at = self.clock()
+            self._end_cell_since = None
             self._last_survival_tick = 0.0
             if self.current_level.is_survival_lava:
                 self._mode_session = None
@@ -362,11 +372,29 @@ class GameEngine:
                     self._tick_survival_lava()
                 elif level.mode in ("hex_fall", "target_hunt") and self._mode_session is not None:
                     self._tick_dynamic_mode()
-                elif self._remaining_seconds() <= 0:
-                    self._finish_attempt_elapsed()
-                    self.current_restarts += 1
-                    self.hardware.pause()
-                    self.state = GameState.TIME_UP
+                else:
+                    self._tick_reach_end()
+
+    def _tick_reach_end(self) -> None:
+        now = self.clock()
+        observation = self._ball_observation()
+        if (
+            observation.cell == self.current_level.end_cell
+            and observation.confidence >= TRACKING_CONFIDENCE_MIN
+        ):
+            if self._end_cell_since is None:
+                self._end_cell_since = now
+            elif now - self._end_cell_since >= END_CELL_DWELL_SECONDS:
+                self.complete_level()
+                return
+        else:
+            self._end_cell_since = None
+
+        if self._remaining_seconds() <= 0:
+            self._finish_attempt_elapsed()
+            self.current_restarts += 1
+            self.hardware.pause()
+            self.state = GameState.TIME_UP
 
     def _tick_survival_lava(self) -> None:
         level = self.current_level
@@ -377,16 +405,14 @@ class GameEngine:
         if self._survival is None:
             return
 
-        ball_cell = self._current_ball_cell()
-        tracking_confidence: float | None = None
-        if isinstance(self.ball_adapter, HttpKinectBallAdapter):
-            tracking_confidence = self.ball_adapter.tracking_confidence()
+        observation = self._ball_observation()
+        ball_cell = observation.cell
         result = tick_survival_lava(
             self._survival,
             ball_cell,
             now,
             self._row_col_by_key,
-            tracking_confidence=tracking_confidence,
+            tracking_confidence=observation.confidence,
         )
         self._survival_visited = result.visited_count
         self._survival_ball_cell = ball_cell
@@ -413,20 +439,16 @@ class GameEngine:
             return
         self._last_survival_tick = now
         level = self.current_level
-        confidence = (
-            self.ball_adapter.tracking_confidence()
-            if isinstance(self.ball_adapter, HttpKinectBallAdapter)
-            else None
-        )
+        observation = self._ball_observation()
         result = tick_mode(
             str(level.mode),
             self._mode_session,
             dict(level.mode_params or {}),
             seed=level.seed,
-            ball_cell=self._current_ball_cell(),
+            ball_cell=observation.cell,
             now=now,
             row_col=self._row_col_by_key,
-            tracking_confidence=confidence,
+            tracking_confidence=observation.confidence,
         )
         self._mode_state = result.public_state
         self._mode_score = result.score
@@ -443,15 +465,18 @@ class GameEngine:
             self._complete_dynamic_mode_win()
 
     def _current_ball_cell(self) -> str | None:
+        return self._ball_observation().cell
+
+    def _ball_observation(self) -> BallObservation:
         if self.ball_adapter is None:
-            return None
-        return self.ball_adapter.current_cell()
+            return BallObservation()
+        return self.ball_adapter.observation()
 
     def _ball_public_state(self) -> dict[str, Any] | None:
         if self.ball_adapter is None:
             return None
-        cell = self.ball_adapter.current_cell()
-        confidence = self.ball_adapter.tracking_confidence()
+        observation = self._ball_observation()
+        cell = observation.cell
         row: int | None = None
         col: int | None = None
         if cell:
@@ -463,9 +488,11 @@ class GameEngine:
                 pass
         return {
             "cell": cell,
-            "confidence": round(confidence, 2),
+            "confidence": round(observation.confidence, 2),
             "row": row,
             "col": col,
+            "ageSeconds": observation.age_s,
+            "poseFresh": observation.pose_fresh,
         }
 
     def _neutralize_survival_start_cell(self) -> None:
@@ -499,7 +526,6 @@ class GameEngine:
 
     def public_state(self) -> dict[str, Any]:
         with self.lock:
-            self.tick()
             level = self.current_level if self.mode else None
             remaining = (
                 max(0, math.ceil(self._remaining_seconds()))
@@ -524,13 +550,29 @@ class GameEngine:
                     "warnSeconds": level.warn_seconds,
                     "pointsPerTile": level.points_per_tile,
                 }
-            kinect_tracking = isinstance(self.ball_adapter, HttpKinectBallAdapter)
-            tracking_confidence = (
-                self.ball_adapter.tracking_confidence()
-                if self.ball_adapter is not None
-                else 0.0
-            )
             ball_payload = self._ball_public_state()
+            tracking_enabled = bool(
+                self.ball_adapter is not None
+                and getattr(self.ball_adapter, "is_live", False)
+            )
+            tracking_label = (
+                getattr(self.ball_adapter, "label", "Ball tracking")
+                if self.ball_adapter is not None
+                else "Unavailable"
+            )
+            tracking_confidence = (
+                float(ball_payload["confidence"]) if ball_payload is not None else 0.0
+            )
+            tilt_status = (
+                self.tilt_adapter.status() if self.tilt_adapter is not None else None
+            )
+            placement_ready = bool(
+                self.state == GameState.PLACEMENT
+                and level is not None
+                and ball_payload is not None
+                and ball_payload["cell"] == level.start_cell
+                and tracking_confidence >= TRACKING_CONFIDENCE_MIN
+            )
             gauntlet_cleared = len(self.results) if self.mode == "gauntlet" else 0
             live_mode_score = 0
             if self.state == GameState.PLAYING and level:
@@ -559,6 +601,7 @@ class GameEngine:
                 "currentModeScore": live_mode_score,
                 "levelsCleared": len(self.results),
                 "restarts": self.current_restarts,
+                "placementReady": placement_ready,
                 "results": [result.public_dict() for result in self.results],
                 "lastLevelResult": (
                     self.last_level_result.public_dict() if self.last_level_result else None
@@ -569,12 +612,19 @@ class GameEngine:
                 "hardware": self.hardware.snapshot(),
                 "integrations": {
                     "tracking": {
-                        "enabled": kinect_tracking,
-                        "phase": "V2",
-                        "label": "Azure Kinect" if kinect_tracking else "Manual",
+                        "enabled": tracking_enabled,
+                        "label": tracking_label,
                         "confidence": round(tracking_confidence, 2),
                     },
-                    "tilt": {"enabled": False, "phase": "V3", "label": "Stewart + roller ball"},
+                    "tilt": {
+                        "enabled": bool(tilt_status and tilt_status.enabled),
+                        "active": bool(tilt_status and tilt_status.active),
+                        "label": (
+                            getattr(self.tilt_adapter, "label", "Stewart + roller ball")
+                            if self.tilt_adapter is not None
+                            else "Stewart + roller ball"
+                        ),
+                    },
                 },
                 "error": self.error,
             }
@@ -613,6 +663,7 @@ class GameEngine:
         self._mode_session = None
         self._mode_state = None
         self._mode_score = 0
+        self._end_cell_since = None
         self.state = GameState.RESTARTING if restarting else GameState.LEVEL_LOADING
         try:
             self.hardware.load_level(level.map_path, level.start_cell, level.end_cell)
@@ -696,3 +747,4 @@ class GameEngine:
         self._mode_session = None
         self._mode_state = None
         self._mode_score = 0
+        self._end_cell_since = None

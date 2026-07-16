@@ -179,6 +179,8 @@ class BallDetector:
     ball_radius_min_mm, ball_radius_max_mm
         Plausible physical radius range in mm.  Defaults suit a 55 mm
         diameter ball.
+    debug
+        Build the annotated BGR frame used by the calibration web UI.
     """
 
     def __init__(
@@ -190,6 +192,7 @@ class BallDetector:
         ball_radius_min_mm: float = 20.0,
         ball_radius_max_mm: float = 40.0,
         ball_ir_threshold: int = _BALL_IR_THRESHOLD_DEFAULT,
+        debug: bool = True,
     ):
         self.fx = fx
         self.fy = fy
@@ -198,6 +201,7 @@ class BallDetector:
         self.ball_radius_min_mm = ball_radius_min_mm
         self.ball_radius_max_mm = ball_radius_max_mm
         self.ball_ir_threshold = ball_ir_threshold
+        self.debug = debug
         self._debug_frame: Optional[np.ndarray] = None
         self.last_reject_counts: dict[str, int] = {}
 
@@ -235,7 +239,8 @@ class BallDetector:
         Run the detection pipeline on one camera frame.
 
         Returns a BallDetection for the best candidate, or None if no ball
-        was found.  Always updates debug_frame and last_reject_counts.
+        was found. Always updates last_reject_counts and updates debug_frame
+        when debug rendering is enabled.
         """
         counts = {"shape": 0, "fill": 0, "depth": 0, "size": 0, "accepted": 0}
         self.last_reject_counts = counts
@@ -248,14 +253,14 @@ class BallDetector:
         ir_blurred = cv2.GaussianBlur(ir_uint16.astype(np.float32), (3, 3), 0).astype(np.uint16)
         mask = np.where((ir_blurred >= self.ball_ir_threshold) & valid, np.uint8(255), np.uint8(0))
 
-        # 8-bit display: same linear scale as the active brightness view (>> 8).
-        ir8 = (ir_uint16 >> 8).astype(np.uint8)
-
-        # Debug frame: IR image with green tint over candidate pixels.
-        dbg = cv2.cvtColor(ir8, cv2.COLOR_GRAY2BGR)
-        tint = np.zeros_like(dbg)
-        tint[mask > 0] = (0, 60, 20)
-        dbg = cv2.addWeighted(dbg, 1.0, tint, 0.5, 0)
+        dbg = None
+        if self.debug:
+            # 8-bit display: same linear scale as the active brightness view.
+            ir8 = (ir_uint16 >> 8).astype(np.uint8)
+            dbg = cv2.cvtColor(ir8, cv2.COLOR_GRAY2BGR)
+            tint = np.zeros_like(dbg)
+            tint[mask > 0] = (0, 60, 20)
+            dbg = cv2.addWeighted(dbg, 1.0, tint, 0.5, 0)
 
         contours, _ = cv2.findContours(mask, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -282,7 +287,8 @@ class BallDetector:
             circularity = 4.0 * np.pi * area / (perimeter * perimeter)
             if circularity < _MIN_CIRCULARITY:
                 counts["shape"] += 1
-                cv2.drawContours(dbg, [c], -1, _CLR_SHAPE, 1)
+                if dbg is not None:
+                    cv2.drawContours(dbg, [c], -1, _CLR_SHAPE, 1)
                 continue
 
             (_, _), radius_px = cv2.minEnclosingCircle(c)
@@ -290,7 +296,8 @@ class BallDetector:
             fill = area / (np.pi * radius_px * radius_px) if radius_px > 0 else 0.0
             if fill < _MIN_FILL_FRACTION:
                 counts["fill"] += 1
-                cv2.drawContours(dbg, [c], -1, _CLR_FILL, 1)
+                if dbg is not None:
+                    cv2.drawContours(dbg, [c], -1, _CLR_FILL, 1)
                 continue
 
             M = cv2.moments(c)
@@ -305,7 +312,8 @@ class BallDetector:
                 z_mm = self._sample_depth_ring(depth_mm, cx, cy, radius_px, 1.0, 1.6)
             if z_mm is None:
                 counts["depth"] += 1
-                cv2.circle(dbg, (icx, icy), ir_, _CLR_DEPTH, 1)
+                if dbg is not None:
+                    cv2.circle(dbg, (icx, icy), ir_, _CLR_DEPTH, 1)
                 continue
 
             x_mm, y_mm, _ = camera_geometry.unproject_pixel(
@@ -315,11 +323,13 @@ class BallDetector:
             radius_mm = radius_px * z_mm / self.fx
             if not (self.ball_radius_min_mm <= radius_mm <= self.ball_radius_max_mm):
                 counts["size"] += 1
-                cv2.circle(dbg, (icx, icy), ir_, _CLR_SIZE, 1)
+                if dbg is not None:
+                    cv2.circle(dbg, (icx, icy), ir_, _CLR_SIZE, 1)
                 continue
 
             counts["accepted"] += 1
-            cv2.circle(dbg, (icx, icy), ir_, _CLR_CAND, 1)
+            if dbg is not None:
+                cv2.circle(dbg, (icx, icy), ir_, _CLR_CAND, 1)
 
             score = abs(radius_mm - radius_mid)
             if score < best_score:
@@ -329,14 +339,15 @@ class BallDetector:
                     x_mm=x_mm, y_mm=y_mm, z_mm=z_mm, radius_mm=radius_mm,
                 )
 
-        if best is not None:
+        if best is not None and dbg is not None:
             icx, icy, ir_ = int(round(best.cx)), int(round(best.cy)), int(round(best.radius_px))
             cv2.circle(dbg, (icx, icy), ir_, _CLR_BEST, 2)
             cv2.drawMarker(dbg, (icx, icy), _CLR_BEST, cv2.MARKER_CROSS, ir_ // 2, 1, cv2.LINE_AA)
 
-        summary = "  ".join(f"{k}:{v}" for k, v in counts.items() if v) or "no candidates"
-        cv2.putText(dbg, summary, (8, 20), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5, (0, 255, 255), 1, cv2.LINE_AA)
+        if dbg is not None:
+            summary = "  ".join(f"{k}:{v}" for k, v in counts.items() if v) or "no candidates"
+            cv2.putText(dbg, summary, (8, 20), cv2.FONT_HERSHEY_SIMPLEX,
+                        0.5, (0, 255, 255), 1, cv2.LINE_AA)
 
         self._debug_frame = dbg
         return best

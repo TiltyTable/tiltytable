@@ -10,7 +10,8 @@ from pathlib import Path
 
 from arcade.engine import GameEngine, GameState
 from arcade.hardware import HardwareError, ModuleGridHardware, SimulatedTableHardware
-from arcade.ball_adapters import ManualBallAdapter
+from arcade.ball_adapters import InProcessKinectBallAdapter, ManualBallAdapter
+from arcade.integrations import BallObservation, TiltStatus
 from arcade.levels import load_levels
 from arcade.server import create_app
 from arcade.storage import ScoreStore
@@ -49,6 +50,34 @@ class TrackingHardware(SimulatedTableHardware):
 
     def apply_cell_updates(self, updates: list[dict]) -> None:
         self.updates.extend(updates)
+
+
+class LiveBallAdapter(ManualBallAdapter):
+    is_live = True
+    label = "Azure Kinect"
+
+
+class FakeTiltAdapter:
+    label = "Stewart + roller ball"
+
+    def __init__(self) -> None:
+        self.started = False
+        self.active = False
+        self.requests: list[bool] = []
+
+    def start(self) -> None:
+        self.started = True
+
+    def set_active(self, active: bool) -> None:
+        self.active = active
+        self.requests.append(active)
+
+    def status(self) -> TiltStatus:
+        return TiltStatus(enabled=self.started, active=self.active)
+
+    def stop(self) -> None:
+        self.started = False
+        self.active = False
 
 
 class ArcadeSurvivalTests(unittest.TestCase):
@@ -128,6 +157,93 @@ class ArcadeSurvivalTests(unittest.TestCase):
         ]
         self.assertEqual(red_updates, [])
         self.assertEqual(self.engine.state, GameState.PLAYING)
+
+
+class IntegratedTrackingTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.clock = FakeClock()
+        self.hardware = SimulatedTableHardware()
+        self.ball = LiveBallAdapter()
+        self.store = ScoreStore(Path(self.temp_dir.name) / "scores.json")
+        self.engine = GameEngine(
+            load_levels(),
+            self.hardware,
+            self.store,
+            self.clock,
+            ball_adapter=self.ball,
+        )
+        self.engine.setup()
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def begin_level_one_placement(self) -> None:
+        self.engine.start_gauntlet()
+        self.engine.set_initials("AAA")
+        self.engine.continue_action()
+        self.engine.tick()
+        self.assertEqual(self.engine.state, GameState.PLACEMENT)
+
+    def test_placement_reports_tracked_ball_on_start(self) -> None:
+        self.begin_level_one_placement()
+        self.ball.set_cell(self.engine.current_level.start_cell)
+        state = self.engine.public_state()
+        self.assertTrue(state["placementReady"])
+        self.assertTrue(state["integrations"]["tracking"]["enabled"])
+
+    def test_reach_end_completes_after_short_stable_dwell(self) -> None:
+        self.begin_level_one_placement()
+        self.engine.confirm_placement()
+        self.ball.set_cell(self.engine.current_level.end_cell)
+        self.engine.tick()
+        self.assertEqual(self.engine.state, GameState.PLAYING)
+        self.clock.advance(0.26)
+        self.engine.tick()
+        self.assertEqual(self.engine.state, GameState.LEVEL_CLEAR)
+
+    def test_public_state_does_not_advance_game_state(self) -> None:
+        self.engine.start_gauntlet()
+        self.engine.set_initials("AAA")
+        self.engine.continue_action()
+        self.assertEqual(self.engine.state, GameState.LEVEL_LOADING)
+        self.engine.public_state()
+        self.assertEqual(self.engine.state, GameState.LEVEL_LOADING)
+        self.engine.tick()
+        self.assertEqual(self.engine.state, GameState.PLACEMENT)
+
+    def test_headless_adapter_publishes_latest_hub_observation(self) -> None:
+        class FakeHub:
+            def __init__(self) -> None:
+                self.started = False
+                self.stopped = False
+
+            def start(self) -> None:
+                self.started = True
+
+            def stop(self) -> None:
+                self.stopped = True
+
+            @staticmethod
+            def get_ball_state() -> dict:
+                return {
+                    "detected": True,
+                    "cell": {"row": 4, "col": 2},
+                    "table_tracking": True,
+                    "pose_stale": False,
+                    "pose_age_s": 0.1,
+                }
+
+        hub = FakeHub()
+        adapter = InProcessKinectBallAdapter(Path("unused.json"), hub=hub)
+        adapter.start()
+        observation = adapter.observation()
+        self.assertTrue(hub.started)
+        self.assertEqual(observation.cell, "C5")
+        self.assertEqual(observation.confidence, 0.9)
+        self.assertTrue(observation.pose_fresh)
+        adapter.stop()
+        self.assertTrue(hub.stopped)
 
 
 class ArcadeEngineTests(unittest.TestCase):
@@ -337,6 +453,30 @@ class ModuleGridHardwareTests(unittest.TestCase):
 
 
 class ArcadeApiTests(unittest.TestCase):
+    def test_tilt_lifecycle_tracks_placement_and_play(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            tilt = FakeTiltAdapter()
+            app = create_app(
+                hardware=SimulatedTableHardware(),
+                score_path=Path(temp) / "scores.json",
+                start_ticker=False,
+                tilt_adapter=tilt,
+            )
+            engine = app.config["GAME_ENGINE"]
+            engine.setup()
+            engine.start_gauntlet()
+            engine.set_initials("AAA")
+            engine.continue_action()
+            engine.tick()
+            self.assertTrue(engine.tilt_requested())
+            client = app.test_client()
+            client.post("/api/action", json={"action": "confirm-placement"})
+            self.assertTrue(tilt.active)
+            client.post("/api/action", json={"action": "complete"})
+            self.assertFalse(tilt.active)
+            app.config["ARCADE_SHUTDOWN"]()
+            self.assertFalse(tilt.started)
+
     def test_full_setup_and_initials_api(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             app = create_app(

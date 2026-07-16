@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import math
+import threading
+import time
 import unittest
 from types import SimpleNamespace
 
@@ -31,6 +33,7 @@ from stewart_platform_control_position import (
     command_or_retain_last_valid,
 )
 from stewart_platform_control_velocity import apply_velocity_counts
+from arcade.stewart_tilt import StewartTiltService
 
 
 def event(event_type: int, code: int, value: int) -> bytes:
@@ -202,6 +205,108 @@ class SharedStewartControlTests(unittest.TestCase):
         self.assertEqual((final.roll_deg, final.pitch_deg), (0.0, 0.0))
         self.assertAlmostEqual(final.heave_mm, 0.0)
         self.assertTrue(controller.at_target(0.0, 0.0))
+
+
+class ArcadeStewartTiltTests(unittest.TestCase):
+    class FakeController:
+        def __init__(self) -> None:
+            self.current = SimpleNamespace(roll_deg=0.0, pitch_deg=0.0)
+            self.link = object()
+            self.armed = False
+            self.open_args = None
+            self.commands: list[tuple[float, float]] = []
+            self.holds = 0
+            self.closed = False
+
+        def open(self, **kwargs) -> None:
+            self.open_args = kwargs
+
+        def move_to(self, roll: float, pitch: float):
+            self.current = SimpleNamespace(roll_deg=roll, pitch_deg=pitch)
+            self.armed = True
+            return self.current
+
+        def at_target(self, roll: float, pitch: float) -> bool:
+            return (
+                self.current.roll_deg == roll
+                and self.current.pitch_deg == pitch
+            )
+
+        def command_toward(self, roll: float, pitch: float):
+            self.commands.append((roll, pitch))
+            self.current = SimpleNamespace(roll_deg=roll, pitch_deg=pitch)
+            return self.current
+
+        def hold_and_rebase(self):
+            self.holds += 1
+            self.armed = False
+            return self.current
+
+        def hold_and_close(self) -> None:
+            self.closed = True
+
+    class FakeTrackball:
+        def __init__(self) -> None:
+            self.opened = False
+            self.closed = False
+            self._lock = threading.Lock()
+            self._events: list[tuple[int, int]] = []
+
+        def open(self) -> None:
+            self.opened = True
+
+        def close(self) -> None:
+            self.closed = True
+
+        def wait(self, timeout: float) -> None:
+            time.sleep(min(timeout, 0.002))
+
+        def pop(self) -> tuple[int, int]:
+            with self._lock:
+                return self._events.pop(0) if self._events else (0, 0)
+
+        def push(self, dx: int, dy: int) -> None:
+            with self._lock:
+                self._events.append((dx, dy))
+
+    @staticmethod
+    def wait_until(predicate, timeout: float = 0.5) -> None:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return
+            time.sleep(0.005)
+        raise AssertionError("condition did not become true")
+
+    def test_arcade_tilt_only_commands_during_level_scope(self) -> None:
+        controller = self.FakeController()
+        trackball = self.FakeTrackball()
+        service = StewartTiltService(
+            controller=controller,
+            trackball=trackball,
+        )
+        service.start()
+        self.assertEqual(
+            controller.open_args,
+            {"arm": False, "calibrate_if_needed": False},
+        )
+        self.assertFalse(service.status().active)
+
+        trackball.push(8, -4)
+        time.sleep(0.03)
+        self.assertEqual(controller.commands, [])
+
+        service.set_active(True)
+        self.wait_until(lambda: service.status().active)
+        trackball.push(8, -4)
+        self.wait_until(lambda: bool(controller.commands))
+
+        service.set_active(False)
+        self.wait_until(lambda: not service.status().active)
+        self.assertGreaterEqual(controller.holds, 1)
+        service.stop()
+        self.assertTrue(controller.closed)
+        self.assertTrue(trackball.closed)
 
 
 if __name__ == "__main__":

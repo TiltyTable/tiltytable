@@ -83,8 +83,9 @@ def make_placeholder_jpeg(width, height, text):
 # ---------------------------------------------------------------------------
 
 class KinectFrameHub:
-    def __init__(self, args):
+    def __init__(self, args, *, headless=False):
         self.args = args
+        self.headless = headless
         self.lock = threading.Condition()
         self.stop_event = threading.Event()
         self.thread = None
@@ -99,17 +100,25 @@ class KinectFrameHub:
         self.fps = 0.0
         self._frame_count = 0
         self._fps_started_at = time.monotonic()
-        self.placeholder_color = make_placeholder_jpeg(960, 540, "Waiting for Kinect color")
-        self.placeholder_depth = make_placeholder_jpeg(640, 576, "Waiting for Kinect depth")
+        self.placeholder_color = (
+            None if headless else make_placeholder_jpeg(960, 540, "Waiting for Kinect color")
+        )
+        self.placeholder_depth = (
+            None if headless else make_placeholder_jpeg(640, 576, "Waiting for Kinect depth")
+        )
 
         self.detector = None
         self.tracker = None
         self.ball_position = None
         self.ball_detection = None
         self.ir_jpeg = None
-        self.placeholder_ir = make_placeholder_jpeg(640, 576, "Waiting for Kinect IR")
+        self.placeholder_ir = (
+            None if headless else make_placeholder_jpeg(640, 576, "Waiting for Kinect IR")
+        )
         self.tracker_jpeg = None
-        self.placeholder_tracker = make_placeholder_jpeg(640, 576, "Ball tracking not enabled")
+        self.placeholder_tracker = (
+            None if headless else make_placeholder_jpeg(640, 576, "Ball tracking not enabled")
+        )
         self._last_ir_frame = None
         self._last_depth_for_tracker = None
         self._intrinsics = None   # (fx, fy, ppx, ppy) — set once camera starts
@@ -119,7 +128,9 @@ class KinectFrameHub:
         self._last_pose_attempt = None
         self._pose_debug_jpeg = None
         self._pose_frame_counter = 0
-        self.placeholder_pose = make_placeholder_jpeg(640, 576, "No pose attempt yet")
+        self.placeholder_pose = (
+            None if headless else make_placeholder_jpeg(640, 576, "No pose attempt yet")
+        )
         self.marker_ir_threshold = args.marker_ir_threshold
         self.ball_ir_threshold = args.ball_ir_threshold
 
@@ -179,7 +190,7 @@ class KinectFrameHub:
 
     def _run(self):
         args = self.args
-        if args.depth_engine_display:
+        if args.depth_engine_display and not self.headless:
             set_display(args.depth_engine_display, "depth engine", quiet=not args.verbose)
 
         try:
@@ -191,28 +202,33 @@ class KinectFrameHub:
                 )
                 return
 
+            color_resolution = "off" if self.headless else args.color_resolution
             config = Config(
-                color_resolution=WEB_COLOR_RESOLUTIONS[args.color_resolution],
+                color_resolution=WEB_COLOR_RESOLUTIONS[color_resolution],
                 color_format=ImageFormat.COLOR_BGRA32,
                 depth_mode=DEPTH_MODES[args.depth_mode],
                 camera_fps=FPS_VALUES[args.fps],
-                synchronized_images_only=args.color_resolution != "off" or args.aligned_depth,
+                synchronized_images_only=(
+                    not self.headless
+                    and (color_resolution != "off" or args.aligned_depth)
+                ),
             )
             self.k4a = PyK4A(config=config, device_id=args.device_id)
             self.k4a.start()
             self._set_status("running")
 
-            # The accelerometer isn't necessarily axis-aligned with the depth
-            # camera (they're separate physical sensors) -- rotate raw IMU
-            # samples into the depth camera's frame using the factory
-            # extrinsic calibration, since that's the frame table_pose.py's
-            # fitted R is expressed in.
-            self._accel_to_depth_R, _ = self.k4a.calibration.get_extrinsic_parameters(
-                CalibrationType.ACCEL, CalibrationType.DEPTH,
-            )
-
-            self._imu_thread = threading.Thread(target=self._run_imu, name="kinect-imu", daemon=True)
-            self._imu_thread.start()
+            if not self.headless:
+                # The calibration UI displays table tilt from the IMU. The
+                # arcade only needs camera-to-table pose and skips this stream.
+                self._accel_to_depth_R, _ = self.k4a.calibration.get_extrinsic_parameters(
+                    CalibrationType.ACCEL, CalibrationType.DEPTH,
+                )
+                self._imu_thread = threading.Thread(
+                    target=self._run_imu,
+                    name="kinect-imu",
+                    daemon=True,
+                )
+                self._imu_thread.start()
 
             mat = self.k4a.calibration.get_camera_matrix(CalibrationType.DEPTH)
             with self.lock:
@@ -229,6 +245,7 @@ class KinectFrameHub:
                         ball_radius_min_mm=args.ball_radius_min,
                         ball_radius_max_mm=args.ball_radius_max,
                         ball_ir_threshold=self.ball_ir_threshold,
+                        debug=not self.headless,
                     )
                     trk = BallTracker.from_k4a_calibration(self.k4a.calibration)
                     with self.lock:
@@ -245,7 +262,11 @@ class KinectFrameHub:
                     self._set_status("timeout", "Timed out waiting for a Kinect frame.")
                     continue
 
-                depth_mm = get_depth(capture, args.aligned_depth)
+                depth_mm = (
+                    capture.depth
+                    if self.headless
+                    else get_depth(capture, args.aligned_depth)
+                )
                 if depth_mm is None:
                     continue
 
@@ -253,16 +274,21 @@ class KinectFrameHub:
                 depth_for_tracker = capture.depth
 
                 ir_bgr = None
-                if ir_frame is not None:
+                if ir_frame is not None and not self.headless:
                     ir_bgr = brightness_to_display(ir_frame)
 
-                color_jpeg = self.placeholder_color
-                if capture.color is not None:
+                color_jpeg = None if self.headless else self.placeholder_color
+                if not self.headless and capture.color is not None:
                     bgr = color_to_bgr(capture.color)
                     if bgr is not None:
                         color_jpeg = encode_jpeg(bgr, args.jpeg_quality)
 
-                depth_jpeg = encode_jpeg(depth_to_display(depth_mm, args.max_depth), args.jpeg_quality)
+                depth_jpeg = None
+                if not self.headless:
+                    depth_jpeg = encode_jpeg(
+                        depth_to_display(depth_mm, args.max_depth),
+                        args.jpeg_quality,
+                    )
 
                 now = time.monotonic()
                 self._frame_count += 1
@@ -277,19 +303,29 @@ class KinectFrameHub:
 
                 tracker_jpeg = None
                 pos, smoothed = None, None
-                if detector is not None and ir_frame is not None:
+                if (
+                    detector is not None
+                    and ir_frame is not None
+                    and depth_for_tracker is not None
+                ):
                     detection = detector.detect(ir_frame, depth_for_tracker)
                     dbg = detector.debug_frame
-                    if dbg is not None:
+                    if dbg is not None and not self.headless:
                         tracker_jpeg = encode_jpeg(dbg, args.jpeg_quality)
                     pos, smoothed = tracker.update(detection) if tracker is not None else (None, None)
 
                 # Draw ball circle directly onto the IR image so it updates at
                 # camera frame rate via the MJPEG stream (not the 350 ms state poll).
-                if ir_bgr is not None and pos is not None:
+                if not self.headless and ir_bgr is not None and pos is not None:
                     self._draw_ball_overlay(ir_bgr, smoothed, pos)
 
-                ir_jpeg = encode_jpeg(ir_bgr, args.jpeg_quality) if ir_bgr is not None else self.placeholder_ir
+                ir_jpeg = None
+                if not self.headless:
+                    ir_jpeg = (
+                        encode_jpeg(ir_bgr, args.jpeg_quality)
+                        if ir_bgr is not None
+                        else self.placeholder_ir
+                    )
 
                 # Refresh the table's pose every few frames rather than every
                 # single one — the fit is cheap but there's no need to redo it
@@ -307,7 +343,7 @@ class KinectFrameHub:
                         ir_frame, depth_for_tracker, fx, fy, ppx, ppy,
                         marker_ir_threshold=self.marker_ir_threshold,
                     )
-                    if pose_attempt.debug_frame is not None:
+                    if pose_attempt.debug_frame is not None and not self.headless:
                         pose_jpeg = encode_jpeg(pose_attempt.debug_frame, args.jpeg_quality)
                     with self.lock:
                         self._last_pose_attempt = pose_attempt
@@ -322,17 +358,18 @@ class KinectFrameHub:
 
                 with self.lock:
                     self.seq += 1
-                    self.color_jpeg = color_jpeg
-                    self.depth_jpeg = depth_jpeg
-                    self.ir_jpeg = ir_jpeg
-                    if tracker_jpeg is not None:
-                        self.tracker_jpeg = tracker_jpeg
-                    if pose_jpeg is not None:
-                        self._pose_debug_jpeg = pose_jpeg
-                    self.depth_mm = depth_mm.copy()
-                    self.depth_shape = depth_mm.shape[:2]
-                    self._last_ir_frame = ir_frame
-                    self._last_depth_for_tracker = depth_for_tracker
+                    if not self.headless:
+                        self.color_jpeg = color_jpeg
+                        self.depth_jpeg = depth_jpeg
+                        self.ir_jpeg = ir_jpeg
+                        if tracker_jpeg is not None:
+                            self.tracker_jpeg = tracker_jpeg
+                        if pose_jpeg is not None:
+                            self._pose_debug_jpeg = pose_jpeg
+                        self.depth_mm = depth_mm.copy()
+                        self.depth_shape = depth_mm.shape[:2]
+                        self._last_ir_frame = ir_frame
+                        self._last_depth_for_tracker = depth_for_tracker
                     self.status = "running"
                     self.error = ""
                     self.lock.notify_all()

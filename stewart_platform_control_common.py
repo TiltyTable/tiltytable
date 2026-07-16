@@ -280,7 +280,12 @@ class StewartPlatformController:
         self.current: PoseSolution | None = None
         self.armed = False
 
-    def open(self) -> None:
+    def open(
+        self,
+        *,
+        arm: bool = True,
+        calibrate_if_needed: bool = True,
+    ) -> None:
         self.link.open()
         self.link.require_ok(
             f"PROFILE {self.args.crank_speed:.3f} "
@@ -290,11 +295,16 @@ class StewartPlatformController:
         status = self.link.startup_status
         assert status is not None
         if not status.calibrated:
+            if not calibrate_if_needed:
+                raise RuntimeError(
+                    "Stewart calibration is required before launching the arcade"
+                )
             status = calibrate(self.link)
         self.armed = status.armed
         self.current = status.as_pose(self.step_offsets)
-        self._ensure_armed()
-        if self.args.zero_on_start:
+        if arm:
+            self._ensure_armed()
+        if arm and self.args.zero_on_start:
             self._prepare_operating_heave()
             self.move_to(0.0, 0.0)
 
