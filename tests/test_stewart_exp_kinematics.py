@@ -8,6 +8,7 @@ from analysis.stewart_exp_kinematics import (
     endpoint_heave_range,
     experimental_geometry,
     plan_circle,
+    reconstruct_pose_from_cranks,
     solve_pose_at_heave,
     solve_crank_branches,
     steps_to_crank_deg,
@@ -98,6 +99,28 @@ class BranchAwareIkTests(unittest.TestCase):
         self.assertEqual((low.roll_deg, low.pitch_deg), (0.0, 0.0))
         self.assertNotEqual(high.steps, low.steps)
 
+    def test_forward_reconstruction_recovers_held_pose(self) -> None:
+        expected = solve_pose_at_heave(
+            self.geometry,
+            5.0,
+            -3.0,
+            10.0,
+            (120.0, 120.0, 120.0),
+            estimate_torque=False,
+        )
+        self.assertIsNotNone(expected)
+        assert expected is not None
+        reconstructed = reconstruct_pose_from_cranks(
+            self.geometry,
+            expected.crank_deg,
+            initial_roll_deg=-4.0,
+            initial_pitch_deg=6.0,
+            initial_heave_mm=14.0,
+        )
+        self.assertAlmostEqual(reconstructed.roll_deg, expected.roll_deg, places=6)
+        self.assertAlmostEqual(reconstructed.pitch_deg, expected.pitch_deg, places=6)
+        self.assertAlmostEqual(reconstructed.heave_mm, expected.heave_mm, places=6)
+
 
 class ExperimentalProtocolTests(unittest.TestCase):
     def test_parse_status(self) -> None:
@@ -119,6 +142,9 @@ class ExperimentalProtocolTests(unittest.TestCase):
         self.assertAlmostEqual(trimmed_pose.crank_deg[0], 90.0)
         self.assertAlmostEqual(trimmed_pose.crank_deg[1], 90.0)
         self.assertAlmostEqual(trimmed_pose.crank_deg[2], 90.0)
+        self.assertAlmostEqual(trimmed_pose.roll_deg, 0.0)
+        self.assertAlmostEqual(trimmed_pose.pitch_deg, 0.0)
+        self.assertAlmostEqual(trimmed_pose.heave_mm, 30.0)
 
     def test_reject_production_status(self) -> None:
         with self.assertRaises(ValueError):

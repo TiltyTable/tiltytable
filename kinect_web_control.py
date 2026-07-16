@@ -1111,6 +1111,10 @@ def parse_args(argv=None):
                             "adds to --marker-mount-radius-mm for the total mounting offset")
     calib.add_argument("--max-marker-radius-mm", type=float, default=15.0, metavar="MM",
                        help="reject IR blobs larger than this physical radius (excludes the ball)")
+    calib.add_argument("--table-long-side-mm", type=float, default=None, metavar="MM",
+                       help="physical X/long extent used to map ball positions to grid cells")
+    calib.add_argument("--table-short-side-mm", type=float, default=None, metavar="MM",
+                       help="physical Y/short extent used to map ball positions to grid cells")
 
     # Config file values override argparse defaults; CLI args override everything.
     parser.set_defaults(auto_reverse=True)
@@ -1156,6 +1160,10 @@ def parse_args(argv=None):
         parser.error("--wall-thickness-mm cannot be negative")
     if args.max_marker_radius_mm <= 0:
         parser.error("--max-marker-radius-mm must be greater than 0")
+    if args.table_long_side_mm is None or args.table_long_side_mm <= 0:
+        parser.error("--table-long-side-mm must be configured and greater than 0")
+    if args.table_short_side_mm is None or args.table_short_side_mm <= 0:
+        parser.error("--table-short-side-mm must be configured and greater than 0")
 
     return args
 
@@ -1171,6 +1179,8 @@ def main():
         marker_mount_radius_mm=args.marker_mount_radius_mm,
         wall_thickness_mm=args.wall_thickness_mm,
         max_marker_radius_mm=args.max_marker_radius_mm,
+        table_long_side_mm=args.table_long_side_mm,
+        table_short_side_mm=args.table_short_side_mm,
     )
     state = WebState(args.servo_config, args.default_box_size)
     camera = KinectFrameHub(args)

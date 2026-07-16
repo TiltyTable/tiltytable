@@ -222,10 +222,19 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--zero-on-start",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="move roll/pitch to model zero before accepting trackball input",
+        default=False,
+        help=(
+            "move roll/pitch to model zero before accepting trackball input; "
+            "the default resumes the previously held pose"
+        ),
     )
-    parser.add_argument("--yes", "-y", action="store_true")
+    parser.add_argument(
+        "--yes",
+        "-y",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="skip the startup motion confirmation",
+    )
 
 
 def validate_common_arguments(args: argparse.Namespace) -> None:
@@ -285,8 +294,8 @@ class StewartPlatformController:
         self.armed = status.armed
         self.current = status.as_pose(self.step_offsets)
         self._ensure_armed()
-        self._prepare_operating_heave()
         if self.args.zero_on_start:
+            self._prepare_operating_heave()
             self.move_to(0.0, 0.0)
 
     def _ensure_armed(self) -> None:
@@ -403,12 +412,20 @@ class StewartPlatformController:
         assert self.current is not None
         return self.current
 
+    def hold_and_rebase(self) -> PoseSolution:
+        """Stop at the physical motor positions and rebuild the IK pose."""
+        if not self.link.is_open:
+            raise RuntimeError("Stewart controller is not open")
+        self.link.require_ok("HOLD", "OK HOLD")
+        self.armed = False
+        self.current = self.link.status().as_pose(self.step_offsets)
+        return self.current
+
     def hold_and_close(self) -> None:
         if not self.link.is_open:
             return
         try:
-            self.link.require_ok("HOLD", "OK HOLD")
-            self.armed = False
+            self.hold_and_rebase()
         except Exception as exc:
             print(f"WARNING: final HOLD failed: {exc}", file=sys.stderr)
         finally:

@@ -250,12 +250,11 @@ class TableGeometry:
         return {self.point_names[i]: blobs[best_perm[i]] for i in range(n)}
 
 
-# The table's own physical extent (distinct from where markers happen to be
-# mounted along the walls, which TableGeometry above tracks separately) —
-# used only by world_to_cell() below to normalize a ball position into the
-# GRID_ROWS x GRID_COLS grid.
-TABLE_LONG_SIDE_MM = 800.0
-TABLE_SHORT_SIDE_MM = 800.0
+# The table's own physical extent is configured separately from marker
+# mounting geometry. These are populated from config.json at application
+# startup and used by world_to_cell() to normalize into the logical grid.
+TABLE_LONG_SIDE_MM: float | None = None
+TABLE_SHORT_SIDE_MM: float | None = None
 
 _GEOMETRY = TableGeometry()
 
@@ -265,12 +264,13 @@ def configure_table_geometry(
     marker_mount_radius_mm: Optional[float] = None,
     wall_thickness_mm: Optional[float] = None,
     max_marker_radius_mm: Optional[float] = None,
+    table_long_side_mm: Optional[float] = None,
+    table_short_side_mm: Optional[float] = None,
 ) -> None:
     """Override the physical marker measurements (normally sourced from
     config.json) and rebuild every lookup table derived from them. Intended
-    to be called once at startup, before tracking begins. Does not touch
-    TABLE_LONG_SIDE_MM/TABLE_SHORT_SIDE_MM (world_to_cell's grid extent) —
-    those are independent of marker mounting and edited directly above."""
+    to be called once at startup, before tracking begins."""
+    global TABLE_LONG_SIDE_MM, TABLE_SHORT_SIDE_MM
     _GEOMETRY.reconfigure(
         marker_height_mm=marker_height_mm,
         marker_mount_radius_mm=marker_mount_radius_mm,
@@ -278,6 +278,14 @@ def configure_table_geometry(
     )
     if max_marker_radius_mm is not None:
         _DETECTOR.max_marker_radius_mm = max_marker_radius_mm
+    if table_long_side_mm is not None:
+        if table_long_side_mm <= 0:
+            raise ValueError("table_long_side_mm must be greater than zero")
+        TABLE_LONG_SIDE_MM = table_long_side_mm
+    if table_short_side_mm is not None:
+        if table_short_side_mm <= 0:
+            raise ValueError("table_short_side_mm must be greater than zero")
+        TABLE_SHORT_SIDE_MM = table_short_side_mm
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +308,8 @@ def world_to_cell(x_mm: float, y_mm: float) -> tuple[int, int]:
     """Convert a table-frame (world) X/Y position in mm to a (row, col) cell
     index on the GRID_ROWS x GRID_COLS grid. Out-of-bounds positions are
     clamped to the nearest edge cell rather than raising."""
+    if TABLE_LONG_SIDE_MM is None or TABLE_SHORT_SIDE_MM is None:
+        raise RuntimeError("table dimensions were not configured")
     col_frac = (x_mm + TABLE_LONG_SIDE_MM) / TABLE_LONG_SIDE_MM
     row_frac = (TABLE_SHORT_SIDE_MM - y_mm) / TABLE_SHORT_SIDE_MM
     col = int(np.clip(np.floor(col_frac * GRID_COLS), 0, GRID_COLS - 1))
