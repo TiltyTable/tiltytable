@@ -68,7 +68,12 @@ details { margin-top: 10px; } summary { cursor: pointer; font-size: 10px; font-w
 .cell.wall { box-shadow: inset 0 -7px rgba(0,0,0,.35); }
 .cell.sunk { opacity: .48; transform: scale(.82); }
 .cell.ball::before { content: ""; position: absolute; z-index: 3; width: 38%; aspect-ratio: 1; left: 31%; top: 31%; border-radius: 50%; background: white; border: 2px solid var(--ink); }
-.cell.target { animation: pulse .5s steps(2,end) infinite; }
+.cell.target {
+  background: var(--target) !important;
+  outline: 3px solid white;
+  outline-offset: -5px;
+  animation: pulse .5s steps(2,end) infinite;
+}
 .cell.start::after { content: "S"; font-size: 11px; font-weight: 900; }.cell.end::after { content: "E"; font-size: 11px; font-weight: 900; }
 @keyframes pulse { 50% { filter: brightness(2); } }
 .stage-controls { max-width: 710px; margin: 9px auto 0; min-height: 43px; padding: 7px; display: flex; align-items: center; gap: 10px; background: white; border: 1px solid var(--line); font-size: 10px; }
