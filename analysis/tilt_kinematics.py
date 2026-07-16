@@ -5,9 +5,9 @@ Tilt-table (3-RRS crank platform) kinematics + tilt-envelope analysis.
 PURPOSE
 -------
 Single documented source of truth for the platform's tilt envelope and how it
-depends on the mechanism geometry. The Arduino firmware
-(`arduino/uim5756pm_stewart/uim5756pm_stewart.ino`) hard-codes the same
-geometry constants but contains no derivation; this script reproduces that
+depends on the mechanism geometry. The archived Arduino firmware
+(`archive/stewart_legacy/arduino/uim5756pm_stewart/uim5756pm_stewart.ino`)
+hard-codes the same geometry constants but contains no derivation; this script reproduces that
 inverse kinematics, states every assumption explicitly, and computes the
 maximum achievable tilt and what limits it.
 

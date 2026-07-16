@@ -9,7 +9,7 @@ Azure Kinect later).
 
 | Board | Alias | Firmware | Role |
 | --- | --- | --- | --- |
-| Uno R3 | `/dev/arduino-stewart` | `arduino/uim5756pm_stewart/` | 3-DOF tilt platform (UIM5756PM) |
+| Uno R3 | `/dev/arduino-stewart` | `arduino/uim5756pm_stewart_exp/` | Supervisor-owned 3-DOF tilt platform |
 | Uno R4 Minima | `/dev/arduino-modules` | `arduino/servo_calib/` | Module-grid PCA9685 servos + WS2812 LEDs |
 
 ## Project site
@@ -43,37 +43,23 @@ motion firmware. The one-motor configurator uses white TX → A4 and green RX �
 A5; see `arduino/uim5756pm_config/README.md`.
 
 ```bash
-# After all three motors read back MCS=8, flash runtime firmware
-arduino-cli compile --fqbn arduino:avr:uno arduino/uim5756pm_stewart
-arduino-cli upload -p /dev/arduino-stewart --fqbn arduino:avr:uno arduino/uim5756pm_stewart
+# Compile and upload only with the table mechanically supported
+arduino-cli compile --fqbn arduino:avr:uno arduino/uim5756pm_stewart_exp
+arduino-cli upload -p /dev/arduino-stewart --fqbn arduino:avr:uno \
+  arduino/uim5756pm_stewart_exp
 
-# Calibrate: interactive per-axis (recommended)
-.venv/bin/python3 stewart_calibrate.py
+# Keep this process (normally its user service) running permanently
+.venv/bin/python3 stewart_supervisor.py
 
-# Legacy: all cranks manually straight up first
-.venv/bin/python3 stewart_calibrate.py --legacy --yes
+# Trackball X/Y directly controls pitch/roll position
+.venv/bin/python3 stewart_platform_control_position.py
 
-# Roller-ball → Stewart tilt (runs interactive cal by default)
-.venv/bin/python3 roller_ball.py
-# Position-control tuning (defaults shown):
-.venv/bin/python3 roller_ball.py \
-  --max-tilt 4.6 --smooth 1.0 --scale 0.04
-# Keep the loaded platform actively held after Ctrl-C:
-.venv/bin/python3 roller_ball.py --hold-on-exit
-# Supervised full-envelope circle (holds and persists level pose afterward):
-.venv/bin/python3 stewart_circle_test.py
-# or:  sudo .venv/bin/python3 roller_ball.py
-#
-# WARNING: --hold-on-exit continuously energizes all motors. Opening the Uno
-# serial port again resets the board and disables them; mechanically support
-# the table before reconnecting, flashing, power loss, or unplugging USB.
+# Trackball swipes add pitch/roll angular velocity with exponential decay
+.venv/bin/python3 stewart_platform_control_velocity.py
 #
 # Optional once: install udev so HID works without sudo
 #   sudo cp udev/99-tiltytable-rollerball.rules /etc/udev/rules.d/
 #   sudo udevadm control --reload-rules && sudo udevadm trigger
-
-# Low-level HID / debug (legacy)
-# sudo .venv/bin/python3 capture_usb_mouse.py --list
 
 # Standalone trackball motion/button web monitor
 .venv/bin/python3 trackball_input_web.py
@@ -81,31 +67,11 @@ arduino-cli upload -p /dev/arduino-stewart --fqbn arduino:avr:uno arduino/uim575
 
 ```
 
-#### Roller position-control tuning
-
-The roller ball controls absolute platform roll/pitch position. Stopping input
-holds the last angle. This direct position mapping suits a freely moving
-trackball and the platform's small workspace better than rate control.
-
-- Gameplay height is fixed at **20 mm heave**.
-- The host clamps total tilt to a **4.6° circle**, not a ±4.6° square. This
-  keeps diagonal commands inside the modeled 4.8° all-direction envelope.
-- Default `--smooth 1.0` sends the target directly; lower values add damping.
-- Default gain is `--scale 0.04` degrees per trackball count.
-
-Supervised test order (mechanically support the 50 lb table against reset or
-power loss):
-
-1. Calibrate and verify level at 20 mm.
-2. Test each cardinal direction with small ball movements.
-3. Test diagonals and confirm the displayed magnitude remains ≤4.6°.
-4. Hold at the boundary, then reverse input; it should move inward immediately.
-5. Only if direct response is too sharp, retry with `--smooth 0.8`, then `0.6`.
-
-The circle test defaults to the modeled-safe 4.6° radius. Larger experimental
-radii require `--allow-experimental-radius`; firmware IK still rejects
-unreachable poses. Do not infer loaded reachability from how far an unpowered
-table can sag—the crank/arm closure and all three legs constrain active motion.
+All supported clients use the supervisor socket and read its current absolute
+motor coordinates during connection startup. The host IK may choose heave
+freely, while an exact level request returns to the configured startup heave.
+The retired direct-serial implementation is retained under
+`archive/stewart_legacy/` for historical reference only.
 
 ### Module grid servos + LEDs (Uno R4 Minima)
 

@@ -6,7 +6,7 @@ Obsolete / superseded sketches moved here on 2026-07-11.
 
 | Board | Alias | Sketch |
 | --- | --- | --- |
-| Uno R3 | `/dev/arduino-stewart` | `../uim5756pm_stewart/` |
+| Uno R3 | `/dev/arduino-stewart` | `../uim5756pm_stewart_exp/` |
 | Uno R4 Minima | `/dev/arduino-modules` | `../servo_calib/` |
 
 ## Contents

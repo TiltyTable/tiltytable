@@ -8,7 +8,7 @@ python3 analysis/tilt_kinematics.py
 ```
 
 The model (`tilt_kinematics.py`) reproduces the inverse kinematics that the
-firmware (`arduino/uim5756pm_stewart/uim5756pm_stewart.ino`) hard-codes, so the
+archived firmware (`archive/stewart_legacy/arduino/uim5756pm_stewart/uim5756pm_stewart.ino`) hard-codes, so the
 two must be kept in sync. If you change a constant in one, change it in both.
 
 ## Mechanism

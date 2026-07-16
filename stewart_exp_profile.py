@@ -29,6 +29,9 @@ def main() -> int:
         identity = client.exchange("EXP?")
         if not identity.startswith("OK EXP UIM5756PM_STEWART_EXP"):
             raise RuntimeError(f"wrong firmware: {identity!r}")
+        # Always capture the supervisor-owned absolute motor coordinates before
+        # issuing any command, even though PROFILE itself does not move them.
+        print(client.exchange("STATUS"))
         if args.speed is not None:
             print(client.exchange(f"PROFILE {args.speed:.3f} {args.accel:.3f}"))
         print(client.exchange("PROFILE?"))

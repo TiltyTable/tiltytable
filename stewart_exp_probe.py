@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Supervised full-rotation/free-heave Stewart experiment.
 
-This tool only speaks to ``uim5756pm_stewart_exp`` firmware. Dry-run and
-envelope modes never open serial. Live modes own one serial connection for
-identity, calibration, planning, motion, logging, and final hold.
+This tool only speaks to ``uim5756pm_stewart_exp`` firmware through the
+persistent Stewart supervisor. Dry-run and envelope modes do not connect to
+hardware. Live modes begin from the motor-position snapshot returned by the
+supervisor, then perform planning, motion, logging, and final hold.
 """
 
 from __future__ import annotations
@@ -21,8 +22,6 @@ import tty
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-import serial
-
 from analysis.stewart_exp_kinematics import (
     NoSolutionError,
     PoseSolution,
@@ -35,7 +34,6 @@ from analysis.stewart_exp_kinematics import (
     plan_targets,
     steps_to_crank_deg,
 )
-from stewart_serial import open_stewart_serial, wait_if_reset
 from stewart_supervisor_client import DEFAULT_SOCKET, StewartSupervisorClient
 
 
@@ -112,79 +110,42 @@ def parse_status(text: str) -> ExpStatus:
 class ExpLink:
     def __init__(
         self,
-        port: str,
-        baud: int = 115200,
-        *,
         socket_path: Path = DEFAULT_SOCKET,
-        direct_serial: bool = False,
+        *,
         mode: str = "motion",
     ) -> None:
-        self.port = port
-        self.baud = baud
         self.socket_path = socket_path
-        self.direct_serial = direct_serial
         self.mode = mode
-        self.ser: serial.Serial | None = None
         self.client: StewartSupervisorClient | None = None
+        self.startup_status: ExpStatus | None = None
 
     @property
     def is_open(self) -> bool:
-        return self.ser is not None or (
-            self.client is not None and self.client.is_open
-        )
+        return self.client is not None and self.client.is_open
 
     def open(self) -> None:
-        if self.direct_serial:
-            print(
-                "WARNING: direct serial may DTR-reset and release the table.",
-                file=sys.stderr,
-            )
-            self.ser = open_stewart_serial(self.port, self.baud, timeout=0.25)
-            if wait_if_reset(self.ser, 2.2):
-                time.sleep(0.2)
-            else:
-                time.sleep(2.2)
-        else:
-            self.client = StewartSupervisorClient(
-                self.socket_path, mode=self.mode
-            )
-            self.client.open()
+        self.client = StewartSupervisorClient(self.socket_path, mode=self.mode)
+        self.client.open()
         identity = self.exchange("EXP?", timeout=0.8)
         if not identity.startswith("OK EXP UIM5756PM_STEWART_EXP"):
             raise RuntimeError(
                 "wrong firmware; expected experimental executor, got "
                 f"{identity!r}"
             )
+        # This is deliberately part of opening the link: no live client may
+        # plan from assumed zeroes while the persistent Arduino/supervisor is
+        # holding a different absolute motor position.
+        self.startup_status = self.status()
 
     def close(self) -> None:
-        if self.ser is not None:
-            self.ser.close()
-            self.ser = None
         if self.client is not None:
             self.client.close()
             self.client = None
 
     def exchange(self, command: str, timeout: float = 0.6) -> str:
-        if self.client is not None:
-            return self.client.exchange(command, timeout)
-        if self.ser is None:
+        if self.client is None:
             raise RuntimeError("experimental link is not open")
-        self.ser.reset_input_buffer()
-        self.ser.write((command.rstrip() + "\n").encode("ascii"))
-        self.ser.flush()
-        deadline = time.monotonic() + timeout
-        lines: list[str] = []
-        while time.monotonic() < deadline:
-            ready, _, _ = select.select([self.ser.fileno()], [], [], 0.05)
-            if not ready:
-                continue
-            raw = self.ser.readline()
-            if raw:
-                text = raw.decode("utf-8", "replace").strip()
-                if text:
-                    lines.append(text)
-                    break
-        return lines[0] if lines else ""
+        return self.client.exchange(command, timeout)
 
     def require_ok(self, command: str, prefix: str = "OK") -> str:
         reply = self.exchange(command)
@@ -436,14 +397,7 @@ def envelope_map(args: argparse.Namespace) -> dict[str, object]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", default="/dev/arduino-stewart")
-    parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--socket", type=Path, default=DEFAULT_SOCKET)
-    parser.add_argument(
-        "--direct-serial",
-        action="store_true",
-        help="unsafe fallback: bypass supervisor and open Arduino directly",
-    )
     parser.add_argument("--circle", type=float, metavar="DEG")
     parser.add_argument("--target", type=float, nargs=2, metavar=("ROLL", "PITCH"))
     parser.add_argument("--cardinals", type=float, metavar="DEG")
@@ -498,10 +452,7 @@ def main() -> int:
         return 0
 
     link = ExpLink(
-        args.port,
-        args.baud,
-        socket_path=args.socket,
-        direct_serial=args.direct_serial,
+        args.socket,
         mode="readonly" if args.check_firmware else "motion",
     )
     try:
@@ -511,7 +462,8 @@ def main() -> int:
                 f"PROFILE {args.crank_speed:.3f} {args.crank_accel:.3f}",
                 "OK PROFILE",
             )
-        status = link.status()
+        status = link.startup_status
+        assert status is not None
         print(status)
         if args.check_firmware:
             return 0
@@ -558,7 +510,7 @@ def main() -> int:
         except Exception as exc:
             print(f"WARNING: abort failed: {exc}", file=sys.stderr)
         return 130
-    except (NoSolutionError, RuntimeError, serial.SerialException, TimeoutError) as exc:
+    except (NoSolutionError, RuntimeError, TimeoutError) as exc:
         print(f"\nerror: {exc}", file=sys.stderr)
         try:
             link.require_ok("ABORT", "OK ABORT")

@@ -13,8 +13,6 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-import serial
-
 from analysis.stewart_exp_kinematics import (
     NoSolutionError,
     experimental_geometry,
@@ -119,18 +117,11 @@ def step_toward(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("device", nargs="?")
-    parser.add_argument("--port", default="/dev/arduino-stewart")
-    parser.add_argument("--baud", type=int, default=115200)
     parser.add_argument("--socket", type=Path, default=DEFAULT_SOCKET)
     parser.add_argument(
         "--tuning-config",
         type=Path,
         default=Path("calibration/stewart_game_tuning.json"),
-    )
-    parser.add_argument(
-        "--direct-serial",
-        action="store_true",
-        help="unsafe fallback: bypass supervisor and open Arduino directly",
     )
     parser.add_argument("--max-tilt", type=float, default=10.0)
     parser.add_argument("--scale", type=float, default=0.04)
@@ -191,10 +182,7 @@ def main() -> int:
             return 2
 
     link = ExpLink(
-        args.port,
-        args.baud,
-        socket_path=args.socket,
-        direct_serial=args.direct_serial,
+        args.socket,
         mode="motion",
     )
     geometry = experimental_geometry()
@@ -213,7 +201,8 @@ def main() -> int:
             f"PROFILE {args.crank_speed:.3f} {args.crank_accel:.3f}",
             "OK PROFILE",
         )
-        status = link.status()
+        status = link.startup_status
+        assert status is not None
         if not status.calibrated:
             status = calibrate(link)
             clear_after_fresh_crank_calibration(tuning, args.tuning_config)
@@ -339,7 +328,7 @@ def main() -> int:
         except Exception as exc:
             print(f"WARNING: abort failed: {exc}", file=sys.stderr)
         return 0
-    except (RuntimeError, serial.SerialException, TimeoutError, NoSolutionError) as exc:
+    except (RuntimeError, TimeoutError, NoSolutionError) as exc:
         print(f"\nerror: {exc}", file=sys.stderr)
         try:
             link.require_ok("ABORT", "OK ABORT")

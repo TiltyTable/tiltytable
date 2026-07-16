@@ -255,7 +255,7 @@ def solve_pose_at_heave(
             return None
         per_leg.append(branches)
 
-    best: tuple[tuple[float, float, float], PoseSolution] | None = None
+    best: tuple[tuple[object, ...], PoseSolution] | None = None
     for indices in itertools.product(*(range(len(branches)) for branches in per_leg)):
         selected = [per_leg[leg][indices[leg]] for leg in range(3)]
         unwrapped = tuple(
@@ -294,12 +294,18 @@ def solve_pose_at_heave(
             dead_center_margin_deg=dead_center_margin,
             max_static_torque_nm=max_torque,
         )
+        # Symmetric poses can make two or more branch combinations identical
+        # apart from floating-point noise (most visibly when leaving the
+        # crank-up calibration dead centre).  Quantize the continuity terms
+        # before tuple comparison so leg azimuth round-off cannot select a
+        # different branch for otherwise identical legs.
         score = (
-            solution.max_crank_delta_deg,
-            sum(deltas),
+            round(solution.max_crank_delta_deg, 9),
+            round(sum(deltas), 9),
             -solution.dead_center_margin_deg,
             solution.max_static_torque_nm,
             -solution.closure_margin_mm,
+            tuple(indices),
         )
         if best is None or score < best[0]:
             best = (score, solution)

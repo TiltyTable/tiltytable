@@ -1,10 +1,11 @@
 # Experimental full-rotation Stewart executor
 
-This firmware is isolated from the production Stewart stack. It accepts
+This is the live Stewart firmware. It accepts
 host-computed absolute motor steps while `stewart_exp_probe.py` performs
 dual-branch IK, free-heave optimization, and path continuity.
 
-It is not protocol-compatible with `roller_ball.py` or the production CLI.
+It is not protocol-compatible with the retired direct-serial tools in
+`archive/stewart_legacy/`.
 The unique identity response is:
 
 ```text
@@ -36,8 +37,7 @@ tools also accept `--crank-speed` and `--crank-accel`.
 Opening `/dev/arduino-stewart` can still DTR-reset the Uno and briefly release
 the loaded table. Normal tools therefore connect to the persistent
 `stewart_supervisor.py` Unix socket and never open Arduino serial themselves.
-Direct serial is available only through the explicit, unsafe
-`--direct-serial` fallback.
+Supported host tools do not provide a direct-serial fallback.
 
 ## Persistent serial supervisor
 
@@ -106,7 +106,7 @@ The check uses a readonly supervisor lease and never opens serial itself.
 
 ## Supervised progression
 
-The probe owns one serial connection for calibration and the complete
+The probe owns one supervisor motion lease for calibration and the complete
 trajectory. Live motion requires typing `MOVE`.
 
 ```bash
@@ -129,7 +129,7 @@ table is physically supported.
 ## Experimental roller ball
 
 After cardinal tests have validated the desired radius, use the dedicated
-free-heave roller controller (production `roller_ball.py` remains unchanged):
+free-heave roller controller:
 
 ```bash
 .venv/bin/python3 stewart_exp_roller_ball.py --max-tilt 10

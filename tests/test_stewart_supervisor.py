@@ -6,6 +6,7 @@ import time
 import unittest
 from pathlib import Path
 
+from stewart_exp_probe import ExpLink
 from stewart_supervisor import StewartSupervisor
 from stewart_supervisor_client import StewartSupervisorClient
 
@@ -20,7 +21,12 @@ class FakeBackend:
         if command == "EXP?":
             return "OK EXP UIM5756PM_STEWART_EXP 1"
         if command == "STATUS":
-            return "OK STATUS exp=1"
+            return (
+                "OK STATUS exp=1 calibrated=1 restored=1 calibrating=0 "
+                "armed=0 enabled=1 moving=0 s0=123 s1=-456 s2=789 "
+                "t0=123 t1=-456 t2=789 m0=1 m1=1 m2=1 "
+                "roll=1.25 pitch=-2.5 heave=7.75 vmax=40 amax=120"
+            )
         if command.startswith("ARM "):
             return "OK ARM"
         if command == "ABORT":
@@ -74,10 +80,24 @@ class SupervisorTests(unittest.TestCase):
         client.open()
         started = time.monotonic()
         for _ in range(120):
-            self.assertEqual(client.exchange("STATUS"), "OK STATUS exp=1")
+            self.assertTrue(client.exchange("STATUS").startswith("OK STATUS"))
         elapsed = time.monotonic() - started
         client.close()
         self.assertLess(elapsed, 2.0)
+
+    def test_exp_link_captures_current_motor_positions_when_opened(self) -> None:
+        link = ExpLink(self.socket_path, mode="readonly")
+        link.open()
+        try:
+            self.assertIsNotNone(link.startup_status)
+            assert link.startup_status is not None
+            self.assertEqual(link.startup_status.steps, (123, -456, 789))
+            self.assertEqual(
+                link.startup_status.as_pose().steps,
+                (123, -456, 789),
+            )
+        finally:
+            link.close()
 
 
 if __name__ == "__main__":

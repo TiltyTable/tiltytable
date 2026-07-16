@@ -618,9 +618,7 @@ def main() -> int:
         parser.error("--threshold-margin must be >= 0")
 
     link = ExpLink(
-        "/dev/arduino-stewart",
-        socket_path=args.socket,
-        direct_serial=False,
+        args.socket,
         mode="motion",
     )
     results = TuningResults.load(args.results)
@@ -632,7 +630,8 @@ def main() -> int:
     )
     try:
         link.open()
-        status = link.status()
+        status = link.startup_status
+        assert status is not None
         if not status.calibrated:
             status = calibrate(link)
             clear_after_fresh_crank_calibration(results, args.results)
