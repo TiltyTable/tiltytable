@@ -123,20 +123,28 @@ def load_levels(path: Path = MANIFEST_PATH) -> LevelCatalog:
             troll_line=str(item.get("trollLine", "")),
             mode=mode,
             survival_seconds=(
-                float(item["survivalSeconds"]) if item.get("survivalSeconds") is not None else None
+                float(item.get("survivalSeconds", mode_params.get("survivalSeconds")))
+                if item.get("survivalSeconds", mode_params.get("survivalSeconds")) is not None
+                else None
             ),
             dwell_seconds=(
-                float(item["dwellSeconds"]) if item.get("dwellSeconds") is not None else None
+                float(item.get("dwellSeconds", mode_params.get("dwellSeconds")))
+                if item.get("dwellSeconds", mode_params.get("dwellSeconds")) is not None
+                else None
             ),
             warn_seconds=(
-                float(item["warnSeconds"]) if item.get("warnSeconds") is not None else None
+                float(item.get("warnSeconds", mode_params.get("warnSeconds")))
+                if item.get("warnSeconds", mode_params.get("warnSeconds")) is not None
+                else None
             ),
             points_per_tile=(
-                int(item["pointsPerTile"]) if item.get("pointsPerTile") is not None else None
+                int(item.get("pointsPerTile", mode_params.get("pointsPerTile")))
+                if item.get("pointsPerTile", mode_params.get("pointsPerTile")) is not None
+                else None
             ),
             pit_confirm_seconds=(
-                float(item["pitConfirmSeconds"])
-                if item.get("pitConfirmSeconds") is not None
+                float(item.get("pitConfirmSeconds", mode_params.get("pitConfirmSeconds")))
+                if item.get("pitConfirmSeconds", mode_params.get("pitConfirmSeconds")) is not None
                 else None
             ),
             mode_params=mode_params,

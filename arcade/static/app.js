@@ -111,6 +111,10 @@ function isSurvivalLevel(level = game?.level) {
   return level?.mode === "survival_lava";
 }
 
+function isTrackedMode(level = game?.level) {
+  return ["survival_lava", "hex_fall", "target_hunt"].includes(level?.mode);
+}
+
 function cellKeyToRowCol(key) {
   return [Number(key.slice(1)) - 1, key.charCodeAt(0) - 65];
 }
@@ -425,8 +429,8 @@ function renderLoading() {
 
 function tileClass(cell) {
   if (cell.key === game.level.startCell) return "start";
-  if (!isSurvivalLevel() && cell.key === game.level.endCell) return "finish";
-  if (cell.sunk || (isSurvivalLevel() && cell.value === -1)) return "trap";
+  if (!isTrackedMode() && cell.key === game.level.endCell) return "finish";
+  if (cell.sunk || (isTrackedMode() && cell.value === -1)) return "trap";
   const color = String(cell.color || "").toUpperCase();
   if (color === PALETTE.shrek || color === "#FF8C00" || color === "#F49400") return "path";
   if (color === PALETTE.blue || color === "#3366FF") return "points";
@@ -498,9 +502,22 @@ function renderPlaying() {
   const remaining = game.timer.remainingSeconds;
   const level = game.level;
   const survival = isSurvivalLevel();
+  const hex = level.mode === "hex_fall";
+  const hunt = level.mode === "target_hunt";
+  const tracked = isTrackedMode();
   const visited = game.survival?.tilesVisited ?? 0;
   const heating = Boolean(game.survival?.heating);
-  const kenLine = survival
+  const modeState = game.modeState || {};
+  const openTiles = (game.mapCells || []).filter(cell => Number(cell.value) === 0).length;
+  const kenLine = hunt
+    ? (remaining <= 5
+      ? "Five seconds — reach that flashing blue tile!"
+      : `Target ${modeState.targetCell || "lost"} — each hit buys time but builds the trap.`)
+    : hex
+      ? (remaining <= 10
+        ? "Ten seconds — flashing tiles are about to disappear!"
+        : "Random floor tiles flash before they fall. Your current tile is protected.")
+      : survival
     ? (heating
       ? "Red flash behind you — that tile is about to sink!"
       : (remaining <= 10
@@ -509,16 +526,20 @@ function renderPlaying() {
     : (remaining <= 30
       ? (remaining <= 10 ? "Ten seconds — magenta or bust!" : "Under thirty seconds. Stay calm, stay on path.")
       : (level.kenLine || LORE.playing.ken));
-  const trollLine = survival
+  const trollLine = tracked
     ? (heating
       ? "Feel that heat, Tilty? Your feet are cooking!"
       : (remaining <= 10 ? "BURN, TILTY, BURN!" : (level.trollLine || LORE.survivalPlaying.troll)))
     : timerTrollLine(remaining);
-  const timerLabel = survival ? (heating ? "HEATING" : "SURVIVE") : null;
-  const instruction = survival
-    ? `Tiles touched <strong>${visited}</strong> · +${level.pointsPerTile || 0} each`
-    : `Reach magenta <strong>${level.endCell}</strong>`;
-  const footer = survival
+  const timerLabel = hunt ? "TARGET HUNT" : tracked ? (heating ? "HEATING" : "SURVIVE") : null;
+  const instruction = hunt
+    ? `Reach blue <strong>${modeState.targetCell || "—"}</strong> · targets ${modeState.targetsReached || 0}`
+    : hex
+      ? `Safe floor <strong>${openTiles}</strong> · random tiles collapse`
+      : survival
+        ? `Tiles touched <strong>${visited}</strong> · +${level.pointsPerTile || 0} each`
+        : `Reach magenta <strong>${level.endCell}</strong>`;
+  const footer = tracked
     ? `<span class="key">ARROWS</span> DEV BALL <span class="key">R</span> RESTART <span class="key">ESC</span> END RUN`
     : `<span class="key">C</span> FINISH <span class="key">R</span> RESTART <span class="key">ESC</span> END RUN`;
   return shell(`
@@ -531,7 +552,7 @@ function renderPlaying() {
         <div class="hud-stats">
           <div class="hud-stat"><span>RUN SCORE</span><strong>${Number(game.score).toLocaleString()}</strong></div>
           <div class="hud-stat"><span>RESTARTS</span><strong>${game.restarts}</strong></div>
-          ${survival ? `<div class="hud-stat"><span>TILES</span><strong>${visited}</strong></div>` : ""}
+          ${tracked ? `<div class="hud-stat"><span>${hunt ? "TARGETS" : hex ? "FLOOR" : "TILES"}</span><strong>${hunt ? (modeState.targetsReached || 0) : hex ? openTiles : visited}</strong></div>` : ""}
         </div>
         <p class="hud-instruction">${instruction}</p>
       </div>
@@ -541,11 +562,19 @@ function renderPlaying() {
 }
 
 function renderSurvivalFail() {
+  const hunt = game.level?.mode === "target_hunt";
+  const hex = game.level?.mode === "hex_fall";
+  const title = hunt ? "TIME'S UP!" : "SUNK!";
+  const copy = hunt
+    ? "The target timer expired. Keep the next chain alive."
+    : hex
+      ? "The shrinking floor caught the ball."
+      : "You rolled onto a sunk tile — the heat caught up.";
   return shell(`
     <article class="message-card">
       <p class="kicker">Chamber ${game.level.number}</p>
-      <h1 style="color:var(--red)">SUNK!</h1>
-      <p class="decision-copy">You rolled onto a sunk tile — the heat caught up.</p>
+      <h1 style="color:var(--red)">${title}</h1>
+      <p class="decision-copy">${copy}</p>
       <p class="result-number">−100</p>
       <p class="prompt"><span class="key">ENTER</span> TRY AGAIN</p>
     </article>`,
@@ -566,7 +595,7 @@ function renderTimeUp() {
 }
 
 function renderLevelClear() {
-  const survival = isSurvivalLevel();
+  const survival = ["survival_lava", "hex_fall"].includes(game.level?.mode);
   const sub = survival
     ? "You outlasted the lava — Tiltelle grows nearer"
     : `${game.lastLevelResult.remainingSeconds}s left — Tiltelle grows nearer`;
@@ -589,7 +618,8 @@ function renderLevelScore() {
   const nextLabel = game.mode === "practice"
     ? "FINISH PRACTICE"
     : (isLastGauntlet ? "FINAL SCORE" : "NEXT CHAMBER");
-  const survival = isSurvivalLevel(game.levels.find(l => l.id === result.levelId));
+  const resultLevel = game.levels.find(l => l.id === result.levelId);
+  const survival = ["survival_lava", "hex_fall"].includes(resultLevel?.mode);
   const breakdown = survival
     ? `<div class="result-grid">
         <div><span>Survival</span><strong>500</strong></div>
@@ -719,7 +749,7 @@ function handleStateAudio() {
     if (game.state === "initials") initialsDraft = "";
     if (game.state === "playing") {
       audio.start();
-      if (isSurvivalLevel()) {
+      if (isTrackedMode()) {
         devBallCell = game.level.startCell;
         postBallCell(devBallCell);
       }
@@ -842,8 +872,8 @@ document.addEventListener("keydown", event => {
       if (key === "Enter" || key === " ") postAction("confirm-placement");
       break;
     case "playing":
-      if (isSurvivalLevel()) {
-        const current = devBallCell || game.survival?.ballCell || game.level.startCell;
+      if (isTrackedMode()) {
+        const current = devBallCell || game.ball?.cell || game.level.startCell;
         const [row, col] = cellKeyToRowCol(current);
         let next = null;
         if (key === "ArrowUp") next = rowColToCellKey(row - 1, col);

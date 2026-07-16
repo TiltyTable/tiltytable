@@ -506,6 +506,12 @@ class GameEngine:
                 if self.state == GameState.PLAYING
                 else (level.time_limit_seconds if level else 0)
             )
+            if (
+                self.state == GameState.PLAYING
+                and self._mode_state
+                and "remainingSeconds" in self._mode_state
+            ):
+                remaining = max(0, math.ceil(float(self._mode_state["remainingSeconds"])))
             survival_payload = None
             if level and level.is_survival_lava:
                 survival_payload = {

@@ -14,6 +14,7 @@ from arcade.level_packages import (
     package_from_manifest,
     validate_package,
 )
+from arcade.levels import MANIFEST_PATH, load_levels
 from arcade.server import create_app
 from arcade.target_hunt import (
     TargetHuntParams,
@@ -69,6 +70,20 @@ class LevelPackageTests(unittest.TestCase):
             self.assertEqual(len(json.loads(map_out.read_text())), 144)
             saved = json.loads(manifest.read_text())["levels"][0]
             self.assertEqual(saved["mode"], "hex_fall")
+
+    def test_installed_mode_params_load_in_game_catalog(self) -> None:
+        package = package_from_manifest("level-7")
+        package["meta"]["id"] = "lava-package-test"
+        package["meta"]["number"] = 8
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            manifest = root / "levels.json"
+            manifest.write_text(MANIFEST_PATH.read_text())
+            install_package(package, manifest_path=manifest, maps_dir=root / "maps")
+            catalog = load_levels(manifest)
+            loaded = next(level for level in catalog.levels if level.id == "lava-package-test")
+            self.assertEqual(loaded.survival_seconds, 40.0)
+            self.assertEqual(loaded.mode_params["survivalSeconds"], 40.0)
 
 
 class TargetHuntTests(unittest.TestCase):
