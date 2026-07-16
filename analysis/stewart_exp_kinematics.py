@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import itertools
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Iterable, Sequence
 
 import numpy as np
@@ -310,6 +310,96 @@ def solve_pose_at_heave(
         if best is None or score < best[0]:
             best = (score, solution)
     return None if best is None else best[1]
+
+
+def reconstruct_pose_from_cranks(
+    geometry: Geometry,
+    crank_deg: Sequence[float],
+    *,
+    initial_roll_deg: float = 0.0,
+    initial_pitch_deg: float = 0.0,
+    initial_heave_mm: float = 0.0,
+    max_iterations: int = 30,
+) -> PoseSolution:
+    """Recover roll, pitch, and heave from three held crank angles.
+
+    Firmware pose metadata describes the most recently commanded target. If a
+    HOLD interrupts motion, only the motor steps describe the physical pose.
+    Solve the three fixed rod-length constraints so a reconnect starts from a
+    pose consistent with those held steps.
+    """
+    if len(crank_deg) != 3:
+        raise ValueError("crank_deg must contain three axes")
+    cranks = tuple(float(value) for value in crank_deg)
+
+    def residual(estimate: np.ndarray) -> np.ndarray:
+        roll, pitch, heave = (float(value) for value in estimate)
+        values: list[float] = []
+        for leg, angle_deg in enumerate(cranks):
+            azimuth = math.radians(geometry.leg_azimuth_deg[leg])
+            ux, uy = math.cos(azimuth), math.sin(azimuth)
+            angle = math.radians(angle_deg)
+            pin = np.array(
+                [
+                    (
+                        geometry.base_motor_radius_mm
+                        + geometry.crank_radius_mm * math.cos(angle)
+                    )
+                    * ux,
+                    (
+                        geometry.base_motor_radius_mm
+                        + geometry.crank_radius_mm * math.cos(angle)
+                    )
+                    * uy,
+                    geometry.crank_radius_mm * math.sin(angle),
+                ],
+                dtype=float,
+            )
+            top = np.array(
+                top_joint_position(geometry, leg, roll, pitch, heave),
+                dtype=float,
+            )
+            values.append(float(np.linalg.norm(top - pin)) - geometry.arm_length_mm)
+        return np.array(values, dtype=float)
+
+    estimate = np.array(
+        [initial_roll_deg, initial_pitch_deg, initial_heave_mm], dtype=float
+    )
+    epsilon = 1e-4
+    for _ in range(max_iterations):
+        error = residual(estimate)
+        if float(np.max(np.abs(error))) <= 1e-7:
+            break
+        jacobian = np.column_stack(
+            [
+                (residual(estimate + np.eye(3)[axis] * epsilon) - error)
+                / epsilon
+                for axis in range(3)
+            ]
+        )
+        delta, *_ = np.linalg.lstsq(jacobian, -error, rcond=None)
+        delta_norm = float(np.linalg.norm(delta))
+        if not np.all(np.isfinite(delta)):
+            raise NoSolutionError("forward pose reconstruction diverged")
+        if delta_norm > 5.0:
+            delta *= 5.0 / delta_norm
+        estimate += delta
+    else:
+        raise NoSolutionError("forward pose reconstruction did not converge")
+
+    if float(np.max(np.abs(residual(estimate)))) > 1e-5:
+        raise NoSolutionError("held crank angles do not close to a platform pose")
+    solution = solve_pose_at_heave(
+        geometry,
+        float(estimate[0]),
+        float(estimate[1]),
+        float(estimate[2]),
+        cranks,
+        estimate_torque=False,
+    )
+    if solution is None or solution.max_crank_delta_deg > 0.05:
+        raise NoSolutionError("reconstructed pose does not match held crank angles")
+    return replace(solution, crank_deg=cranks, max_crank_delta_deg=0.0)
 
 
 def optimize_heave(

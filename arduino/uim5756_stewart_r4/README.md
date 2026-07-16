@@ -41,6 +41,13 @@ Start `stewart_supervisor.py` after flashing, then use
 `OK EXP UIM5756PM_STEWART_EXP 1`, intentionally, so all supervisor clients
 continue to work.
 
+The live firmware and supervisor default to 230400 baud. Pass `--baud 115200`
+only when using an older firmware build that still expects the former rate.
+
+The supervisor defaults to `--dtr on` because the Freenove V5 WiFi USB bridge
+does not forward serial traffic with DTR deasserted. Pass `--dtr off`
+explicitly for boards where opening with DTR can reset the controller.
+
 ## Reset and position safety
 
 The R3-only `MCUSR`, `.noinit`, early-init hook, and AVR watchdog code were
@@ -100,8 +107,8 @@ Recommended progression:
 3. If substantially higher rates are needed, characterize MobaTools timer
    jitter and motor following with an oscilloscope or logic analyzer before
    increasing the firmware and Python limits.
-4. A fixed serial receive buffer can reduce parser overhead. Increasing 115200
-   baud is unlikely to matter at the current 60 Hz target rate.
+4. A fixed serial receive buffer can reduce parser overhead. The live link now
+   runs at 230400 baud to reduce synchronous target-command latency.
 5. Reducing MCS lowers pulse demand but also changes resolution and every
    steps-per-revolution conversion; do not change it without reconfiguring all
    three motors and recalibrating.

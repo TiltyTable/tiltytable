@@ -30,7 +30,7 @@ The current system is four cooperating host processes:
 
 | Process | Purpose | Owns |
 | --- | --- | --- |
-| `stewart_supervisor.py` | Permanent no-DTR serial owner and motion lease server | `/dev/arduino-stewart` |
+| `stewart_supervisor.py` | Persistent serial owner and motion lease server | `/dev/arduino-stewart` |
 | `kinect_web_control.py` | Azure Kinect capture, ball detection, continuous table-pose fit, ball-to-cell API | Azure Kinect; HTTP `:8080` |
 | One `stewart_platform_control_*.py` | Trackball input, free-heave IK, and Stewart targets | Trackball; supervisor motion lease |
 | `run_arcade.sh` | Arcade server, projector UI, level logic, servos, and LEDs | `/dev/arduino-modules`; HTTP `:8081` |
@@ -279,6 +279,10 @@ The supplied service contains absolute `/home/zipline/tiltytable` and
 or `arduino-cli` lives elsewhere. Keep `Restart=no`: an automatic restart can
 reopen serial while the platform is loaded.
 
+The Freenove V5 WiFi USB bridge requires DTR asserted, so the supervisor and
+supplied service default to `--dtr on`. Pass `--dtr off` explicitly for boards
+where opening with DTR can reset the controller.
+
 Confirm the firmware through a read-only supervisor lease:
 
 ```bash
@@ -307,14 +311,22 @@ controllers do not silently load the tuning JSON.
 
 Every supported motion client gets the current absolute motor positions from
 the Arduino/supervisor during startup before constructing its initial IK pose.
+The platform controllers resume that held pose by default. Pass
+`--zero-on-start` to move to the canonical level pose before accepting input.
+The live R4 executor and supervisor communicate at 230400 baud.
+Position control defaults to 9 degrees maximum tilt, 0.04 degrees per input
+count, 60 degrees/s crank speed, 500 degrees/s2 crank acceleration, zero input
+deadband, a 90 Hz update rate, and no startup confirmation. Pass `--no-yes`
+to require the `START` confirmation.
 
 ### 7. Azure Kinect ball and table tracking
 
 Mount five retroreflective markers in the geometry documented at the top of
 `table_pose.py`. Verify the measured marker locations in
-`TableGeometry._rebuild()` and the table size used by `world_to_cell()` match
-the physical build. Adjustable marker dimensions, thresholds, ball radius,
-and camera settings live in `config.json`.
+`TableGeometry._rebuild()` and the `table_long_side_mm`/`table_short_side_mm`
+values used by `world_to_cell()` match the physical build. Adjustable table
+and marker dimensions, thresholds, ball radius, and camera settings live in
+`config.json`.
 
 Start the camera service on port 8080:
 

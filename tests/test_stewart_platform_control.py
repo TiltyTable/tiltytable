@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import argparse
 import math
 import unittest
 from types import SimpleNamespace
 
 from analysis.stewart_exp_kinematics import (
+    NoSolutionError,
     calibrated_solution,
     experimental_geometry,
     plan_heave_transition,
@@ -19,10 +21,15 @@ from stewart_platform_control_common import (
     SYN_REPORT,
     TrackballAccumulator,
     StewartPlatformController,
+    add_common_arguments,
     decay_velocity,
     integrate_velocity,
 )
-from stewart_platform_control_position import apply_position_counts
+from stewart_platform_control_position import (
+    apply_position_counts,
+    build_parser,
+    command_or_retain_last_valid,
+)
 from stewart_platform_control_velocity import apply_velocity_counts
 
 
@@ -73,6 +80,49 @@ class SharedStewartControlTests(unittest.TestCase):
         )
         self.assertAlmostEqual(roll, -0.4)
         self.assertAlmostEqual(pitch, 1.0)
+
+    def test_default_startup_resumes_held_pose(self) -> None:
+        parser = argparse.ArgumentParser()
+        add_common_arguments(parser)
+        args = parser.parse_args([])
+        self.assertFalse(args.zero_on_start)
+
+    def test_position_controller_live_defaults(self) -> None:
+        args = build_parser().parse_args([])
+        self.assertEqual(args.max_tilt, 9.0)
+        self.assertEqual(args.degrees_per_count, 0.03)
+        self.assertEqual(args.crank_accel, 500.0)
+        self.assertEqual(args.crank_speed, 60.0)
+        self.assertEqual(args.deadband, 0)
+        self.assertEqual(args.rate_hz, 90.0)
+        self.assertTrue(args.yes)
+        self.assertFalse(build_parser().parse_args(["--no-yes"]).yes)
+
+    def test_unreachable_position_retains_last_valid_target(self) -> None:
+        class BoundaryController:
+            current = SimpleNamespace(roll_deg=-4.5, pitch_deg=6.25)
+            rebased = False
+
+            @staticmethod
+            def at_target(_roll: float, _pitch: float) -> bool:
+                return False
+
+            @staticmethod
+            def command_toward(_roll: float, _pitch: float) -> None:
+                raise NoSolutionError("outside continuous workspace")
+
+            @classmethod
+            def hold_and_rebase(cls):
+                cls.rebased = True
+                cls.current = SimpleNamespace(roll_deg=0.25, pitch_deg=1.5)
+                return cls.current
+
+        roll, pitch, warning = command_or_retain_last_valid(
+            BoundaryController(), -6.0, 7.0
+        )
+        self.assertEqual((roll, pitch), (0.25, 1.5))
+        self.assertTrue(BoundaryController.rebased)
+        self.assertIn("outside continuous workspace", warning or "")
 
     def test_position_target_is_radially_clamped(self) -> None:
         roll, pitch = apply_position_counts(

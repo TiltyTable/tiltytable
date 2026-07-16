@@ -50,6 +50,8 @@ class ArduinoCliBackend:
         port: str,
         baud: int,
         *,
+        dtr: str = "on",
+        rts: str = "off",
         arduino_cli: str = "arduino-cli",
     ) -> None:
         command = [
@@ -60,7 +62,7 @@ class ArduinoCliBackend:
             "-p",
             port,
             "-c",
-            f"baudrate={baud},dtr=off,rts=off",
+            f"baudrate={baud},dtr={dtr},rts={rts}",
         ]
         self.process = subprocess.Popen(
             command,
@@ -212,15 +214,22 @@ class StewartSupervisor:
                     if upper in ("HOLD", "ABORT", "DISABLE"):
                         motion_active = False
                     self._reply(stream, {"ok": True, "reply": reply})
+                except (BrokenPipeError, ConnectionResetError):
+                    return
                 except Exception as exc:
-                    self._reply(
-                        stream,
-                        {
-                            "ok": False,
-                            "error": type(exc).__name__,
-                            "message": str(exc),
-                        },
-                    )
+                    try:
+                        self._reply(
+                            stream,
+                            {
+                                "ok": False,
+                                "error": type(exc).__name__,
+                                "message": str(exc),
+                            },
+                        )
+                    except (BrokenPipeError, ConnectionResetError):
+                        return
+        except (BrokenPipeError, ConnectionResetError):
+            pass
         finally:
             if mode == "motion" and motion_active:
                 try:
@@ -231,7 +240,10 @@ class StewartSupervisor:
                         file=sys.stderr,
                         flush=True,
                     )
-            stream.close()
+            try:
+                stream.close()
+            except OSError:
+                pass
 
     def serve(self) -> None:
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
@@ -263,7 +275,9 @@ class StewartSupervisor:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--port", default="/dev/arduino-stewart")
-    parser.add_argument("--baud", type=int, default=115200)
+    parser.add_argument("--baud", type=int, default=230400)
+    parser.add_argument("--dtr", choices=("on", "off"), default="on")
+    parser.add_argument("--rts", choices=("on", "off"), default="off")
     parser.add_argument("--socket", type=Path, default=DEFAULT_SOCKET)
     parser.add_argument("--lock", type=Path, default=DEFAULT_LOCK)
     parser.add_argument("--arduino-cli", default="arduino-cli")
@@ -278,7 +292,11 @@ def main() -> int:
         return 2
 
     backend = ArduinoCliBackend(
-        args.port, args.baud, arduino_cli=args.arduino_cli
+        args.port,
+        args.baud,
+        dtr=args.dtr,
+        rts=args.rts,
+        arduino_cli=args.arduino_cli,
     )
     supervisor = StewartSupervisor(backend, args.socket)
 

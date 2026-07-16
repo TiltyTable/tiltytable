@@ -170,6 +170,12 @@ class WorldToCellTests(unittest.TestCase):
     0..-TABLE_LONG_SIDE_MM), row increases toward origin along the short/Y
     wall (world Y runs 0..+TABLE_SHORT_SIDE_MM)."""
 
+    def setUp(self):
+        tp.configure_table_geometry(
+            table_long_side_mm=800.0,
+            table_short_side_mm=800.0,
+        )
+
     def test_far_corner_from_origin_is_grid_zero_zero(self):
         row, col = tp.world_to_cell(-tp.TABLE_LONG_SIDE_MM, tp.TABLE_SHORT_SIDE_MM)
         self.assertEqual((row, col), (0, 0))
@@ -187,6 +193,13 @@ class WorldToCellTests(unittest.TestCase):
         self.assertEqual((row, col), (tp.GRID_ROWS - 1, tp.GRID_COLS - 1))
         row, col = tp.world_to_cell(-tp.TABLE_LONG_SIDE_MM - 1000.0, tp.TABLE_SHORT_SIDE_MM + 1000.0)
         self.assertEqual((row, col), (0, 0))
+
+    def test_configured_table_extent_controls_cell_mapping(self):
+        tp.configure_table_geometry(
+            table_long_side_mm=1000.0,
+            table_short_side_mm=600.0,
+        )
+        self.assertEqual(tp.world_to_cell(-500.0, 300.0), (6, 6))
 
 
 class DetectMarkersBallRejectionTests(unittest.TestCase):

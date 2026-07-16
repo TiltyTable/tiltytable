@@ -41,15 +41,43 @@ def apply_position_counts(
     return clamp_vector(roll, pitch, max_tilt_deg)
 
 
-def main() -> int:
+def command_or_retain_last_valid(
+    controller: StewartPlatformController,
+    desired_roll: float,
+    desired_pitch: float,
+) -> tuple[float, float, str | None]:
+    """Command one IK step, or discard an unreachable requested pose."""
+    if controller.at_target(desired_roll, desired_pitch):
+        return desired_roll, desired_pitch, None
+    try:
+        controller.command_toward(desired_roll, desired_pitch)
+    except NoSolutionError as exc:
+        current = controller.hold_and_rebase()
+        return current.roll_deg, current.pitch_deg, str(exc)
+    return desired_roll, desired_pitch, None
+
+
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     add_common_arguments(parser)
-    parser.add_argument("--degrees-per-count", type=float, default=0.04)
-    parser.add_argument("--deadband", type=int, default=1)
+    parser.add_argument("--degrees-per-count", type=float, default=0.03)
+    parser.add_argument("--deadband", type=int, default=0)
     parser.add_argument("--roll-sign", type=float, choices=(-1.0, 1.0), default=1.0)
     parser.add_argument(
         "--pitch-sign", type=float, choices=(-1.0, 1.0), default=1.0
     )
+    parser.set_defaults(
+        max_tilt=9.0,
+        crank_accel=500.0,
+        crank_speed=60.0,
+        rate_hz=90.0,
+        yes=True,
+    )
+    return parser
+
+
+def main() -> int:
+    parser = build_parser()
     args = parser.parse_args()
     try:
         validate_common_arguments(args)
@@ -72,6 +100,7 @@ def main() -> int:
         desired_pitch = controller.current.pitch_deg
         last_update = time.monotonic()
         last_print = 0.0
+        last_boundary_print = 0.0
         print("Live mapping: +X -> +pitch, +Y -> +roll. Ctrl-C holds.")
 
         while True:
@@ -95,8 +124,20 @@ def main() -> int:
                     max_tilt_deg=args.max_tilt,
                 )
 
-            if not controller.at_target(desired_roll, desired_pitch):
-                controller.command_toward(desired_roll, desired_pitch)
+            desired_roll, desired_pitch, boundary_error = (
+                command_or_retain_last_valid(
+                    controller,
+                    desired_roll,
+                    desired_pitch,
+                )
+            )
+            if boundary_error is not None and now - last_boundary_print >= 0.5:
+                print(
+                    "\nWorkspace boundary reached; holding the last valid "
+                    f"target ({boundary_error}).",
+                    file=sys.stderr,
+                )
+                last_boundary_print = now
 
             if now - last_print >= 0.1:
                 assert controller.current is not None

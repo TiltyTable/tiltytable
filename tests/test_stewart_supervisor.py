@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import socket
+import struct
 import tempfile
 import threading
 import time
@@ -74,6 +76,30 @@ class SupervisorTests(unittest.TestCase):
         while "ABORT" not in self.backend.commands and time.monotonic() < deadline:
             time.sleep(0.01)
         self.assertIn("ABORT", self.backend.commands)
+
+    def test_abrupt_client_disconnect_does_not_stop_supervisor(self) -> None:
+        raw = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        raw.connect(str(self.socket_path))
+        raw.sendall(b'{"action":"acquire","mode":"readonly"}\n')
+        raw.setsockopt(
+            socket.SOL_SOCKET,
+            socket.SO_LINGER,
+            struct.pack("ii", 1, 0),
+        )
+        raw.close()
+
+        deadline = time.monotonic() + 1.0
+        client = StewartSupervisorClient(self.socket_path, mode="readonly")
+        while time.monotonic() < deadline:
+            try:
+                client.open()
+                break
+            except (ConnectionError, ConnectionResetError):
+                time.sleep(0.01)
+        self.assertTrue(client.is_open)
+        self.assertTrue(client.ping())
+        client.close()
+        self.assertTrue(self.thread.is_alive())
 
     def test_local_rpc_can_sustain_sixty_hz_target_rate(self) -> None:
         client = StewartSupervisorClient(self.socket_path, mode="motion")

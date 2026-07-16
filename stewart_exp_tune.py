@@ -515,6 +515,18 @@ class TuningSession:
         self.results.save(self.results_path)
         print("Cleared per-motor trims and dependent level anchor.")
 
+    def recalibrate_motors(self) -> None:
+        """Clear motion calibration and run full live crank-zero calibration."""
+        self.results.clear_motion_calibration()
+        self.results.save(self.results_path)
+        self.current = None
+        status = calibrate(self.link)
+        self.current = status.as_pose()
+        print(
+            "Full crank calibration complete; cleared motor trims, level "
+            "trim, and level anchor."
+        )
+
     def adjust_motor(self, axis: int, pulses: int) -> None:
         if axis not in (0, 1, 2):
             raise ValueError("motor axis must be 0, 1, or 2")
@@ -596,6 +608,7 @@ HELP = """Commands:
   motor <0|1|2> <pulses>
   motorcal [0|1|2]
   motorclear
+  recalibrate
   profile [speed_deg_s accel_deg_s2]
   threshold <roll|pitch> <+|-> [step_deg]
   mark <roll|pitch> <+|-> <angle_deg>
@@ -633,9 +646,9 @@ def main() -> int:
         status = link.startup_status
         assert status is not None
         if not status.calibrated:
-            status = calibrate(link)
             clear_after_fresh_crank_calibration(results, args.results)
-            print("New crank calibration cleared stale trims and level anchor.")
+            print("Cleared stale trims and level anchor before crank calibration.")
+            status = calibrate(link)
         elif (
             not status.restored
             and status.steps == (0, 0, 0)
@@ -710,6 +723,15 @@ def main() -> int:
                     )
                 elif command == "motorclear" and len(parts) == 1:
                     session.clear_motor_trims()
+                elif command == "recalibrate" and len(parts) == 1:
+                    confirmation = input(
+                        "This disables all motors before jogging each crank. "
+                        "Support the table, then type RECALIBRATE: "
+                    )
+                    if confirmation == "RECALIBRATE":
+                        session.recalibrate_motors()
+                    else:
+                        print("Recalibration cancelled.")
                 elif command == "profile":
                     if len(parts) == 1:
                         print(link.require_ok("PROFILE?", "OK PROFILE"))

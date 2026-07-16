@@ -279,6 +279,28 @@ class TuningSessionTests(unittest.TestCase):
         self.assertEqual(loaded.motor_trim_steps, [0, 0, 0])
         self.assertIsNone(loaded.level_anchor_steps)
 
+    def test_recalibrate_command_clears_all_motion_calibration(self) -> None:
+        self.session.results.level_trim_roll_deg = 1.25
+        self.session.results.level_trim_pitch_deg = -0.75
+        self.session.results.motor_trim_steps = [10, -20, 30]
+        self.session.results.level_anchor_steps = [1, 2, 3]
+        self.session.results.level_anchor_model = {
+            "roll_deg": 0.0,
+            "pitch_deg": 0.0,
+            "heave_mm": 0.0,
+            "model_steps": [1, 2, 3],
+        }
+        with patch("stewart_exp_tune.calibrate", return_value=self.link._status) as run:
+            self.session.recalibrate_motors()
+        run.assert_called_once_with(self.link)
+        self.assertEqual(self.session.results.motor_trim_steps, [0, 0, 0])
+        self.assertEqual(self.session.results.level_trim_roll_deg, 0.0)
+        self.assertEqual(self.session.results.level_trim_pitch_deg, 0.0)
+        self.assertIsNone(self.session.results.level_anchor_steps)
+        self.assertIsNotNone(self.session.current)
+        loaded = TuningResults.load(self.session.results_path)
+        self.assertEqual(loaded.motor_trim_steps, [0, 0, 0])
+
 
 if __name__ == "__main__":
     unittest.main()

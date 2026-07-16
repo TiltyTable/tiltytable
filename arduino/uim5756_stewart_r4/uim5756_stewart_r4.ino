@@ -5,7 +5,7 @@
   Host software owns all IK, heave optimization, and branch continuity.
   This sketch only calibrates, gates, validates, and executes absolute steps.
 
-  115200 baud, newline terminated:
+  230400 baud, newline terminated:
     EXP?
     STATUS
     CAL BEGIN
@@ -137,8 +137,19 @@ bool anyAxisEnabled() {
 }
 
 void holdCurrent() {
+  // Request every stop first so all axes decelerate together. Do not snapshot
+  // coordinates until every timer-driven ramp has actually finished.
   for (uint8_t axis = 0; axis < AXES; axis++) {
     stepper[axis]->stop();
+  }
+  bool stopping = true;
+  while (stopping) {
+    stopping = false;
+    for (uint8_t axis = 0; axis < AXES; axis++) {
+      if (stepper[axis]->moving()) stopping = true;
+    }
+  }
+  for (uint8_t axis = 0; axis < AXES; axis++) {
     desiredTarget[axis] = stepper[axis]->readSteps();
   }
   setEnable(true);
@@ -391,7 +402,14 @@ void handleCommand(String command) {
       calibrated = false;
       restored = false;
       clearPersisted();
-      for (uint8_t axis = 0; axis < AXES; axis++) axisMarked[axis] = false;
+      currentRollDeg = 0.0;
+      currentPitchDeg = 0.0;
+      currentHeaveMm = 30.0;
+      for (uint8_t axis = 0; axis < AXES; axis++) {
+        stepper[axis]->setZero();
+        desiredTarget[axis] = 0;
+        axisMarked[axis] = false;
+      }
       Serial.println(F("OK CAL BEGIN"));
     } else if (action == "JOG" && count == 4) {
       uint8_t axis;
@@ -503,7 +521,7 @@ void handleCommand(String command) {
 
 void setup() {
   captureResetStatus();
-  Serial.begin(115200);
+  Serial.begin(230400);
 
   // Disable every external motor driver before configuring timer-driven STEP
   // outputs. This prevents startup pulses from moving a loaded platform.

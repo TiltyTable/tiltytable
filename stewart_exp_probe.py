@@ -29,9 +29,11 @@ from analysis.stewart_exp_kinematics import (
     calibrated_solution,
     circle_targets,
     endpoint_heave_range,
+    experimental_geometry,
     linear_targets,
     plan_circle,
     plan_targets,
+    reconstruct_pose_from_cranks,
     steps_to_crank_deg,
 )
 from stewart_supervisor_client import DEFAULT_SOCKET, StewartSupervisorClient
@@ -65,17 +67,12 @@ class ExpStatus:
         model_steps = tuple(
             self.steps[axis] - step_offsets[axis] for axis in range(3)
         )
-        return PoseSolution(
-            roll_deg=self.roll_deg,
-            pitch_deg=self.pitch_deg,
-            heave_mm=self.heave_mm,
-            crank_deg=tuple(steps_to_crank_deg(value) for value in model_steps),
-            branch_index=(0, 0, 0),
-            closure_margin_mm=0.0,
-            worst_advisory_joint_deg=0.0,
-            max_crank_delta_deg=0.0,
-            dead_center_margin_deg=0.0,
-            max_static_torque_nm=0.0,
+        return reconstruct_pose_from_cranks(
+            experimental_geometry(),
+            tuple(steps_to_crank_deg(value) for value in model_steps),
+            initial_roll_deg=self.roll_deg,
+            initial_pitch_deg=self.pitch_deg,
+            initial_heave_mm=self.heave_mm,
         )
 
 
