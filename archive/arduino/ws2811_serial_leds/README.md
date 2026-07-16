@@ -17,7 +17,7 @@ Keep the Arduino ground and the LED supply ground connected together. A
 ## Upload
 
 ```bash
-sudo ~/bin/arduino-cli compile --fqbn arduino:avr:uno --upload -p /dev/ttyACM0 arduino/ws2811_serial_leds
+sudo ~/bin/arduino-cli compile --fqbn arduino:avr:uno --upload -p /dev/ttyACM0 archive/arduino/ws2811_serial_leds
 ```
 
 The sketch needs the `Adafruit_NeoPixel` Arduino library.
@@ -34,15 +34,15 @@ to play a full self-test, or pass a test name to debug a specific thing.
 
 ```bash
 # Full self-test: rgb check -> wipe -> chase -> rainbow -> blink -> off
-python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0
+python3 archive/arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0
 
 # Individual tests
-python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 all red
-python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 index 17 cyan
-python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 rainbow
-python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 rgb     # verify color order
-python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 count   # count LEDs one by one
-python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 off
+python3 archive/arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 all red
+python3 archive/arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 index 17 cyan
+python3 archive/arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 rainbow
+python3 archive/arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 rgb     # verify color order
+python3 archive/arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 count   # count LEDs one by one
+python3 archive/arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 off
 
 # Useful flags
 --brightness 0-255   software brightness scaling (default 255)
@@ -59,8 +59,8 @@ Colors accept a name (`off`, `red`, `orange`, `yellow`, `green`, `cyan`,
 `led_write.py` pushes a fixed picture from `led_colors.txt` to the strip:
 
 ```bash
-python3 arduino/ws2811_serial_leds/led_write.py --port /dev/ttyACM0
-python3 arduino/ws2811_serial_leds/led_write.py --port /dev/ttyACM0 --file arduino/ws2811_serial_leds/led_colors.txt
+python3 archive/arduino/ws2811_serial_leds/led_write.py --port /dev/ttyACM0
+python3 archive/arduino/ws2811_serial_leds/led_write.py --port /dev/ttyACM0 --file archive/arduino/ws2811_serial_leds/led_colors.txt
 ```
 
 ## Serial protocol

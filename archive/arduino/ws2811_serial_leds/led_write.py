@@ -154,7 +154,7 @@ def main():
     parser = argparse.ArgumentParser(description="Send 16 LED colors to the Arduino WS2811 serial controller.")
     parser.add_argument("--port", required=True, help="Arduino serial port, like /dev/ttyACM0 or /dev/ttyUSB0")
     parser.add_argument("--baud", type=int, default=115200, choices=BAUD_RATES.keys())
-    parser.add_argument("--file", default="arduino/ws2811_serial_leds/led_colors.txt", help="Color text file")
+    parser.add_argument("--file", default="archive/arduino/ws2811_serial_leds/led_colors.txt", help="Color text file")
     parser.add_argument("--no-reset-wait", action="store_true", help="Do not wait for Arduino READY after opening serial")
     args = parser.parse_args()
 

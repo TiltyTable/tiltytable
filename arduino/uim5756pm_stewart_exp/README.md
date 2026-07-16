@@ -1,6 +1,7 @@
-# Experimental full-rotation Stewart executor
+# Legacy Uno R3 Stewart executor
 
-This is the live Stewart firmware. It accepts
+This is retained only for an Uno R3 hardware rollback. The live Uno R4 WiFi
+firmware and upload instructions are in `../uim5756_stewart_r4/`. It accepts
 host-computed absolute motor steps while `stewart_exp_probe.py` performs
 dual-branch IK, free-heave optimization, and path continuity.
 
@@ -150,7 +151,9 @@ aggregation without changing the production roller tool.
 The agile IK objective prioritizes shortest continuous crank travel and minimum
 heave motion; torque/dead-center/closure metrics remain secondary constraints.
 The tuning CLI uses adaptive 0.5–1.5° waypoints and waits only at requested
-endpoints rather than after every waypoint.
+endpoints rather than after every waypoint. Physical level is different:
+free-heave/dual-branch IK makes model `(roll=0, pitch=0)` non-unique, so level
+return uses a saved absolute crank-step anchor instead of solving IK.
 
 ## Game tuning CLI
 
@@ -191,22 +194,28 @@ is the largest directional result plus 0.1° (override with
 
 If model level is not physically level, keep the motors enabled, use small
 `nudge roll/pitch` commands until a physical level is observed, then run
-`trim level`. Future `level`, threshold, and agility commands use that stored
-pose as zero without releasing motors or recalibrating crank vertical.
+`trim level`. This captures the current firmware `STATUS` steps plus model
+roll/pitch/heave metadata. Future `level`, threshold, agility, and experimental
+roller startup return to those exact steps in firmware-safe chunks (maximum
+12° crank change per `TARGET`) and wait only at the final endpoint.
 
 For per-motor adjustment with the other two motors actively holding, run
 `motorcal` (all axes) or `motorcal 0`/`1`/`2`. Arrow keys adjust 20 pulses fine
-or 100 pulses coarse; Enter accepts that motor. The saved `motor_trim_steps`
-are applied to every future tuning and experimental roller target.
+or 100 pulses coarse; Enter accepts that motor. A completed motor calibration
+captures the exact resulting steps as the canonical physical-level anchor.
+The saved `motor_trim_steps` remain only as the model-to-physical differential
+offset for later IK targets; they are never added to an absolute level return.
+A fresh crank calibration clears both trims and the old anchor because their
+coordinate frame is no longer valid.
 
 Agility tests use the active runtime profile, time each ±position reversal,
 then record operator rating/notes. Change profiles without reflashing using
 `profile speed accel`. Errors and Ctrl-C hold; they never disable.
 
-## Return to production
+## Return to the live R4 firmware
 
 1. Mechanically support the table.
-2. Flash `arduino/uim5756pm_stewart`.
-3. Recalibrate before production motion.
+2. Flash `arduino/uim5756_stewart_r4` for the Uno R4 WiFi.
+3. Recalibrate before motion.
 
 Do not hand experimental multi-turn step coordinates to the production solver.

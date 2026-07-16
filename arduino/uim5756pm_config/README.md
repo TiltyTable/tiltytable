@@ -1,6 +1,6 @@
 # UIM5756PM one-motor MCS configurator
 
-Dedicated Uno R3 firmware for changing one connected UIM5756PM motor's MCS
+Dedicated Uno R4 WiFi firmware for changing one connected UIM5756PM motor's MCS
 without Windows. It disables all Stewart ENA outputs and never generates STEP
 pulses. The experimental stack currently targets **MCS=4**; production still
 targets MCS=8.
@@ -12,7 +12,7 @@ Protocol was derived from the official UIROBOT CFG344 v250730 executable:
 
 Connect exactly one motor's UART cable at a time:
 
-| Motor wire | Uno R3 |
+| Motor wire | Uno R4 WiFi |
 | --- | --- |
 | White TX | A4 (software UART RX) |
 | Green RX | A5 (software UART TX) |
@@ -25,9 +25,9 @@ cycling, or unplugging any controller.
 ## Upload
 
 ```bash
-arduino-cli compile --fqbn arduino:avr:uno arduino/uim5756pm_config
+arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi arduino/uim5756pm_config
 arduino-cli upload -p /dev/arduino-stewart \
-  --fqbn arduino:avr:uno arduino/uim5756pm_config
+  --fqbn arduino:renesas_uno:unor4wifi arduino/uim5756pm_config
 arduino-cli monitor -p /dev/arduino-stewart -c baudrate=115200
 ```
 

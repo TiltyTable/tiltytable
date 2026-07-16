@@ -4,8 +4,8 @@ import math
 import os
 import select
 import sys
+import termios
 import time
-from pathlib import Path
 
 import numpy as np
 from pyk4a import (
@@ -47,10 +47,46 @@ DEPTH_PIXEL_WINDOW = 1
 MIN_VALID_DEPTH_PIXELS = 1
 
 
-SERVO_DIR = Path(__file__).resolve().parent / "arduino" / "archive" / "pca9685_serial_servo"
-sys.path.insert(0, str(SERVO_DIR))
+BAUD_RATES = {
+    9600: termios.B9600,
+    19200: termios.B19200,
+    38400: termios.B38400,
+    57600: termios.B57600,
+    115200: termios.B115200,
+}
 
-from servo_write import BAUD_RATES, configure_serial, wait_for_ready  # noqa: E402
+
+def configure_serial(fd: int, baud: int) -> None:
+    """Configure the optional depth-servo serial link without archive code."""
+    attrs = termios.tcgetattr(fd)
+    attrs[0] = 0
+    attrs[1] = 0
+    attrs[2] = termios.CLOCAL | termios.CREAD | termios.CS8
+    attrs[3] = 0
+    attrs[4] = BAUD_RATES[baud]
+    attrs[5] = BAUD_RATES[baud]
+    attrs[6][termios.VMIN] = 0
+    attrs[6][termios.VTIME] = 5
+    termios.tcsetattr(fd, termios.TCSANOW, attrs)
+    termios.tcflush(fd, termios.TCIOFLUSH)
+
+
+def wait_for_ready(fd: int, seconds: float) -> str:
+    """Collect startup serial text until READY appears or time expires."""
+    deadline = time.monotonic() + seconds
+    chunks: list[bytes] = []
+    while time.monotonic() < deadline:
+        timeout = min(0.05, max(0.0, deadline - time.monotonic()))
+        ready, _, _ = select.select([fd], [], [], timeout)
+        if not ready:
+            continue
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        if b"READY" in b"".join(chunks):
+            break
+    return b"".join(chunks).decode("utf-8", errors="replace")
 
 
 DEPTH_COLOR_RESOLUTIONS = {

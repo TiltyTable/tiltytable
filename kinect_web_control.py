@@ -25,6 +25,7 @@ from pyk4a import (
 )
 
 from depth_servo_control import (
+    BAUD_RATES,
     DEPTH_PIXEL_WINDOW,
     MIN_VALID_DEPTH_PIXELS,
     SERVO_CHANNELS,
@@ -49,9 +50,6 @@ from live_capture_viewer import (
     get_depth,
     set_display,
 )
-from servo_write import BAUD_RATES
-
-
 ROOT_DIR = Path(__file__).resolve().parent
 WEB_DIR = ROOT_DIR / "web"
 APP_CONFIG_PATH = ROOT_DIR / "config.json"

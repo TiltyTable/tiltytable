@@ -1,5 +1,5 @@
 /*
-  UIM5756PM one-motor UART configuration tool (Uno R3)
+  UIM5756PM one-motor UART configuration tool (Uno R4 WiFi)
 
   This dedicated sketch NEVER generates STEP pulses and forces all three
   Stewart ENA outputs inactive. Connect exactly one motor's configuration
@@ -56,7 +56,6 @@ void disableAllDrivers() {
 }
 
 void clearMotorRx() {
-  motorUart.listen();
   while (motorUart.available()) motorUart.read();
 }
 

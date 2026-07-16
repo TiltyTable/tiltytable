@@ -65,7 +65,7 @@ provided on the command line.
 Both public Python programs use the same existing Arduino firmware:
 
 ```text
-arduino/uim5756pm_stewart_exp/uim5756pm_stewart_exp.ino
+arduino/uim5756_stewart_r4/uim5756_stewart_r4.ino
 ```
 
 That firmware remains a calibration-gated absolute-step executor. It does not
@@ -157,6 +157,19 @@ reset or compete with the permanent supervisor and used a different geometry
 and protocol. `archive/stewart_legacy/README.md` records the boundary and the
 risk. Root and firmware documentation now point to the supervisor-owned stack.
 
+### Game-path and Arduino archive cleanup
+
+- Rebuilt the root `README.md` around the actual game path: the two Arduino
+  images, four long-running host processes, calibration order, ownership rules,
+  and exact live-game startup commands.
+- Removed the last active import of archived
+  `pca9685_serial_servo/servo_write.py`. `depth_servo_control.py` now owns its
+  small baud-rate, termios, and ready-wait helpers, and
+  `kinect_web_control.py` imports those helpers from the active module.
+- Moved all retired sketches and tools from `arduino/archive/` to
+  `archive/arduino/`, and updated their internal example paths. Nothing under
+  that directory is imported by the active game.
+
 ## Running the controllers
 
 Start the persistent serial supervisor if it is not already running:
@@ -196,19 +209,41 @@ The implementation was checked with:
 
 ```bash
 .venv/bin/python3 -m unittest discover -s tests -v
-.venv/bin/python3 -m compileall -q -x '/camera/mvsdk.py$' .
-arduino-cli compile --fqbn arduino:avr:uno \
-  arduino/uim5756pm_stewart_exp
+.venv/bin/python3 -m compileall -q -x '(^|/)(archive|camera/mvsdk.py)' .
+arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi \
+  arduino/uim5756_stewart_r4
 ```
 
-All 127 discovered unit tests reported `OK`, including the new supervisor
-startup-state and zero/non-zero/zero regressions. The process then aborted
-during interpreter teardown after the existing control-center test attempted
-to probe unavailable `/dev/video0` OpenCV/V4L2 devices. The focused Stewart
-suites exit cleanly, and Python byte-compilation plus the live Arduino build
-exit successfully.
+The 41 focused Stewart IK, controller, supervisor, and tuning tests report
+`OK`. The R4 executor and R4 motor configurator compile for
+`arduino:renesas_uno:unor4wifi`; the retained rollback sketch also compiles for
+`arduino:avr:uno`. Python byte-compilation exits successfully. Hardware motion
+and reset-state restoration were not exercised on the loaded platform.
 
 Hardware motion was not performed during this change. The first live run should
 be mechanically supported, limited to 2 degrees, and checked for axis signs,
 missed steps, branch clearance, and repeatable physical level before increasing
 the envelope or speed.
+
+## Uno R4 WiFi migration
+
+The Stewart controller was subsequently replaced with the connected Uno R4
+WiFi (`arduino:renesas_uno:unor4wifi`, USB `2341:1002`, serial
+`3CDC75443C14`). The active executor now lives in
+`arduino/uim5756_stewart_r4/`; the R3 sketch is retained only for rollback.
+
+- Preserved the PLS/DIR/ENA pin mapping, MCS=4 scale, safety gates, target-jump
+  limit, and supervisor wire protocol.
+- Replaced AVR `MCUSR`, `.noinit`, `.init3`, and watchdog handling with RA4M1
+  reset-status capture. Unsafe resets cannot restore open-loop coordinates.
+- Updated the one-motor MCS configurator for the R4 SoftwareSerial API.
+- Updated the udev identity, FQBNs, active firmware paths, and operator docs.
+- Replaced polling-based AccelStepper in the R4 executor with MobaTools 3.1.0.
+  Its RA4M1 backend allocates a GPT timer and services all three STEP/DIR axes
+  independently of the serial loop. Proportional per-axis speed and ramp
+  profiles preserve live 60 Hz retargeting, which `MoToSyncStepper` does not
+  allow while a synchronized move is active.
+- Kept the validated 40°/s default and 90°/s maximum. At MCS=4 those are about
+  1,778 and 4,000 pulses/s; the R4 timer backend removes polling as the likely
+  limit, while motor torque, load, gearbox behavior, and open-loop missed steps
+  remain practical constraints.

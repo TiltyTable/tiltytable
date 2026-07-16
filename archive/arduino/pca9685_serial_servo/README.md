@@ -60,15 +60,15 @@ ls /dev/ttyACM* /dev/ttyUSB*
 Send a position with the included helper:
 
 ```bash
-python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 90
-python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --channel 3 45
-python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --pulse-us 1500
+python3 archive/arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 90
+python3 archive/arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --channel 3 45
+python3 archive/arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --pulse-us 1500
 ```
 
 Initialize all servos from a calibration file:
 
 ```bash
-python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --calib arduino/pca9685_serial_servo/calib.txt
+python3 archive/arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --calib archive/arduino/pca9685_serial_servo/calib.txt
 ```
 
 The calibration file is one `servo_index,neutral_angle` pair per line. Angles
@@ -78,8 +78,8 @@ wait for each Arduino response before sending the next channel.
 Run a repeating servo game from a file:
 
 ```bash
-python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --game arduino/pca9685_serial_servo/game.txt
-python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --calib arduino/pca9685_serial_servo/calib.txt --game arduino/pca9685_serial_servo/game.txt
+python3 archive/arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --game archive/arduino/pca9685_serial_servo/game.txt
+python3 archive/arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --calib archive/arduino/pca9685_serial_servo/calib.txt --game archive/arduino/pca9685_serial_servo/game.txt
 ```
 
 The game file is one `servo_index,angle_1,angle_2,period` pair per line. Each
@@ -91,8 +91,8 @@ initialization step, then the game loop begins.
 Control one servo at a time from the keyboard:
 
 ```bash
-python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --interactive
-python3 arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --interactive --calib arduino/pca9685_serial_servo/calib.txt
+python3 archive/arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --interactive
+python3 archive/arduino/pca9685_serial_servo/servo_write.py --port /dev/ttyACM0 --interactive --calib archive/arduino/pca9685_serial_servo/calib.txt
 ```
 
 In interactive mode, left/right selects the previous/next PCA9685 channel, and
@@ -123,5 +123,5 @@ sudo chmod a+rw /dev/ttyACM0
 Upload to an Uno with:
 
 ```bash
-sudo ~/bin/arduino-cli compile --fqbn arduino:avr:uno --upload -p /dev/ttyACM0 arduino/pca9685_serial_servo
+sudo ~/bin/arduino-cli compile --fqbn arduino:avr:uno --upload -p /dev/ttyACM0 archive/arduino/pca9685_serial_servo
 ```

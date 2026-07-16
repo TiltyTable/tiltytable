@@ -2,7 +2,7 @@
 """Shared host control for the experimental Stewart step executor.
 
 Both public controllers use the same Arduino firmware:
-``arduino/uim5756pm_stewart_exp/uim5756pm_stewart_exp.ino``.  The firmware is
+``arduino/uim5756_stewart_r4/uim5756_stewart_r4.ino``.  The firmware is
 an absolute-step executor; this module owns IK, free-heave selection, trackball
 event decoding, calibration, arming, and safe hold-on-exit behavior.
 """
@@ -419,8 +419,8 @@ def confirm_motion(args: argparse.Namespace, mode: str, device: Path) -> bool:
     print(f"STEWART PLATFORM {mode.upper()} CONTROL")
     print(f"trackball={device} max_tilt={args.max_tilt:g}°")
     print(
-        "Shared firmware: arduino/uim5756pm_stewart_exp/"
-        "uim5756pm_stewart_exp.ino"
+        "Shared firmware: arduino/uim5756_stewart_r4/"
+        "uim5756_stewart_r4.ino"
     )
     if any(args.step_offsets):
         print(f"explicit motor step offsets={tuple(args.step_offsets)}")

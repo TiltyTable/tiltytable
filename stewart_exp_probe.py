@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Supervised full-rotation/free-heave Stewart experiment.
 
-This tool only speaks to ``uim5756pm_stewart_exp`` firmware through the
+This tool only speaks to ``uim5756_stewart_r4`` firmware through the
 persistent Stewart supervisor. Dry-run and envelope modes do not connect to
 hardware. Live modes begin from the motor-position snapshot returned by the
 supervisor, then perform planning, motion, logging, and final hold.

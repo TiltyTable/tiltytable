@@ -9,17 +9,17 @@ full self-test sequence, or pick an individual test to debug wiring.
 Examples
 --------
     # Full automatic self-test (rgb -> wipe -> chase -> rainbow -> blink -> off)
-    python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0
+    python3 archive/arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0
 
     # Light the whole strip solid red, dimmed to 30%
-    python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 all red --brightness 76
+    python3 archive/arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 all red --brightness 76
 
     # Find a single LED by index
-    python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 index 17 cyan
+    python3 archive/arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 index 17 cyan
 
     # Verify color order / count physical LEDs one at a time
-    python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 rgb
-    python3 arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 count
+    python3 archive/arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 rgb
+    python3 archive/arduino/ws2811_serial_leds/led_test.py --port /dev/ttyACM0 count
 """
 import argparse
 import os
