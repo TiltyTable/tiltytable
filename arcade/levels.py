@@ -29,6 +29,8 @@ class Level:
     warn_seconds: float | None = None
     points_per_tile: int | None = None
     pit_confirm_seconds: float | None = None
+    mode_params: dict[str, Any] | None = None
+    seed: int = 1
 
     @property
     def is_survival_lava(self) -> bool:
@@ -50,6 +52,8 @@ class Level:
         }
         if self.mode:
             payload["mode"] = self.mode
+            payload["modeParams"] = dict(self.mode_params or {})
+            payload["seed"] = self.seed
         if self.is_survival_lava:
             payload["survivalSeconds"] = self.survival_seconds
             payload["dwellSeconds"] = self.dwell_seconds
@@ -96,6 +100,14 @@ def load_levels(path: Path = MANIFEST_PATH) -> LevelCatalog:
         if not map_path.exists():
             raise ValueError(f"{level_id}: map does not exist: {map_path}")
         mode = str(item["mode"]) if item.get("mode") else None
+        mode_params = dict(item.get("modeParams", {}))
+        if mode == "survival_lava" and not mode_params:
+            for key in (
+                "survivalSeconds", "dwellSeconds", "warnSeconds",
+                "pointsPerTile", "pitConfirmSeconds",
+            ):
+                if item.get(key) is not None:
+                    mode_params[key] = item[key]
         level = Level(
             id=level_id,
             number=int(item["number"]),
@@ -127,6 +139,8 @@ def load_levels(path: Path = MANIFEST_PATH) -> LevelCatalog:
                 if item.get("pitConfirmSeconds") is not None
                 else None
             ),
+            mode_params=mode_params,
+            seed=int(item.get("seed", 1)),
         )
         validate_level(level)
         levels.append(level)
@@ -177,6 +191,8 @@ def validate_level(level: Level) -> None:
             raise ValueError(
                 f"{level.id}: timeLimitSeconds must be >= survivalSeconds"
             )
+    if level.mode in ("hex_fall", "target_hunt") and not level.mode_params:
+        raise ValueError(f"{level.id}: {level.mode} requires modeParams")
 
 
 def load_map(level: Level) -> dict[str, dict[str, Any]]:

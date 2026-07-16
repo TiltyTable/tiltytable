@@ -1,6 +1,7 @@
 # Progress
 
 ## Completed
+- [x] Browser arcade Mode Forge: portable LevelPackage schema/compiler, Hex Fall + Target Hunt runtimes, 12×12 editor, deterministic simulation, JSON import/export, editor route, and tests.
 - [x] Canonical experimental physical-level anchor: exact absolute step persistence, 12°-bounded endpoint-wait return, differential-only trim validation, roller neutral integration, and fresh-calibration invalidation.
 - [x] Maximum-agility pipeline flashed: 60 Hz pipelined roller targets, adaptive endpoint-only tuning moves, crank/heave-first IK, cached AccelStepper profiles, bounded serial parsing, and axis-2-aligned cardinal frame.
 - [x] Supervisor-based Stewart game tuning CLI: manual directional ball-roll thresholds, runtime speed/acceleration profiles, supervised agility reversals, and persisted tuning results.

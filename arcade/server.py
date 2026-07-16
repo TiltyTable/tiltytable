@@ -16,6 +16,7 @@ from .levels import load_levels
 from .storage import ScoreStore
 
 STATIC_DIR = Path(__file__).with_name("static")
+EDITOR_DIR = Path(__file__).with_name("editor")
 
 
 def create_app(
@@ -61,6 +62,15 @@ def create_app(
     @app.get("/PressStart2P-Regular.ttf")
     def pixel_font():
         return send_from_directory(STATIC_DIR, "PressStart2P-Regular.ttf")
+
+    @app.get("/editor")
+    @app.get("/editor/")
+    def editor_index():
+        return send_from_directory(EDITOR_DIR, "index.html")
+
+    @app.get("/editor/<path:filename>")
+    def editor_asset(filename: str):
+        return send_from_directory(EDITOR_DIR, filename)
 
     @app.get("/api/state")
     def state():

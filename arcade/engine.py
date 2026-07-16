@@ -10,6 +10,7 @@ from typing import Any, Callable
 from .ball_adapters import HttpKinectBallAdapter
 from .hardware import BaseTableHardware, HardwareError
 from .integrations import BallTrackingAdapter
+from .game_modes import start_mode, tick_mode
 from .levels import Level, LevelCatalog, load_map
 from .storage import ScoreStore
 from .survival_lava import (
@@ -99,6 +100,9 @@ class GameEngine:
         self._survival_ball_cell: str | None = None
         self._survival_heating = False
         self._last_survival_tick = 0.0
+        self._mode_session: Any | None = None
+        self._mode_state: dict[str, Any] | None = None
+        self._mode_score = 0
 
     @property
     def current_level(self) -> Level:
@@ -202,6 +206,8 @@ class GameEngine:
             self.attempt_started_at = self.clock()
             self._last_survival_tick = 0.0
             if self.current_level.is_survival_lava:
+                self._mode_session = None
+                self._mode_state = None
                 self._survival = SurvivalLavaSession(
                     params=SurvivalParams(
                         survival_seconds=float(self.current_level.survival_seconds or 0),
@@ -222,8 +228,23 @@ class GameEngine:
                 self._survival_ball_cell = None
                 self._survival_heating = False
                 self._neutralize_survival_start_cell()
+            elif self.current_level.mode in ("hex_fall", "target_hunt"):
+                self._survival = None
+                self._mode_session = start_mode(
+                    self.current_level.mode,
+                    dict(self.current_level.mode_params or {}),
+                    seed=self.current_level.seed,
+                    now=self.attempt_started_at,
+                    cells={cell["key"]: dict(cell) for cell in self.map_cells},
+                    row_col=self._row_col_by_key,
+                    ball_cell=self._current_ball_cell(),
+                )
+                self._mode_state = {}
+                self._mode_score = 0
             else:
                 self._survival = None
+                self._mode_session = None
+                self._mode_state = None
             self.state = GameState.PLAYING
 
     def restart(self) -> None:
@@ -246,8 +267,8 @@ class GameEngine:
             if self.state != GameState.PLAYING:
                 raise ValueError("A level is not currently running")
             level = self.current_level
-            if level.is_survival_lava:
-                raise ValueError("Survival chambers clear automatically when the timer ends")
+            if level.mode in ("survival_lava", "hex_fall", "target_hunt"):
+                raise ValueError("Dynamic mode chambers resolve automatically")
             remaining = max(0, math.floor(self._remaining_seconds()))
             elapsed_ms = self._finish_attempt_elapsed()
             score = max(0, 1000 + remaining * 10 - self.current_restarts * 100)
@@ -283,6 +304,24 @@ class GameEngine:
         self.last_level_result = result
         self.hardware.pause()
         self._survival = None
+        self.state = GameState.LEVEL_CLEAR
+
+    def _complete_dynamic_mode_win(self) -> None:
+        level = self.current_level
+        remaining = max(0, math.floor(self._remaining_seconds()))
+        elapsed_ms = self._finish_attempt_elapsed()
+        result = LevelResult(
+            level_id=level.id,
+            level_number=level.number,
+            score=max(0, self._mode_score),
+            remaining_seconds=remaining,
+            elapsed_ms=elapsed_ms,
+            restarts=self.current_restarts,
+        )
+        self.results.append(result)
+        self.last_level_result = result
+        self.hardware.pause()
+        self._mode_session = None
         self.state = GameState.LEVEL_CLEAR
 
     def abandon(self) -> None:
@@ -321,6 +360,8 @@ class GameEngine:
                 level = self.current_level
                 if level.is_survival_lava and self._survival is not None:
                     self._tick_survival_lava()
+                elif level.mode in ("hex_fall", "target_hunt") and self._mode_session is not None:
+                    self._tick_dynamic_mode()
                 elif self._remaining_seconds() <= 0:
                     self._finish_attempt_elapsed()
                     self.current_restarts += 1
@@ -365,6 +406,41 @@ class GameEngine:
 
         if result.survived:
             self._complete_survival_win()
+
+    def _tick_dynamic_mode(self) -> None:
+        now = self.clock()
+        if now - self._last_survival_tick < 0.1 or self._mode_session is None:
+            return
+        self._last_survival_tick = now
+        level = self.current_level
+        confidence = (
+            self.ball_adapter.tracking_confidence()
+            if isinstance(self.ball_adapter, HttpKinectBallAdapter)
+            else None
+        )
+        result = tick_mode(
+            str(level.mode),
+            self._mode_session,
+            dict(level.mode_params or {}),
+            seed=level.seed,
+            ball_cell=self._current_ball_cell(),
+            now=now,
+            row_col=self._row_col_by_key,
+            tracking_confidence=confidence,
+        )
+        self._mode_state = result.public_state
+        self._mode_score = result.score
+        if result.hardware_updates:
+            self.hardware.apply_cell_updates(result.hardware_updates)
+            self._apply_map_cell_updates(result.hardware_updates)
+        if result.lost:
+            self._finish_attempt_elapsed()
+            self.current_restarts += 1
+            self.hardware.pause()
+            self._mode_session = None
+            self.state = GameState.SURVIVAL_FAIL
+        elif result.won:
+            self._complete_dynamic_mode_win()
 
     def _current_ball_cell(self) -> str | None:
         if self.ball_adapter is None:
@@ -464,6 +540,7 @@ class GameEngine:
                     "running": self.state == GameState.PLAYING,
                 },
                 "survival": survival_payload,
+                "modeState": self._mode_state,
                 "score": sum(result.score for result in self.results),
                 "levelsCleared": len(self.results),
                 "restarts": self.current_restarts,
@@ -518,6 +595,9 @@ class GameEngine:
                 cell["color"] = "#00FFFF"
             elif cell["key"] == level.end_cell:
                 cell["color"] = "#680056"
+        self._mode_session = None
+        self._mode_state = None
+        self._mode_score = 0
         self.state = GameState.RESTARTING if restarting else GameState.LEVEL_LOADING
         try:
             self.hardware.load_level(level.map_path, level.start_cell, level.end_cell)
@@ -598,3 +678,6 @@ class GameEngine:
         self._survival_visited = 0
         self._survival_ball_cell = None
         self._survival_heating = False
+        self._mode_session = None
+        self._mode_state = None
+        self._mode_score = 0

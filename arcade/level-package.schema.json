@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://tiltytable.github.io/schema/level-package-v1.json",
+  "title": "TiltyTable LevelPackage",
+  "type": "object",
+  "required": ["version", "seed", "meta", "mode", "modeParams", "cells"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "const": 1 },
+    "seed": { "type": "integer" },
+    "mode": {
+      "enum": ["reach_end", "survival_lava", "hex_fall", "target_hunt"]
+    },
+    "modeParams": { "type": "object" },
+    "meta": {
+      "type": "object",
+      "required": [
+        "id", "number", "title", "subtitle", "timeLimitSeconds",
+        "startCell", "endCell", "feature", "rules", "kenLine", "trollLine"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "number": { "type": "integer", "minimum": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "subtitle": { "type": "string", "minLength": 1 },
+        "timeLimitSeconds": { "type": "number", "exclusiveMinimum": 0 },
+        "startCell": { "type": "string", "pattern": "^[A-L](?:[1-9]|1[0-2])$" },
+        "endCell": { "type": "string", "pattern": "^[A-L](?:[1-9]|1[0-2])$" },
+        "feature": { "type": "string", "minLength": 1 },
+        "rules": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "kenLine": { "type": "string", "minLength": 1 },
+        "trollLine": { "type": "string", "minLength": 1 }
+      }
+    },
+    "cells": {
+      "type": "object",
+      "minProperties": 144,
+      "maxProperties": 144,
+      "patternProperties": {
+        "^[A-L](?:[1-9]|1[0-2])$": {
+          "type": "object",
+          "required": ["value", "color"],
+          "properties": {
+            "value": { "enum": [-1, 0, 1] },
+            "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+            "blinkUntilPlay": { "type": "boolean" },
+            "dynamic": { "type": "object" }
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

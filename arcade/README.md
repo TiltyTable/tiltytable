@@ -52,6 +52,45 @@ Before starting, the launcher verifies the HTTP port, all level maps referenced
 in `arcade/levels.json`, and—in live mode—the module serial alias plus complete
 144-cell LED/servo calibration.
 
+## Browser level and mode editor
+
+With the arcade server running, open:
+
+```text
+http://127.0.0.1:8080/editor
+```
+
+The browser-only Mode Forge edits a portable `LevelPackage` containing level
+metadata, lore copy, mode parameters, deterministic RNG seed, and all 144 tile
+cells. It never writes Jetson files directly.
+
+Supported modes:
+
+- `reach_end`
+- `survival_lava`
+- `hex_fall` (Hex-A-Gone-style touched/collapsing floor)
+- `target_hunt` (Snake-style timed targets that add permanent pits/walls)
+
+Editor features include paint/drag/fill/eyedropper, undo/redo, start/end
+markers, dynamic cell inspection, JSON import/download, validation, simulated
+ball-cell movement, and a deterministic time scrubber.
+
+Validate or install a downloaded package explicitly:
+
+```bash
+python3 -m arcade.level_packages validate ~/Downloads/my-level.level.json
+python3 -m arcade.level_packages install ~/Downloads/my-level.level.json
+```
+
+Export an existing runtime level into the editor format:
+
+```bash
+python3 -m arcade.level_packages export level-7 /tmp/level-7.level.json
+```
+
+The schema is `arcade/level-package.schema.json`. Installation compiles the
+package back into an `arcade/levels.json` entry plus `maps/<level-id>.json`.
+
 ## Keyboard
 
 | Key | Action |
