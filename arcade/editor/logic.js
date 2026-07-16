@@ -37,7 +37,17 @@
     }
     return seen;
   }
-  const api = { cellKeys, keyToRowCol, rowColToKey, seededRandom, reachable };
+  function moveCell(start, deltaRow, deltaCol, cells) {
+    const [row, col] = keyToRowCol(start);
+    const nextRow = row + deltaRow, nextCol = col + deltaCol;
+    if (nextRow < 0 || nextRow > 11 || nextCol < 0 || nextCol > 11) {
+      return { key: start, blocked: true };
+    }
+    const key = rowColToKey(nextRow, nextCol);
+    if (cells[key]?.value === 1) return { key: start, blocked: true };
+    return { key, blocked: false };
+  }
+  const api = { cellKeys, keyToRowCol, rowColToKey, seededRandom, reachable, moveCell };
   root.TiltyEditorLogic = api;
   if (typeof module !== "undefined") module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

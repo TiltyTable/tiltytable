@@ -1,388 +1,316 @@
 (() => {
   "use strict";
+  const { cellKeys, seededRandom, reachable, moveCell } = window.TiltyEditorLogic;
+  const $ = (selector) => document.querySelector(selector);
+  const clone = (value) => JSON.parse(JSON.stringify(value));
 
-  const TILE_TYPES = {
+  const TILES = {
     floor: { label: "Floor", value: 0, color: "#567DBB" },
     path: { label: "Path", value: 0, color: "#F49400" },
     wall: { label: "Wall", value: 1, color: "#4DFF00" },
     pit: { label: "Pit", value: -1, color: "#FF0000" },
-    target: { label: "Target", value: 0, color: "#001FFF" },
-    off: { label: "Off", value: 0, color: "#000000" },
   };
-  const MODE_DEFAULTS = {
-    reach_end: {},
-    survival_lava: { survivalSeconds: 40, dwellSeconds: 1.5, warnSeconds: 2, pointsPerTile: 25, pitConfirmSeconds: 0.5 },
-    hex_fall: { survivalSeconds: 45, touchGraceSeconds: 0.35, warnSeconds: 1.25, pitConfirmSeconds: 0.5, collapseEverySeconds: 0, collapseCount: 0 },
-    target_hunt: { startingSeconds: 20, targetBonusSeconds: 5, targetConfirmSeconds: 0.3, pointsPerTarget: 100, spawnPitCount: 1, spawnWallCount: 1 },
+  const MODES = {
+    survival_lava: {
+      label: "Lava Survival",
+      short: "Keep moving while every touched tile heats, warns, then sinks.",
+      steps: ["Touching starts a tile timer.", "Red flashing means leave now.", "Survive until time reaches zero."],
+      defaults: { survivalSeconds: 40, dwellSeconds: 1.2, warnSeconds: 1.4, pointsPerTile: 25, pitConfirmSeconds: 0.5 },
+      fields: [["survivalSeconds", "Survive for"], ["dwellSeconds", "Safe after touch"], ["warnSeconds", "Red warning"]],
+    },
+    hex_fall: {
+      label: "Hex-A-Fall",
+      short: "Tiles disappear behind the ball while random floor sections collapse.",
+      steps: ["Every visited tile falls.", "Random tiles can collapse too.", "Stay on the remaining floor."],
+      defaults: { survivalSeconds: 45, touchGraceSeconds: 0.2, warnSeconds: 0.8, pitConfirmSeconds: 0.5, collapseEverySeconds: 6, collapseCount: 1 },
+      fields: [["survivalSeconds", "Survive for"], ["touchGraceSeconds", "Touch grace"], ["warnSeconds", "Fall warning"], ["collapseEverySeconds", "Random collapse every"], ["collapseCount", "Tiles per collapse"]],
+    },
+    target_hunt: {
+      label: "Snake",
+      short: "Reach flashing targets for time; every success adds a permanent wall and pit.",
+      steps: ["Chase the flashing blue target.", "Targets add time and score.", "Each target makes the board harder."],
+      defaults: { startingSeconds: 20, targetBonusSeconds: 5, targetConfirmSeconds: 0.2, pointsPerTarget: 100, spawnPitCount: 1, spawnWallCount: 1 },
+      fields: [["startingSeconds", "Starting time"], ["targetBonusSeconds", "Time per target"], ["pointsPerTarget", "Points per target"], ["spawnPitCount", "New pits"], ["spawnWallCount", "New walls"]],
+    },
   };
-  const MODE_FIELDS = {
-    survival_lava: [
-      ["survivalSeconds", "Survival seconds"], ["dwellSeconds", "Touch grace"],
-      ["warnSeconds", "Warning seconds"], ["pointsPerTile", "Points / tile"],
-      ["pitConfirmSeconds", "Pit confirm"],
-    ],
-    hex_fall: [
-      ["survivalSeconds", "Survival seconds"], ["touchGraceSeconds", "Touch grace"],
-      ["warnSeconds", "Warning seconds"], ["pitConfirmSeconds", "Pit confirm"],
-      ["collapseEverySeconds", "Collapse interval"], ["collapseCount", "Collapse count"],
-    ],
-    target_hunt: [
-      ["startingSeconds", "Starting seconds"], ["targetBonusSeconds", "Target time bonus"],
-      ["targetConfirmSeconds", "Target confirm"], ["pointsPerTarget", "Points / target"],
-      ["spawnPitCount", "Pits / target"], ["spawnWallCount", "Walls / target"],
-    ],
-  };
-  const cellKeys = Array.from({ length: 12 }, (_, row) =>
-    Array.from({ length: 12 }, (_, col) => `${String.fromCharCode(65 + col)}${row + 1}`)
-  ).flat();
-  const $ = (selector) => document.querySelector(selector);
-  const deepClone = (value) => JSON.parse(JSON.stringify(value));
 
-  function makePackage() {
-    const cells = Object.fromEntries(cellKeys.map((key) => [key, { ...TILE_TYPES.floor }]));
-    Object.values(cells).forEach((cell) => delete cell.label);
+  function newPackage() {
+    const cells = Object.fromEntries(cellKeys.map((key) => [key, { value: 0, color: TILES.floor.color }]));
     return {
       version: 1, seed: 1,
       meta: {
-        id: "new-level", number: 1, title: "New Chamber", subtitle: "Describe this challenge",
+        id: "new-level", number: 1, title: "New Chamber", subtitle: "A physical table challenge",
         timeLimitSeconds: 60, startCell: "A1", endCell: "L12",
-        feature: "Describe what changes on the physical table.",
-        rules: ["Guide the ball through the chamber."],
-        kenLine: "I'll explain the rules when you're ready.",
-        trollLine: "You built this trap yourself!",
+        feature: "Describe what changes on the table.", rules: ["Guide the ball through the chamber."],
+        kenLine: "Watch the table and keep the ball moving.", trollLine: "Let's see how long you last.",
       },
-      mode: "reach_end", modeParams: {}, cells,
+      mode: "survival_lava", modeParams: clone(MODES.survival_lava.defaults), cells,
     };
   }
 
-  let state = makePackage();
+  let level = newPackage();
+  let view = "build";
   let selected = "A1";
-  let activeTool = "paint";
-  let activeTile = "floor";
+  let tile = "floor";
+  let fillMode = false;
+  let setStart = false;
   let dragging = false;
-  let history = [];
-  let future = [];
-  let sim = null;
-  let timer = null;
+  let history = [], future = [];
+  let sim = null, ticker = null;
 
-  function keyToRowCol(key) {
-    const match = /^([A-L])(1[0-2]|[1-9])$/.exec(String(key).toUpperCase());
-    if (!match) throw new Error(`Invalid cell ${key}`);
-    return [Number(match[2]) - 1, match[1].charCodeAt(0) - 65];
-  }
-  function rowColToKey(row, col) {
-    if (row < 0 || row > 11 || col < 0 || col > 11) throw new Error("Cell outside board");
-    return `${String.fromCharCode(65 + col)}${row + 1}`;
-  }
-  function seededRandom(seed) {
-    let value = (Number(seed) || 1) >>> 0;
-    return () => {
-      value = (value * 1664525 + 1013904223) >>> 0;
-      return value / 4294967296;
-    };
-  }
-  function neighbors(key) {
-    const [row, col] = keyToRowCol(key);
-    return [[row - 1, col], [row + 1, col], [row, col - 1], [row, col + 1]]
-      .filter(([r, c]) => r >= 0 && r < 12 && c >= 0 && c < 12)
-      .map(([r, c]) => rowColToKey(r, c));
-  }
-  function reachable(start, cells) {
-    if (!cells[start] || cells[start].value !== 0) return new Set();
-    const seen = new Set([start]), queue = [start];
-    while (queue.length) {
-      const current = queue.shift();
-      neighbors(current).forEach((next) => {
-        if (!seen.has(next) && cells[next].value === 0) { seen.add(next); queue.push(next); }
-      });
-    }
-    return seen;
-  }
+  function pushHistory() { history.push(clone(level)); if (history.length > 60) history.shift(); future = []; }
+  function undo() { if (!history.length) return; future.push(clone(level)); level = history.pop(); resetTest(); render(); }
+  function redo() { if (!future.length) return; history.push(clone(level)); level = future.pop(); resetTest(); render(); }
+  function role(cell) { return cell.value === 1 ? "Wall" : cell.value === -1 ? "Pit" : Object.values(TILES).find((item) => item.color === cell.color)?.label || "Floor"; }
 
-  function snapshot() {
-    history.push(deepClone(state));
-    if (history.length > 80) history.shift();
-    future = [];
-  }
-  function undo() {
-    if (!history.length) return;
-    future.push(deepClone(state)); state = history.pop(); resetSimulation(); renderAll();
-  }
-  function redo() {
-    if (!future.length) return;
-    history.push(deepClone(state)); state = future.pop(); resetSimulation(); renderAll();
-  }
-
-  function paintCell(key) {
-    if (sim?.playing) { setBall(key); return; }
+  function paint(key, record = false) {
+    if (view !== "build") return;
     selected = key;
-    if (activeTool === "eyedropper") {
-      const cell = state.cells[key];
-      activeTile = Object.keys(TILE_TYPES).find((name) =>
-        TILE_TYPES[name].value === cell.value && TILE_TYPES[name].color.toLowerCase() === cell.color.toLowerCase()
-      ) || "floor";
-      activeTool = "paint"; renderTools(); renderInspector(); return;
-    }
-    if (activeTool === "start" || activeTool === "end") {
-      snapshot(); state.meta[activeTool === "start" ? "startCell" : "endCell"] = key;
-      renderAll(); return;
-    }
-    if (activeTool === "fill") {
-      snapshot();
-      const original = JSON.stringify(state.cells[key]);
-      const replacement = TILE_TYPES[activeTile];
-      const queue = [key], visited = new Set();
+    if (record) pushHistory();
+    if (setStart) { level.meta.startCell = key; setStart = false; render(); return; }
+    if (fillMode) {
+      const before = JSON.stringify(level.cells[key]), replacement = TILES[tile], queue = [key], seen = new Set();
       while (queue.length) {
         const current = queue.pop();
-        if (visited.has(current) || JSON.stringify(state.cells[current]) !== original) continue;
-        visited.add(current);
-        state.cells[current] = { value: replacement.value, color: replacement.color };
-        neighbors(current).forEach((next) => queue.push(next));
+        if (seen.has(current) || JSON.stringify(level.cells[current]) !== before) continue;
+        seen.add(current); level.cells[current] = { value: replacement.value, color: replacement.color };
+        const [colLetter, rowText] = [current[0], current.slice(1)];
+        const row = Number(rowText) - 1, col = colLetter.charCodeAt(0) - 65;
+        [[row-1,col],[row+1,col],[row,col-1],[row,col+1]].forEach(([r,c]) => {
+          if (r >= 0 && r < 12 && c >= 0 && c < 12) queue.push(`${String.fromCharCode(65+c)}${r+1}`);
+        });
       }
-      renderAll(); return;
+      fillMode = false;
+    } else {
+      level.cells[key] = { value: TILES[tile].value, color: TILES[tile].color };
     }
-    const tile = TILE_TYPES[activeTile];
-    state.cells[key] = { value: tile.value, color: tile.color };
-    renderBoard(); renderInspector();
+    render();
   }
 
-  function cellRole(cell) {
-    if (cell.value === 1) return "Wall";
-    if (cell.value === -1) return "Pit";
-    const match = Object.values(TILE_TYPES).find((item) => item.color.toLowerCase() === cell.color.toLowerCase());
-    return match?.label || "Floor";
+  function validate() {
+    const errors = [];
+    if (Object.keys(level.cells).length !== 144 || cellKeys.some((key) => !level.cells[key])) errors.push("Board must have all 144 tiles.");
+    if (!level.meta.id.trim() || !level.meta.title.trim()) errors.push("Level name and ID are required.");
+    if (!cellKeys.includes(level.meta.startCell)) errors.push("Choose a valid start tile.");
+    Object.entries(level.cells).forEach(([key, cell]) => {
+      if (![-1,0,1].includes(cell.value)) errors.push(`${key} has an invalid servo state.`);
+    });
+    return errors;
   }
-  function renderTools() {
-    $("#tileTools").innerHTML = Object.entries(TILE_TYPES).map(([name, tile]) =>
-      `<button class="tool ${activeTile === name ? "active" : ""}" data-tile="${name}">
-        <span>${tile.label}</span><span class="tool-chip" style="background:${tile.color}"></span>
+
+  function renderModes() {
+    $("#modeCards").innerHTML = Object.entries(MODES).map(([key, mode]) =>
+      `<button class="mode-card ${level.mode === key ? "active" : ""}" data-mode="${key}">
+        <strong>${mode.label}</strong><small>${mode.short}</small>
       </button>`
     ).join("");
-    document.querySelectorAll("[data-tile]").forEach((button) => button.onclick = () => {
-      activeTile = button.dataset.tile; activeTool = "paint"; renderTools();
+    document.querySelectorAll("[data-mode]").forEach((button) => button.onclick = () => {
+      pushHistory(); level.mode = button.dataset.mode; level.modeParams = clone(MODES[level.mode].defaults); resetTest(); render();
     });
-    document.querySelectorAll("[data-tool]").forEach((button) =>
-      button.classList.toggle("active", button.dataset.tool === activeTool)
-    );
+    const mode = MODES[level.mode];
+    $("#modeFields").innerHTML = mode.fields.map(([key, label]) =>
+      `<label>${label}<input data-param="${key}" type="number" min="0" step=".1" value="${level.modeParams[key]}"></label>`
+    ).join("");
+    document.querySelectorAll("[data-param]").forEach((input) => input.onchange = () => {
+      level.modeParams[input.dataset.param] = Number(input.value); resetTest(); updateHud();
+    });
+    $("#modeExplanation").innerHTML = `<p>${mode.short}</p><ol>${mode.steps.map((step) => `<li>${step}</li>`).join("")}</ol>`;
   }
-  function displayCells() { return sim ? sim.cells : state.cells; }
+  function renderTiles() {
+    $("#tileTools").innerHTML = Object.entries(TILES).map(([key, item]) =>
+      `<button class="tile-choice ${tile === key ? "active" : ""}" data-tile="${key}">
+        <span class="color-chip" style="background:${item.color}"></span>${item.label}
+      </button>`
+    ).join("");
+    $("#cellChoices").innerHTML = Object.entries(TILES).map(([key, item]) =>
+      `<button class="tile-choice ${role(level.cells[selected]).toLowerCase() === item.label.toLowerCase() ? "active" : ""}" data-cell-tile="${key}">
+        <span class="color-chip" style="background:${item.color}"></span>${item.label}
+      </button>`
+    ).join("");
+    document.querySelectorAll("[data-tile]").forEach((button) => button.onclick = () => { tile = button.dataset.tile; renderTiles(); });
+    document.querySelectorAll("[data-cell-tile]").forEach((button) => button.onclick = () => { pushHistory(); tile = button.dataset.cellTile; paint(selected); });
+  }
   function renderBoard() {
-    const cells = displayCells();
+    const cells = sim ? sim.cells : level.cells;
     $("#board").innerHTML = cellKeys.map((key) => {
       const cell = cells[key], classes = ["cell"];
-      if (key === selected) classes.push("selected");
+      if (view === "build" && key === selected) classes.push("selected");
       if (cell.value === 1) classes.push("wall");
       if (cell.value === -1) classes.push("sunk");
-      if (key === state.meta.startCell) classes.push("start");
-      if (key === state.meta.endCell) classes.push("end");
+      if (key === level.meta.startCell) classes.push("start");
+      if (key === level.meta.endCell) classes.push("end");
       if (sim?.ball === key) classes.push("ball");
       if (sim?.target === key) classes.push("target");
-      return `<button class="${classes.join(" ")}" data-key="${key}" role="gridcell" style="background:${cell.color}"></button>`;
+      return `<button class="${classes.join(" ")}" data-key="${key}" style="background:${cell.color}"></button>`;
     }).join("");
-    document.querySelectorAll(".cell").forEach((cell) => {
-      cell.onpointerdown = () => { dragging = true; if (activeTool === "paint") snapshot(); paintCell(cell.dataset.key); };
-      cell.onpointerenter = () => { if (dragging && activeTool === "paint") paintCell(cell.dataset.key); };
-      cell.onclick = () => { if (!dragging) paintCell(cell.dataset.key); };
+    document.querySelectorAll(".cell").forEach((button) => {
+      button.onpointerdown = () => { dragging = true; paint(button.dataset.key, true); };
+      button.onpointerenter = () => { if (dragging) paint(button.dataset.key); };
+      button.onclick = () => { selected = button.dataset.key; renderInspector(); renderBoard(); };
     });
-    $("#levelTitle").textContent = state.meta.title;
-    $("#selectedLabel").textContent = selected;
-    $("#modeLabel").textContent = state.mode.replaceAll("_", " ").toUpperCase();
-  }
-  function renderModeFields() {
-    const fields = MODE_FIELDS[state.mode] || [];
-    $("#modeFields").innerHTML = fields.map(([key, label]) =>
-      `<label>${label}<input type="number" step="0.05" data-mode-param="${key}" value="${state.modeParams[key] ?? ""}"></label>`
-    ).join("") || `<p class="eyebrow">NO MODE-SPECIFIC PARAMETERS</p>`;
-    document.querySelectorAll("[data-mode-param]").forEach((input) => input.onchange = () => {
-      snapshot(); state.modeParams[input.dataset.modeParam] = Number(input.value); resetSimulation(); validateAndRender();
-    });
-  }
-  function renderDynamicFields() {
-    const dynamic = state.cells[selected].dynamic;
-    if (!dynamic) { $("#dynamicFields").innerHTML = ""; return; }
-    if ((dynamic.type || "cycle") === "cycle") {
-      $("#dynamicFields").innerHTML = `<label>Interval seconds<input id="dynInterval" type="number" step=".1" value="${dynamic.intervalSeconds || 2}"></label>`;
-      $("#dynInterval").onchange = (event) => { dynamic.intervalSeconds = Number(event.target.value); };
-    } else {
-      $("#dynamicFields").innerHTML = `
-        <label>Arm delay<input id="dynArm" type="number" step=".1" value="${dynamic.armDelaySeconds || 4}"></label>
-        <label>Warning duration<input id="dynWarn" type="number" step=".1" value="${dynamic.warnDurationSeconds || 6}"></label>`;
-      $("#dynArm").onchange = (event) => { dynamic.armDelaySeconds = Number(event.target.value); };
-      $("#dynWarn").onchange = (event) => { dynamic.warnDurationSeconds = Number(event.target.value); };
-    }
   }
   function renderInspector() {
-    const cell = state.cells[selected];
-    $("#cellKey").textContent = selected; $("#cellRole").textContent = cellRole(cell);
-    $("#cellValue").value = String(cell.value); $("#cellColor").value = cell.color;
-    $("#dynamicType").value = cell.dynamic?.type || (cell.dynamic ? "cycle" : "");
-    $("#metaId").value = state.meta.id; $("#metaNumber").value = state.meta.number;
-    $("#metaTitle").value = state.meta.title; $("#metaSubtitle").value = state.meta.subtitle;
-    $("#seed").value = state.seed; $("#modeSelect").value = state.mode;
-    $("#startCell").value = state.meta.startCell; $("#endCell").value = state.meta.endCell;
-    $("#timeLimit").value = state.meta.timeLimitSeconds;
-    $("#feature").value = state.meta.feature; $("#rules").value = state.meta.rules.join("\n");
-    $("#kenLine").value = state.meta.kenLine; $("#trollLine").value = state.meta.trollLine;
-    renderModeFields(); renderDynamicFields();
+    const cell = level.cells[selected];
+    $("#cellKey").textContent = selected; $("#cellRole").textContent = role(cell);
+    $("#cellValue").value = cell.value; $("#cellColor").value = cell.color;
+    $("#dynamicType").value = cell.dynamic?.type || "";
+    $("#dynamicFields").innerHTML = cell.dynamic
+      ? `<label>Interval / delay<input id="dynamicTime" type="number" step=".1" value="${cell.dynamic.intervalSeconds || cell.dynamic.armDelaySeconds || 2}"></label>`
+      : "";
+    $("#metaTitle").value = level.meta.title; $("#metaId").value = level.meta.id;
+    $("#metaNumber").value = level.meta.number; $("#seed").value = level.seed;
+    $("#metaSubtitle").value = level.meta.subtitle; $("#feature").value = level.meta.feature;
+    $("#rules").value = level.meta.rules.join("\n"); $("#kenLine").value = level.meta.kenLine; $("#trollLine").value = level.meta.trollLine;
+    renderTiles();
   }
-
-  function validatePackage(pkg = state) {
-    const errors = [];
-    if (pkg.version !== 1) errors.push("Version must be 1.");
-    if (!["reach_end", "survival_lava", "hex_fall", "target_hunt"].includes(pkg.mode)) errors.push("Unsupported mode.");
-    if (Object.keys(pkg.cells || {}).length !== 144 || cellKeys.some((key) => !pkg.cells[key])) errors.push("Board must contain A1 through L12.");
-    if (!cellKeys.includes(pkg.meta.startCell) || !cellKeys.includes(pkg.meta.endCell)) errors.push("Start/end cells must be valid.");
-    if (!pkg.meta.id.trim() || !pkg.meta.title.trim()) errors.push("ID and title are required.");
-    Object.entries(pkg.cells || {}).forEach(([key, cell]) => {
-      if (![-1, 0, 1].includes(cell.value)) errors.push(`${key}: invalid servo value.`);
-      if (!/^#[0-9a-f]{6}$/i.test(cell.color)) errors.push(`${key}: invalid color.`);
-    });
-    (MODE_FIELDS[pkg.mode] || []).forEach(([key]) => {
-      if (!Number.isFinite(Number(pkg.modeParams[key])) || Number(pkg.modeParams[key]) < 0) errors.push(`${key} must be non-negative.`);
-    });
-    return errors;
-  }
-  function validateAndRender() {
-    const errors = validatePackage();
+  function renderDiagnostics() {
+    const errors = validate();
     $("#diagnostics").innerHTML = errors.length
-      ? errors.map((error) => `<span class="diagnostic">${error}</span>`).join("")
-      : `<span class="diagnostic ok">Package valid: 144 cells, ${state.mode.replaceAll("_", " ")}</span>`;
+      ? errors.map((error) => `<div class="diagnostic">${error}</div>`).join("")
+      : `<div class="diagnostic ok">Ready to play test and download.</div>`;
     return errors;
   }
+  function render() {
+    document.body.classList.toggle("playing", view === "play");
+    $("#buildTab").classList.toggle("active", view === "build"); $("#playTab").classList.toggle("active", view === "play");
+    $("#buildControls").classList.toggle("hidden", view !== "build"); $("#playControls").classList.toggle("hidden", view !== "play");
+    $("#pageTitle").textContent = view === "build" ? "Build the board" : "Play the game";
+    $("#selectedLabel").textContent = `Selected ${selected}`;
+    renderModes(); renderBoard(); renderInspector(); renderDiagnostics(); updateHud();
+  }
 
-  function resetSimulation() {
-    if (timer) clearInterval(timer);
-    timer = null;
+  function resetTest() {
+    if (ticker) clearInterval(ticker); ticker = null;
     sim = {
-      playing: false, time: 0, cells: deepClone(state.cells), ball: state.meta.startCell,
-      target: null, touched: {}, events: [], rng: seededRandom(state.seed), remaining: modeDuration(),
-      hits: 0, nextCollapse: Number(state.modeParams.collapseEverySeconds || 0),
+      playing: false, ended: false, won: false, time: 0, score: 0,
+      remaining: Number(level.modeParams.survivalSeconds || level.modeParams.startingSeconds || 40),
+      cells: clone(level.cells), ball: level.meta.startCell, target: null, touched: {},
+      rng: seededRandom(level.seed), nextCollapse: Number(level.modeParams.collapseEverySeconds || 0),
     };
-    if (state.mode === "target_hunt") chooseTarget();
-    $("#timeSlider").max = modeDuration(); $("#timeSlider").value = 0; $("#timeOutput").value = "0.0s";
-    $("#ballCell").value = sim.ball; renderBoard(); renderEvents();
+    if (level.mode === "target_hunt") chooseTarget();
+    $("#playBtn").textContent = "Start test"; $("#gameMessage").textContent = "Press Start test, then use the arrow keys.";
+    updateHud(); renderBoard();
   }
-  function modeDuration() {
-    if (state.mode === "survival_lava" || state.mode === "hex_fall") return Number(state.modeParams.survivalSeconds || 45);
-    if (state.mode === "target_hunt") return Number(state.modeParams.startingSeconds || 20);
-    return Number(state.meta.timeLimitSeconds || 60);
-  }
-  function event(text) { sim.events.unshift(`${sim.time.toFixed(1)}s ${text}`); sim.events = sim.events.slice(0, 8); }
-  function renderEvents() { $("#eventStrip").innerHTML = (sim?.events || []).map((item) => `<span class="event">${item}</span>`).join(""); }
   function chooseTarget() {
     const options = [...reachable(sim.ball, sim.cells)].filter((key) => key !== sim.ball);
     sim.target = options.length ? options[Math.floor(sim.rng() * options.length)] : null;
-    if (sim.target) event(`target ${sim.target}`);
   }
-  function safeObstacle(value, color) {
+  function placeObstacle(value, color) {
     const options = cellKeys.filter((key) => key !== sim.ball && key !== sim.target && sim.cells[key].value === 0);
     for (let i = options.length - 1; i > 0; i--) { const j = Math.floor(sim.rng() * (i + 1)); [options[i], options[j]] = [options[j], options[i]]; }
-    const candidate = options.find((key) => {
-      const before = sim.cells[key]; sim.cells[key] = { ...before, value, color };
-      const okay = reachable(sim.ball, sim.cells).size > 1;
-      if (!okay) sim.cells[key] = before;
-      return okay;
-    });
-    if (candidate) event(`${value === -1 ? "pit" : "wall"} ${candidate}`);
-  }
-  function setBall(key) {
-    key = String(key).toUpperCase();
-    if (!cellKeys.includes(key)) return;
-    sim.ball = key; $("#ballCell").value = key;
-    if ((state.mode === "survival_lava" || state.mode === "hex_fall") && !sim.touched[key]) {
-      sim.touched[key] = sim.time; sim.cells[key].color = "#F49400"; event(`touch ${key}`);
+    for (const key of options) {
+      const old = sim.cells[key]; sim.cells[key] = { ...old, value, color };
+      if (reachable(sim.ball, sim.cells).size > 1) return;
+      sim.cells[key] = old;
     }
-    if (state.mode === "target_hunt" && key === sim.target) {
-      sim.hits += 1; sim.remaining += Number(state.modeParams.targetBonusSeconds || 5); event(`target claimed ${key}`);
-      const old = sim.target; if (old) sim.cells[old].color = "#567DBB";
-      for (let i = 0; i < Number(state.modeParams.spawnPitCount || 1); i++) safeObstacle(-1, "#FF0000");
-      for (let i = 0; i < Number(state.modeParams.spawnWallCount || 1); i++) safeObstacle(1, "#4DFF00");
-      chooseTarget();
-    }
-    renderBoard(); renderEvents();
   }
-  function simulationStep(dt = 0.1) {
-    sim.time += dt; sim.remaining = Math.max(0, sim.remaining - dt);
-    if (state.mode === "survival_lava" || state.mode === "hex_fall") {
-      const grace = Number(state.modeParams.dwellSeconds ?? state.modeParams.touchGraceSeconds ?? 1);
-      const warn = Number(state.modeParams.warnSeconds || 1);
+  function hitTarget() {
+    sim.score += Number(level.modeParams.pointsPerTarget || 100);
+    sim.remaining += Number(level.modeParams.targetBonusSeconds || 5);
+    for (let i = 0; i < Number(level.modeParams.spawnPitCount || 1); i++) placeObstacle(-1, "#FF0000");
+    for (let i = 0; i < Number(level.modeParams.spawnWallCount || 1); i++) placeObstacle(1, "#4DFF00");
+    chooseTarget();
+    $("#gameMessage").textContent = `Target reached. ${sim.remaining.toFixed(1)} seconds left.`;
+  }
+  function endTest(won, message) {
+    sim.playing = false; sim.ended = true; sim.won = won;
+    if (ticker) clearInterval(ticker); ticker = null;
+    $("#playBtn").textContent = "Play again"; $("#gameMessage").textContent = message; updateHud();
+  }
+  function moveBall(deltaRow, deltaCol) {
+    if (!sim?.playing) return;
+    const move = moveCell(sim.ball, deltaRow, deltaCol, sim.cells);
+    if (move.blocked) { $("#gameMessage").textContent = "A wall blocks that direction."; return; }
+    sim.ball = move.key;
+    if (sim.cells[sim.ball].value === -1) { renderBoard(); endTest(false, "The ball fell into a pit."); return; }
+    if (level.mode === "target_hunt" && sim.ball === sim.target) hitTarget();
+    if (level.mode !== "target_hunt" && !sim.touched[sim.ball]) {
+      sim.touched[sim.ball] = sim.time; sim.cells[sim.ball].color = "#F49400";
+    }
+    renderBoard(); updateHud();
+  }
+  function tick() {
+    if (!sim.playing) return;
+    sim.time += .1; sim.remaining = Math.max(0, sim.remaining - .1);
+    if (level.mode !== "target_hunt") {
+      const grace = Number(level.modeParams.dwellSeconds ?? level.modeParams.touchGraceSeconds ?? 1);
+      const warning = Number(level.modeParams.warnSeconds || 1);
       Object.entries(sim.touched).forEach(([key, touchedAt]) => {
         const age = sim.time - touchedAt;
-        if (age >= grace + warn && sim.cells[key].value !== -1) {
-          sim.cells[key] = { value: -1, color: "#FF0000" }; event(`sink ${key}`);
-        } else if (age >= grace) sim.cells[key].color = Math.floor(age * 6) % 2 ? "#FF0000" : "#000000";
+        if (age >= grace + warning) sim.cells[key] = { value: -1, color: "#FF0000" };
+        else if (age >= grace) sim.cells[key].color = Math.floor(age * 8) % 2 ? "#FF0000" : "#000000";
       });
-      if (state.mode === "hex_fall" && sim.nextCollapse > 0 && sim.time >= sim.nextCollapse) {
-        for (let i = 0; i < Number(state.modeParams.collapseCount || 0); i++) safeObstacle(-1, "#FF0000");
-        sim.nextCollapse += Number(state.modeParams.collapseEverySeconds || 0);
+      if (sim.cells[sim.ball].value === -1) { renderBoard(); endTest(false, "The floor disappeared under the ball."); return; }
+      if (level.mode === "hex_fall" && sim.nextCollapse > 0 && sim.time >= sim.nextCollapse) {
+        for (let i = 0; i < Number(level.modeParams.collapseCount || 0); i++) placeObstacle(-1, "#FF0000");
+        sim.nextCollapse += Number(level.modeParams.collapseEverySeconds || 0);
       }
     }
-    $("#timeSlider").value = Math.min(sim.time, Number($("#timeSlider").max));
-    $("#timeOutput").value = `${sim.time.toFixed(1)}s / ${sim.remaining.toFixed(1)}s left`;
-    renderBoard(); renderEvents();
-    if (sim.remaining <= 0) { sim.playing = false; if (timer) clearInterval(timer); timer = null; $("#playBtn").textContent = "Play simulation"; event("timer ended"); }
+    if (sim.remaining <= 0) endTest(level.mode !== "target_hunt", level.mode === "target_hunt" ? "Time ran out." : "You survived.");
+    renderBoard(); updateHud();
   }
-  function togglePlay() {
-    sim.playing = !sim.playing; $("#playBtn").textContent = sim.playing ? "Pause" : "Play simulation";
-    if (sim.playing) timer = setInterval(() => simulationStep(0.1), 100);
-    else { clearInterval(timer); timer = null; }
+  function startTest() {
+    if (sim.ended) resetTest();
+    sim.playing = !sim.playing;
+    $("#playBtn").textContent = sim.playing ? "Pause" : "Resume";
+    $("#gameMessage").textContent = sim.playing ? "Arrow keys move the ball. Stay alive." : "Paused.";
+    if (sim.playing) { $("#board").focus(); ticker = setInterval(tick, 100); }
+    else { clearInterval(ticker); ticker = null; }
+  }
+  function updateHud() {
+    $("#hudMode").textContent = MODES[level.mode].label.toUpperCase();
+    $("#hudTime").textContent = sim ? sim.remaining.toFixed(1) : "—";
+    $("#hudScore").textContent = sim?.score || 0; $("#hudTarget").textContent = sim?.target || "—";
+  }
+  function switchView(next) {
+    view = next;
+    if (view === "play") resetTest(); else { if (ticker) clearInterval(ticker); ticker = null; sim = null; }
+    render();
   }
 
-  function bindInputs() {
-    const metaBindings = {
-      metaId: "id", metaNumber: "number", metaTitle: "title", metaSubtitle: "subtitle",
-      startCell: "startCell", endCell: "endCell", timeLimit: "timeLimitSeconds",
-      feature: "feature", kenLine: "kenLine", trollLine: "trollLine",
-    };
-    Object.entries(metaBindings).forEach(([id, key]) => $(`#${id}`).onchange = (event) => {
-      snapshot(); state.meta[key] = ["number", "timeLimitSeconds"].includes(key) ? Number(event.target.value) : event.target.value;
-      resetSimulation(); renderAll();
-    });
-    $("#rules").onchange = (event) => { snapshot(); state.meta.rules = event.target.value.split("\n").map((s) => s.trim()).filter(Boolean); validateAndRender(); };
-    $("#seed").onchange = (event) => { snapshot(); state.seed = Number(event.target.value); resetSimulation(); };
-    $("#modeSelect").onchange = (event) => {
-      snapshot(); state.mode = event.target.value; state.modeParams = deepClone(MODE_DEFAULTS[state.mode]); resetSimulation(); renderAll();
-    };
-    $("#cellValue").onchange = (event) => { snapshot(); state.cells[selected].value = Number(event.target.value); renderAll(); };
-    $("#cellColor").onchange = (event) => { snapshot(); state.cells[selected].color = event.target.value.toUpperCase(); renderAll(); };
-    $("#dynamicType").onchange = (event) => {
-      snapshot(); const type = event.target.value;
-      if (!type) delete state.cells[selected].dynamic;
-      else if (type === "cycle") state.cells[selected].dynamic = { type, intervalSeconds: 2, pattern: [{ value: 1, color: "#4DFF00" }, { value: 0, color: "#F49400" }] };
-      else state.cells[selected].dynamic = { type, armDelaySeconds: 4, warnDurationSeconds: 6, initialIntervalSeconds: 1.2, minIntervalSeconds: 0.12 };
-      renderInspector(); validateAndRender();
-    };
-    document.querySelectorAll("[data-tool]").forEach((button) => button.onclick = () => { activeTool = button.dataset.tool; renderTools(); });
+  function bind() {
+    $("#buildTab").onclick = () => switchView("build"); $("#playTab").onclick = () => switchView("play");
+    $("#playBtn").onclick = startTest; $("#resetBtn").onclick = resetTest;
+    $("#fillBtn").onclick = () => { fillMode = true; setStart = false; };
+    $("#startBtn").onclick = () => { setStart = true; fillMode = false; };
     $("#undoBtn").onclick = undo; $("#redoBtn").onclick = redo;
-    $("#validateBtn").onclick = validateAndRender;
-    $("#playBtn").onclick = togglePlay; $("#stepBtn").onclick = () => simulationStep(.1); $("#resetBtn").onclick = resetSimulation;
-    $("#ballCell").onchange = (event) => setBall(event.target.value);
-    $("#timeSlider").oninput = (event) => {
-      const target = Number(event.target.value); resetSimulation();
-      while (sim.time + .099 < target) simulationStep(.1);
+    $("#validateBtn").onclick = renderDiagnostics;
+    $("#cellValue").onchange = (event) => { pushHistory(); level.cells[selected].value = Number(event.target.value); render(); };
+    $("#cellColor").onchange = (event) => { pushHistory(); level.cells[selected].color = event.target.value.toUpperCase(); render(); };
+    $("#dynamicType").onchange = (event) => {
+      pushHistory(); const type = event.target.value;
+      if (!type) delete level.cells[selected].dynamic;
+      else if (type === "cycle") level.cells[selected].dynamic = { type, intervalSeconds: 2, pattern: [{ value: 1, color: "#4DFF00" }, { value: 0, color: "#F49400" }] };
+      else level.cells[selected].dynamic = { type, armDelaySeconds: 4, warnDurationSeconds: 6 };
+      render();
     };
+    const bindings = { metaTitle: "title", metaId: "id", metaNumber: "number", metaSubtitle: "subtitle", feature: "feature", kenLine: "kenLine", trollLine: "trollLine" };
+    Object.entries(bindings).forEach(([id, key]) => $(`#${id}`).onchange = (event) => { level.meta[key] = key === "number" ? Number(event.target.value) : event.target.value; render(); });
+    $("#seed").onchange = (event) => { level.seed = Number(event.target.value); resetTest(); };
+    $("#rules").onchange = (event) => { level.meta.rules = event.target.value.split("\n").map((line) => line.trim()).filter(Boolean); };
     $("#fileInput").onchange = async (event) => {
       const file = event.target.files[0]; if (!file) return;
-      const imported = JSON.parse(await file.text()); const errors = validatePackage(imported);
-      if (errors.length) { $("#diagnostics").innerHTML = errors.map((error) => `<span class="diagnostic">${error}</span>`).join(""); return; }
-      history = []; future = []; state = imported; selected = state.meta.startCell; resetSimulation(); renderAll();
+      const imported = JSON.parse(await file.text());
+      if (!imported.cells || Object.keys(imported.cells).length !== 144) { $("#gameMessage").textContent = "That package does not contain a complete board."; return; }
+      level = imported; selected = level.meta.startCell; history = []; future = []; switchView("build");
     };
     $("#downloadBtn").onclick = () => {
-      const errors = validateAndRender(); if (errors.length) return;
-      const blob = new Blob([JSON.stringify(state, null, 2) + "\n"], { type: "application/json" });
-      const link = document.createElement("a"); link.href = URL.createObjectURL(blob);
-      link.download = `${state.meta.id}.level.json`; link.click(); URL.revokeObjectURL(link.href);
+      if (renderDiagnostics().length) return;
+      const blob = new Blob([JSON.stringify(level, null, 2) + "\n"], { type: "application/json" });
+      const link = document.createElement("a"); link.href = URL.createObjectURL(blob); link.download = `${level.meta.id}.level.json`; link.click(); URL.revokeObjectURL(link.href);
     };
     window.onpointerup = () => { dragging = false; };
     window.onkeydown = (event) => {
+      if (view === "play" && ["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(event.key)) {
+        event.preventDefault();
+        const movement = { ArrowUp: [-1,0], ArrowDown: [1,0], ArrowLeft: [0,-1], ArrowRight: [0,1] }[event.key];
+        moveBall(...movement); return;
+      }
       if (event.target.matches("input,textarea,select")) return;
-      const keymap = { p: "paint", f: "fill", i: "eyedropper", s: "start", e: "end" };
-      if (keymap[event.key.toLowerCase()]) { activeTool = keymap[event.key.toLowerCase()]; renderTools(); }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); event.shiftKey ? redo() : undo(); }
+      if (event.key === " ") { event.preventDefault(); if (view === "play") startTest(); }
     };
   }
-  function renderAll() { renderTools(); renderBoard(); renderInspector(); validateAndRender(); }
 
-  window.EditorLogic = { keyToRowCol, rowColToKey, seededRandom, reachable, validatePackage };
-  bindInputs(); resetSimulation(); renderAll();
+  bind(); resetTest(); render();
 })();

@@ -9,122 +9,116 @@
 <body>
   <header class="topbar">
     <div>
-      <p class="eyebrow">TILTYTABLE / AUTHORING</p>
-      <h1>Mode Forge</h1>
+      <p class="eyebrow">TILTYTABLE / MODE FORGE</p>
+      <h1 id="pageTitle">Build the board</h1>
     </div>
+    <nav class="view-tabs" aria-label="Editor view">
+      <button id="buildTab" class="tab active">1. Build</button>
+      <button id="playTab" class="tab">2. Play test</button>
+    </nav>
     <div class="file-actions">
-      <label class="button ghost">Import<input id="fileInput" type="file" accept=".json,application/json"></label>
-      <button id="validateBtn" class="button ghost">Validate</button>
-      <button id="downloadBtn" class="button primary">Download package</button>
+      <label class="button ghost">Open<input id="fileInput" type="file" accept=".json,application/json"></label>
+      <button id="downloadBtn" class="button primary">Download</button>
     </div>
   </header>
 
   <main class="workspace">
-    <aside class="tool-rail panel">
-      <h2>Tile palette</h2>
-      <div id="tileTools" class="tools"></div>
-      <hr>
-      <h2>Tools</h2>
-      <div class="tools compact">
-        <button data-tool="paint" class="tool active">Paint <kbd>P</kbd></button>
-        <button data-tool="fill" class="tool">Fill <kbd>F</kbd></button>
-        <button data-tool="eyedropper" class="tool">Pick <kbd>I</kbd></button>
-        <button data-tool="start" class="tool">Start <kbd>S</kbd></button>
-        <button data-tool="end" class="tool">End <kbd>E</kbd></button>
-        <button id="undoBtn" class="tool">Undo <kbd>⌘Z</kbd></button>
-        <button id="redoBtn" class="tool">Redo <kbd>⇧⌘Z</kbd></button>
-      </div>
-      <div class="legend">
-        <p><span class="swatch floor"></span>Floor</p>
-        <p><span class="swatch path"></span>Path</p>
-        <p><span class="swatch wall"></span>Wall</p>
-        <p><span class="swatch pit"></span>Pit</p>
-        <p><span class="swatch target"></span>Target</p>
-      </div>
-    </aside>
-
-    <section class="board-stage">
-      <div class="board-heading">
-        <div>
-          <p class="eyebrow">12 × 12 PHYSICAL GRID</p>
-          <h2 id="levelTitle">New Chamber</h2>
-        </div>
-        <div class="board-stats">
-          <span id="selectedLabel">A1</span>
-          <span id="modeLabel">REACH END</span>
-        </div>
-      </div>
-      <div id="board" class="board" role="grid" aria-label="12 by 12 tile board"></div>
-      <div class="sim-controls">
-        <button id="playBtn" class="button primary">Play simulation</button>
-        <button id="stepBtn" class="button ghost">Step +0.1s</button>
-        <button id="resetBtn" class="button ghost">Reset</button>
-        <label>Ball cell<input id="ballCell" value="A1" maxlength="3"></label>
-        <label class="timeline">Time <input id="timeSlider" type="range" min="0" max="60" step="0.1" value="0"></label>
-        <output id="timeOutput">0.0s</output>
-      </div>
-      <div id="eventStrip" class="event-strip"></div>
-    </section>
-
-    <aside class="inspector panel">
+    <aside class="left-panel panel">
       <section>
-        <p class="eyebrow">LEVEL</p>
-        <label>ID<input id="metaId"></label>
+        <p class="step-label">Choose the game</p>
+        <div id="modeCards" class="mode-cards"></div>
+      </section>
+
+      <section id="paintSection">
+        <p class="step-label">Paint the board</p>
+        <div id="tileTools" class="tile-tools"></div>
+        <div class="edit-actions">
+          <button id="fillBtn">Fill area</button>
+          <button id="startBtn">Set start</button>
+          <button id="undoBtn">Undo</button>
+          <button id="redoBtn">Redo</button>
+        </div>
+      </section>
+
+      <section>
+        <p class="step-label">Tune the rules</p>
+        <div id="modeFields" class="mode-fields"></div>
+      </section>
+
+      <details>
+        <summary>Level details</summary>
+        <label>Level name<input id="metaTitle"></label>
+        <label>Level ID<input id="metaId"></label>
         <div class="split">
           <label>Number<input id="metaNumber" type="number" min="1"></label>
           <label>Seed<input id="seed" type="number"></label>
         </div>
-        <label>Title<input id="metaTitle"></label>
         <label>Subtitle<input id="metaSubtitle"></label>
-        <label>Mode<select id="modeSelect">
-          <option value="reach_end">Reach end</option>
-          <option value="survival_lava">Lava survival</option>
-          <option value="hex_fall">Hex-A-Fall</option>
-          <option value="target_hunt">Target hunt / Snake</option>
-        </select></label>
-        <div class="split">
-          <label>Start<input id="startCell"></label>
-          <label>End<input id="endCell"></label>
-        </div>
-        <label>Time limit<input id="timeLimit" type="number" min="1"></label>
-      </section>
+        <label>Feature<textarea id="feature" rows="2"></textarea></label>
+        <label>Rules, one per line<textarea id="rules" rows="3"></textarea></label>
+        <label>Ken says<input id="kenLine"></label>
+        <label>Troll says<input id="trollLine"></label>
+      </details>
+    </aside>
 
-      <section id="modeParams">
-        <p class="eyebrow">MODE PARAMETERS</p>
-        <div id="modeFields"></div>
-      </section>
+    <section class="stage">
+      <div class="hud">
+        <div><span>MODE</span><strong id="hudMode">LAVA</strong></div>
+        <div><span>TIME</span><strong id="hudTime">40.0</strong></div>
+        <div><span>SCORE</span><strong id="hudScore">0</strong></div>
+        <div><span>TARGET</span><strong id="hudTarget">—</strong></div>
+      </div>
 
-      <section>
-        <p class="eyebrow">SELECTED CELL</p>
+      <div id="board" class="board" role="grid" tabindex="0" aria-label="12 by 12 tile board"></div>
+
+      <div id="buildControls" class="stage-controls">
+        <span id="selectedLabel">Selected A1</span>
+        <span>Click or drag to paint</span>
+        <button id="validateBtn" class="button ghost">Check level</button>
+      </div>
+
+      <div id="playControls" class="stage-controls hidden">
+        <button id="playBtn" class="button primary">Start test</button>
+        <button id="resetBtn" class="button ghost">Reset</button>
+        <strong>Use arrow keys to move the ball</strong>
+      </div>
+      <p id="gameMessage" class="game-message">Build a board, then switch to Play test.</p>
+    </section>
+
+    <aside class="right-panel panel">
+      <section id="cellInspector">
+        <p class="step-label">Selected tile</p>
         <div class="selected-cell"><strong id="cellKey">A1</strong><span id="cellRole">Floor</span></div>
-        <label>Servo state<select id="cellValue">
-          <option value="0">Floor / neutral</option>
-          <option value="1">Wall / extended</option>
-          <option value="-1">Pit / recessed</option>
-        </select></label>
-        <label>LED color<input id="cellColor" type="color"></label>
-        <label>Dynamic<select id="dynamicType">
-          <option value="">Static</option>
-          <option value="cycle">Cycle</option>
-          <option value="delayed_trap">Delayed trap</option>
-        </select></label>
-        <div id="dynamicFields"></div>
+        <div id="cellChoices" class="cell-choices"></div>
+        <details>
+          <summary>Advanced tile behavior</summary>
+          <label>Servo state<select id="cellValue">
+            <option value="0">Floor</option>
+            <option value="1">Wall</option>
+            <option value="-1">Pit</option>
+          </select></label>
+          <label>LED color<input id="cellColor" type="color"></label>
+          <label>Dynamic behavior<select id="dynamicType">
+            <option value="">Static</option>
+            <option value="cycle">Cycle wall/floor</option>
+            <option value="delayed_trap">Delayed trap</option>
+          </select></label>
+          <div id="dynamicFields"></div>
+        </details>
+      </section>
+
+      <section class="how-it-plays">
+        <p class="step-label">How this mode plays</p>
+        <div id="modeExplanation"></div>
       </section>
 
       <section>
-        <p class="eyebrow">PLAYER COPY</p>
-        <label>Feature<textarea id="feature" rows="3"></textarea></label>
-        <label>Rules, one per line<textarea id="rules" rows="4"></textarea></label>
-        <label>Ken<input id="kenLine"></label>
-        <label>Troll<input id="trollLine"></label>
+        <p class="step-label">Level check</p>
+        <div id="diagnostics" class="diagnostic-list"></div>
       </section>
     </aside>
   </main>
 
-  <section class="diagnostics">
-    <h2>Validation</h2>
-    <div id="diagnostics" class="diagnostic-list"></div>
-  </section>
   <script src="/editor/logic.js"></script>
   <script src="/editor/app.js"></script>
 </body>

@@ -71,9 +71,16 @@ Supported modes:
 - `hex_fall` (Hex-A-Gone-style touched/collapsing floor)
 - `target_hunt` (Snake-style timed targets that add permanent pits/walls)
 
-Editor features include paint/drag/fill/eyedropper, undo/redo, start/end
-markers, dynamic cell inspection, JSON import/download, validation, simulated
-ball-cell movement, and a deterministic time scrubber.
+The editor has two views:
+
+1. **Build** — choose Lava, Hex-A-Fall, or Snake; paint floor/walls/pits; set
+   the start tile; tune the few mode-specific rules.
+2. **Play test** — press Start and use the arrow keys to move the simulated
+   ball through the actual timer, target, wall, pit, warning, and collapse
+   rules.
+
+Advanced tile dynamics and level/lore metadata remain available in collapsed
+sections, while the default workflow stays focused on game design.
 
 Validate or install a downloaded package explicitly:
 

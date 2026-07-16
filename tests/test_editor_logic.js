@@ -4,6 +4,7 @@ const {
   rowColToKey,
   seededRandom,
   reachable,
+  moveCell,
 } = require("../arcade/editor/logic.js");
 
 assert.deepStrictEqual(keyToRowCol("A1"), [0, 0]);
@@ -26,5 +27,8 @@ for (let row = 0; row < 12; row++) {
 const left = reachable("A1", cells);
 assert(left.has("E12"));
 assert(!left.has("L12"));
+assert.deepStrictEqual(moveCell("A1", 0, -1, cells), { key: "A1", blocked: true });
+assert.deepStrictEqual(moveCell("E1", 0, 1, cells), { key: "E1", blocked: true });
+assert.deepStrictEqual(moveCell("A1", 1, 0, cells), { key: "A2", blocked: false });
 
 console.log("editor logic tests passed");
