@@ -20,10 +20,10 @@
     },
     hex_fall: {
       label: "Hex-A-Fall",
-      short: "Random floor tiles disappear over time, but never the tile under the ball.",
-      steps: ["Random tiles collapse every few seconds.", "Your current tile is always protected.", "Survive on the shrinking floor."],
-      defaults: { survivalSeconds: 45, pitConfirmSeconds: 0.5, collapseEverySeconds: 3, collapseCount: 1, collapseWarnSeconds: 1 },
-      fields: [["survivalSeconds", "Survive for"], ["collapseEverySeconds", "Collapse every"], ["collapseCount", "Tiles per collapse"], ["collapseWarnSeconds", "Flash before falling"]],
+      short: "Random floor tiles disappear while flashing points reward movement.",
+      steps: ["Collect flashing blue points.", "Random tiles flash, then collapse.", "Score from survival time and points."],
+      defaults: { survivalSeconds: 45, pitConfirmSeconds: 0.5, collapseEverySeconds: 3, collapseCount: 1, collapseWarnSeconds: 1, pointValue: 100, survivalPointsPerSecond: 10, pointConfirmSeconds: 0.15 },
+      fields: [["survivalSeconds", "Survive for"], ["collapseEverySeconds", "Collapse every"], ["collapseCount", "Tiles per collapse"], ["collapseWarnSeconds", "Flash before falling"], ["pointValue", "Points per pickup"], ["survivalPointsPerSecond", "Points per second"]],
     },
     target_hunt: {
       label: "Snake",
@@ -188,6 +188,7 @@
       rng: seededRandom(level.seed), nextCollapse: Number(level.modeParams.collapseEverySeconds || 0),
     };
     if (level.mode === "target_hunt") chooseTarget();
+    if (level.mode === "hex_fall") chooseHexPoint();
     $("#playBtn").textContent = "Start test"; $("#gameMessage").textContent = "Press Start test, then use the arrow keys.";
     updateHud(); renderBoard();
   }
@@ -202,6 +203,11 @@
       sim.target = null;
       return;
     }
+    sim.target = options.length ? options[Math.floor(sim.rng() * options.length)] : null;
+  }
+  function chooseHexPoint() {
+    const options = [...reachable(sim.ball, sim.cells)]
+      .filter((key) => key !== sim.ball && sim.cells[key].value === 0);
     sim.target = options.length ? options[Math.floor(sim.rng() * options.length)] : null;
   }
   function placeObstacle(value, color) {
@@ -219,7 +225,7 @@
   function safeHexCandidate() {
     const pending = new Set(Object.keys(sim.pendingCollapse));
     const active = cellKeys.filter((key) => sim.cells[key].value === 0 && !pending.has(key));
-    const options = active.filter((key) => key !== sim.ball);
+    const options = active.filter((key) => key !== sim.ball && key !== sim.target);
     for (let i = options.length - 1; i > 0; i--) { const j = Math.floor(sim.rng() * (i + 1)); [options[i], options[j]] = [options[j], options[i]]; }
     for (const candidate of options) {
       const blocked = [...pending, candidate];
@@ -255,6 +261,11 @@
     sim.ball = move.key;
     if (sim.cells[sim.ball].value === -1) { renderBoard(); endTest(false, "The ball fell into a pit."); return; }
     if (level.mode === "target_hunt" && sim.ball === sim.target) hitTarget();
+    if (level.mode === "hex_fall" && sim.ball === sim.target) {
+      sim.hits += 1;
+      chooseHexPoint();
+      $("#gameMessage").textContent = "Point collected. Keep moving.";
+    }
     if (level.mode === "survival_lava" && !sim.touched[sim.ball]) {
       sim.touched[sim.ball] = sim.time;
       sim.cells[sim.ball].color = "#F49400";
@@ -293,6 +304,8 @@
         sim.nextCollapse += Number(level.modeParams.collapseEverySeconds || 3);
       }
       if (sim.cells[sim.ball].value === -1) { renderBoard(); endTest(false, "The floor disappeared under the ball."); return; }
+      sim.score = Math.floor(sim.time) * Number(level.modeParams.survivalPointsPerSecond || 10)
+        + sim.hits * Number(level.modeParams.pointValue || 100);
     }
     if (sim.remaining <= 0) endTest(level.mode !== "target_hunt", level.mode === "target_hunt" ? "Time ran out." : "You survived.");
     renderBoard(); updateHud();

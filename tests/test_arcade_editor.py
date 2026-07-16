@@ -190,6 +190,27 @@ class HexFallTests(unittest.TestCase):
 
         self.assertEqual(_connected_from("A1", active, mapping), active)
 
+    def test_points_reward_movement_and_time_scores(self) -> None:
+        mapping = row_col()
+        params = HexFallParams(
+            survival_seconds=20,
+            collapse_every_seconds=5,
+            collapse_count=1,
+            point_confirm_seconds=0.1,
+            point_value=100,
+            survival_points_per_second=10,
+            seed=3,
+        )
+        session = start_hex_fall(params, 0.0)
+        first = tick_hex_fall(session, params, "A1", 0.0, mapping)
+        self.assertIsNotNone(first.point_cell)
+        tick_hex_fall(session, params, first.point_cell, 0.1, mapping)
+        collected = tick_hex_fall(session, params, first.point_cell, 0.25, mapping)
+        self.assertEqual(collected.points_collected, 1)
+        self.assertGreaterEqual(collected.score, 100)
+        later = tick_hex_fall(session, params, "A1", 2.1, mapping)
+        self.assertGreaterEqual(later.score, 120)
+
 
 class LavaScoreTests(unittest.TestCase):
     def test_score_is_unique_tiles_times_points_less_restarts(self) -> None:

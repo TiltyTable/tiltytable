@@ -516,7 +516,7 @@ function renderPlaying() {
     : hex
       ? (remaining <= 10
         ? "Ten seconds — flashing tiles are about to disappear!"
-        : "Random floor tiles flash before they fall. Your current tile is protected.")
+        : `Collect blue ${modeState.pointCell || "points"} while random floor tiles flash before falling.`)
       : survival
     ? (heating
       ? "Red flash behind you — that tile is about to sink!"
@@ -535,7 +535,7 @@ function renderPlaying() {
   const instruction = hunt
     ? `Reach blue <strong>${modeState.targetCell || "—"}</strong> · targets ${modeState.targetsReached || 0}`
     : hex
-      ? `Safe floor <strong>${openTiles}</strong> · random tiles collapse`
+      ? `Reach blue <strong>${modeState.pointCell || "—"}</strong> · points ${modeState.pointsCollected || 0} · floor ${openTiles}`
       : survival
         ? `Tiles touched <strong>${visited}</strong> · +${level.pointsPerTile || 0} each`
         : `Reach magenta <strong>${level.endCell}</strong>`;
@@ -552,7 +552,7 @@ function renderPlaying() {
         <div class="hud-stats">
           <div class="hud-stat"><span>RUN SCORE</span><strong>${Number(game.score).toLocaleString()}</strong></div>
           <div class="hud-stat"><span>RESTARTS</span><strong>${game.restarts}</strong></div>
-          ${tracked ? `<div class="hud-stat"><span>${hunt ? "TARGETS" : hex ? "FLOOR" : "TILES"}</span><strong>${hunt ? (modeState.targetsReached || 0) : hex ? openTiles : visited}</strong></div>` : ""}
+          ${tracked ? `<div class="hud-stat"><span>${hunt ? "TARGETS" : hex ? "POINTS" : "TILES"}</span><strong>${hunt ? (modeState.targetsReached || 0) : hex ? (modeState.pointsCollected || 0) : visited}</strong></div>` : ""}
         </div>
         <p class="hud-instruction">${instruction}</p>
       </div>

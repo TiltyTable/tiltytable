@@ -69,12 +69,13 @@ def tick_mode(
             hardware_updates=result.hardware_updates,
             public_state={
                 "remainingSeconds": result.remaining_seconds,
-                "tilesVisited": result.visited_count,
+                "pointsCollected": result.points_collected,
+                "pointCell": result.point_cell,
                 "heating": result.ball_cell_heating,
             },
             won=result.survived,
             lost=result.ball_on_lava,
-            score=result.visited_count,
+            score=result.score,
         )
     if mode == "target_hunt":
         assert isinstance(session, TargetHuntSession)

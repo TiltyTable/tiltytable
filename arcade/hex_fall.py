@@ -13,7 +13,6 @@ from .survival_lava import (
     CellSurvivalState,
     SurvivalLavaSession,
     SurvivalParams,
-    SurvivalTickResult,
 )
 
 
@@ -26,6 +25,9 @@ class HexFallParams:
     collapse_every_seconds: float = 0.0
     collapse_count: int = 0
     collapse_warn_seconds: float = 1.0
+    point_value: int = 100
+    survival_points_per_second: int = 10
+    point_confirm_seconds: float = 0.15
     seed: int = 1
 
 
@@ -38,6 +40,22 @@ class HexFallSession:
     pit_since: float | None = None
     pending_collapses: dict[str, tuple[float, float]] = field(default_factory=dict)
     blocked_cells: set[str] = field(default_factory=set)
+    point_cell: str | None = None
+    point_pending_since: float | None = None
+    points_collected: int = 0
+
+
+@dataclass(frozen=True)
+class HexFallTickResult:
+    hardware_updates: list[dict[str, Any]]
+    points_collected: int
+    point_cell: str | None
+    score: int
+    ball_on_lava: bool
+    survived: bool
+    elapsed_seconds: float
+    remaining_seconds: float
+    ball_cell_heating: bool = False
 
 
 def _neighbors(
@@ -89,7 +107,7 @@ def safe_collapse_candidates(
         return []
     active = _active_cells(session, row_col_for_key)
     candidates: list[str] = []
-    for candidate in sorted(active - {ball_cell}):
+    for candidate in sorted(active - {ball_cell, session.point_cell}):
         remaining = active - {candidate}
         if _connected_from(ball_cell, remaining, row_col_for_key) == remaining:
             candidates.append(candidate)
@@ -135,7 +153,7 @@ def tick_hex_fall(
     now: float,
     row_col_for_key: dict[str, tuple[int, int]],
     tracking_confidence: float | None = None,
-) -> SurvivalTickResult:
+) -> HexFallTickResult:
     elapsed = max(0.0, now - session.lava.started_at)
     remaining = max(0.0, params.survival_seconds - elapsed)
     updates: list[dict[str, Any]] = []
@@ -167,6 +185,31 @@ def tick_hex_fall(
                 {"key": key, "row": row, "col": col, "value": 0, "color": LAVA_COLOR, "rgb": (0, 0, 0)}
             )
         session.next_collapse_at += params.collapse_every_seconds
+    active = _active_cells(session, row_col_for_key)
+    if session.point_cell not in active:
+        session.point_cell = None
+    if session.point_cell is None and ball_cell in active:
+        point_options = sorted(_connected_from(ball_cell, active, row_col_for_key) - {ball_cell})
+        if point_options:
+            session.point_cell = session.rng.choice(point_options)
+            row, col = row_col_for_key[session.point_cell]
+            updates.append(
+                {"key": session.point_cell, "row": row, "col": col, "value": 0, "color": "#001FFF", "rgb": (0, 0, 0)}
+            )
+    if ball_cell and ball_cell == session.point_cell:
+        if session.point_pending_since is None:
+            session.point_pending_since = now
+        elif now - session.point_pending_since >= params.point_confirm_seconds:
+            old_point = session.point_cell
+            session.points_collected += 1
+            session.point_cell = None
+            session.point_pending_since = None
+            row, col = row_col_for_key[old_point]
+            updates.append(
+                {"key": old_point, "row": row, "col": col, "value": 0, "color": FLOOR_COLOR, "rgb": (0, 0, 0)}
+            )
+    else:
+        session.point_pending_since = None
     on_sunk = (
         ball_cell is not None
         and session.lava.cells.get(ball_cell, CellSurvivalState()).phase == PHASE_SUNK
@@ -183,9 +226,15 @@ def tick_hex_fall(
         session.pit_since is not None
         and now - session.pit_since >= params.pit_confirm_seconds
     )
-    return SurvivalTickResult(
+    score = (
+        int(elapsed) * params.survival_points_per_second
+        + session.points_collected * params.point_value
+    )
+    return HexFallTickResult(
         hardware_updates=updates,
-        visited_count=0,
+        points_collected=session.points_collected,
+        point_cell=session.point_cell,
+        score=score,
         ball_on_lava=ball_on_lava,
         survived=remaining <= 0 and not ball_on_lava,
         elapsed_seconds=elapsed,
@@ -203,5 +252,8 @@ def params_from_dict(raw: dict[str, Any], seed: int = 1) -> HexFallParams:
         collapse_every_seconds=float(raw.get("collapseEverySeconds", 0)),
         collapse_count=int(raw.get("collapseCount", 0)),
         collapse_warn_seconds=float(raw.get("collapseWarnSeconds", 1)),
+        point_value=int(raw.get("pointValue", 100)),
+        survival_points_per_second=int(raw.get("survivalPointsPerSecond", 10)),
+        point_confirm_seconds=float(raw.get("pointConfirmSeconds", 0.15)),
         seed=seed,
     )
