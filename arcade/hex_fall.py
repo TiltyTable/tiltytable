@@ -14,7 +14,6 @@ from .survival_lava import (
     SurvivalLavaSession,
     SurvivalParams,
     SurvivalTickResult,
-    tick_survival_lava,
 )
 
 
@@ -34,6 +33,8 @@ class HexFallSession:
     lava: SurvivalLavaSession
     rng: random.Random
     next_collapse_at: float | None
+    pit_cell: str | None = None
+    pit_since: float | None = None
 
 
 def start_hex_fall(params: HexFallParams, now: float) -> HexFallSession:
@@ -65,14 +66,9 @@ def tick_hex_fall(
     row_col_for_key: dict[str, tuple[int, int]],
     tracking_confidence: float | None = None,
 ) -> SurvivalTickResult:
-    result = tick_survival_lava(
-        session.lava,
-        ball_cell,
-        now,
-        row_col_for_key,
-        tracking_confidence,
-    )
-    updates = list(result.hardware_updates)
+    elapsed = max(0.0, now - session.lava.started_at)
+    remaining = max(0.0, params.survival_seconds - elapsed)
+    updates: list[dict[str, Any]] = []
     if session.next_collapse_at is not None and now >= session.next_collapse_at:
         available = [
             key
@@ -88,14 +84,30 @@ def tick_hex_fall(
                 {"key": key, "row": row, "col": col, "value": -1, "color": LAVA_COLOR, "rgb": (0, 0, 0)}
             )
         session.next_collapse_at += params.collapse_every_seconds
+    on_sunk = (
+        ball_cell is not None
+        and session.lava.cells.get(ball_cell, CellSurvivalState()).phase == PHASE_SUNK
+        and (tracking_confidence is None or tracking_confidence >= 0.7)
+    )
+    if on_sunk:
+        if session.pit_cell != ball_cell:
+            session.pit_cell = ball_cell
+            session.pit_since = now
+    else:
+        session.pit_cell = None
+        session.pit_since = None
+    ball_on_lava = bool(
+        session.pit_since is not None
+        and now - session.pit_since >= params.pit_confirm_seconds
+    )
     return SurvivalTickResult(
         hardware_updates=updates,
-        visited_count=result.visited_count,
-        ball_on_lava=result.ball_on_lava,
-        survived=result.survived,
-        elapsed_seconds=result.elapsed_seconds,
-        remaining_seconds=result.remaining_seconds,
-        ball_cell_heating=result.ball_cell_heating,
+        visited_count=0,
+        ball_on_lava=ball_on_lava,
+        survived=remaining <= 0 and not ball_on_lava,
+        elapsed_seconds=elapsed,
+        remaining_seconds=remaining,
+        ball_cell_heating=False,
     )
 
 

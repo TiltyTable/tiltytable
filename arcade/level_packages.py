@@ -29,11 +29,9 @@ MODE_DEFAULTS: dict[str, dict[str, Any]] = {
     },
     "hex_fall": {
         "survivalSeconds": 45.0,
-        "touchGraceSeconds": 0.35,
-        "warnSeconds": 1.25,
         "pitConfirmSeconds": 0.5,
-        "collapseEverySeconds": 0.0,
-        "collapseCount": 0,
+        "collapseEverySeconds": 3.0,
+        "collapseCount": 1,
     },
     "target_hunt": {
         "startingSeconds": 20.0,
@@ -184,13 +182,10 @@ def validate_package(package: dict[str, Any], *, raise_on_error: bool = True) ->
         _positive_number(params, "pointsPerTile", errors, allow_zero=True)
         _positive_number(params, "pitConfirmSeconds", errors)
     elif mode == "hex_fall":
-        for key in (
-            "survivalSeconds", "touchGraceSeconds", "warnSeconds",
-            "pitConfirmSeconds",
-        ):
+        for key in ("survivalSeconds", "pitConfirmSeconds"):
             _positive_number(params, key, errors)
         for key in ("collapseEverySeconds", "collapseCount"):
-            _positive_number(params, key, errors, allow_zero=True)
+            _positive_number(params, key, errors)
     elif mode == "target_hunt":
         for key in (
             "startingSeconds", "targetBonusSeconds", "targetConfirmSeconds",

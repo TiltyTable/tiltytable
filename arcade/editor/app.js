@@ -20,10 +20,10 @@
     },
     hex_fall: {
       label: "Hex-A-Fall",
-      short: "Tiles disappear behind the ball while random floor sections collapse.",
-      steps: ["Every visited tile falls.", "Random tiles can collapse too.", "Stay on the remaining floor."],
-      defaults: { survivalSeconds: 45, touchGraceSeconds: 0.2, warnSeconds: 0.8, pitConfirmSeconds: 0.5, collapseEverySeconds: 6, collapseCount: 1 },
-      fields: [["survivalSeconds", "Survive for"], ["touchGraceSeconds", "Touch grace"], ["warnSeconds", "Fall warning"], ["collapseEverySeconds", "Random collapse every"], ["collapseCount", "Tiles per collapse"]],
+      short: "Random floor tiles disappear over time, but never the tile under the ball.",
+      steps: ["Random tiles collapse every few seconds.", "Your current tile is always protected.", "Survive on the shrinking floor."],
+      defaults: { survivalSeconds: 45, pitConfirmSeconds: 0.5, collapseEverySeconds: 3, collapseCount: 1 },
+      fields: [["survivalSeconds", "Survive for"], ["collapseEverySeconds", "Collapse every"], ["collapseCount", "Tiles per collapse"]],
     },
     target_hunt: {
       label: "Snake",
@@ -224,7 +224,7 @@
     sim.ball = move.key;
     if (sim.cells[sim.ball].value === -1) { renderBoard(); endTest(false, "The ball fell into a pit."); return; }
     if (level.mode === "target_hunt" && sim.ball === sim.target) hitTarget();
-    if (level.mode !== "target_hunt" && !sim.touched[sim.ball]) {
+    if (level.mode === "survival_lava" && !sim.touched[sim.ball]) {
       sim.touched[sim.ball] = sim.time; sim.cells[sim.ball].color = "#F49400";
     }
     renderBoard(); updateHud();
@@ -232,8 +232,8 @@
   function tick() {
     if (!sim.playing) return;
     sim.time += .1; sim.remaining = Math.max(0, sim.remaining - .1);
-    if (level.mode !== "target_hunt") {
-      const grace = Number(level.modeParams.dwellSeconds ?? level.modeParams.touchGraceSeconds ?? 1);
+    if (level.mode === "survival_lava") {
+      const grace = Number(level.modeParams.dwellSeconds ?? 1);
       const warning = Number(level.modeParams.warnSeconds || 1);
       Object.entries(sim.touched).forEach(([key, touchedAt]) => {
         const age = sim.time - touchedAt;
@@ -241,10 +241,12 @@
         else if (age >= grace) sim.cells[key].color = Math.floor(age * 8) % 2 ? "#FF0000" : "#000000";
       });
       if (sim.cells[sim.ball].value === -1) { renderBoard(); endTest(false, "The floor disappeared under the ball."); return; }
-      if (level.mode === "hex_fall" && sim.nextCollapse > 0 && sim.time >= sim.nextCollapse) {
-        for (let i = 0; i < Number(level.modeParams.collapseCount || 0); i++) placeObstacle(-1, "#FF0000");
-        sim.nextCollapse += Number(level.modeParams.collapseEverySeconds || 0);
+    } else if (level.mode === "hex_fall") {
+      if (sim.nextCollapse > 0 && sim.time >= sim.nextCollapse) {
+        for (let i = 0; i < Number(level.modeParams.collapseCount || 1); i++) placeObstacle(-1, "#FF0000");
+        sim.nextCollapse += Number(level.modeParams.collapseEverySeconds || 3);
       }
+      if (sim.cells[sim.ball].value === -1) { renderBoard(); endTest(false, "The floor disappeared under the ball."); return; }
     }
     if (sim.remaining <= 0) endTest(level.mode !== "target_hunt", level.mode === "target_hunt" ? "Time ran out." : "You survived.");
     renderBoard(); updateHud();

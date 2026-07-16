@@ -68,7 +68,7 @@ Supported modes:
 
 - `reach_end`
 - `survival_lava`
-- `hex_fall` (Hex-A-Gone-style touched/collapsing floor)
+- `hex_fall` (random floor tiles disappear over time, excluding the ball cell)
 - `target_hunt` (Snake-style timed targets that add permanent pits/walls)
 
 The editor has two views:

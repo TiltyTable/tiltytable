@@ -105,19 +105,18 @@ class TargetHuntTests(unittest.TestCase):
 
 
 class HexFallTests(unittest.TestCase):
-    def test_touch_warns_then_sinks(self) -> None:
+    def test_touch_does_not_sink_trail(self) -> None:
         mapping = row_col()
         params = HexFallParams(
             survival_seconds=20,
-            touch_grace_seconds=0.2,
-            warn_seconds=0.2,
+            collapse_every_seconds=5,
+            collapse_count=1,
         )
         session = start_hex_fall(params, 0.0)
         tick_hex_fall(session, params, "A1", 0.0, mapping)
-        warned = tick_hex_fall(session, params, "A1", 0.25, mapping)
-        self.assertTrue(any(update["color"] in ("#FF0000", "#000000") for update in warned.hardware_updates))
-        sunk = tick_hex_fall(session, params, "A1", 0.5, mapping)
-        self.assertTrue(any(update["value"] == -1 for update in sunk.hardware_updates))
+        result = tick_hex_fall(session, params, "B1", 1.0, mapping)
+        self.assertEqual(result.hardware_updates, [])
+        self.assertFalse(result.ball_cell_heating)
 
     def test_periodic_collapse_is_seeded(self) -> None:
         mapping = row_col()
@@ -132,6 +131,7 @@ class HexFallTests(unittest.TestCase):
         a = tick_hex_fall(first, params, "A1", 1.1, mapping).hardware_updates
         b = tick_hex_fall(second, params, "A1", 1.1, mapping).hardware_updates
         self.assertEqual([u["key"] for u in a], [u["key"] for u in b])
+        self.assertNotIn("A1", [u["key"] for u in a])
 
 
 class EditorRouteTests(unittest.TestCase):
