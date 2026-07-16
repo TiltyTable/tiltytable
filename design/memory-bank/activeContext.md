@@ -2,13 +2,14 @@
 
 ## Current Focus
 Build a **fun physical interactive arcade game for Open Sauce** on the live
-Jetson-hosted TiltyTable stack. Arcade V1 is in place (scored gauntlet,
-practice, module-grid levels, 854×480 cabinet UI). Ongoing bring-up: Stewart
-tilt (Uno R3), module-grid servos+LEDs (Uno R4 Minima, 9 independent LED
-strands), roller ball, and Arducam UVC capture. Kinect ball tracking is V2;
-full Stewart/roller-ball in the game loop is V3.
+Jetson-hosted TiltyTable stack. The isolated
+`release/open-sauce-integrated` worktree now has one-command arcade startup,
+in-process headless Kinect tracking, a 90 Hz Stewart/roller-ball loop, and a
+mouse-first 854×480 cabinet flow. Live projector/Kinect/Stewart validation
+remains before release handoff.
 
 ## Recent Changes
+- 2026-07-16 | Integrated arcade release branch: game owns headless Kinect observations directly (no HTTP hop), auto-completes tracked end cells, runs game/vision/Stewart feedback independently, scopes 90 Hz roller tilt to placement/play through the persistent supervisor, and provides full left/right-click cabinet navigation with on-screen initials.
 - 2026-07-16 | Added browser-only arcade Mode Forge at `/editor`: versioned LevelPackage import/export/validation, 12×12 paint/inspect workflow, deterministic ball/time simulation, and Hex Fall + Target Hunt/Snake mode runtimes. Browser never writes Jetson files; explicit CLI validates/installs packages.
 - 2026-07-15 | Experimental physical level now persists canonical absolute firmware steps plus model roll/pitch/heave/branch metadata. `level` and roller neutral return to that exact anchor through 12°-bounded absolute `TARGET` chunks with one endpoint wait; motor trims remain differential IK offsets only, and fresh crank calibration clears stale trims/anchor.
 - 2026-07-14 | Maximum-agility experimental pipeline flashed and supervisor restarted: roller targets pipelined at 60 Hz / 1.5° with 2 ms SYN vector window; tuning/probe use adaptive larger waypoints and endpoint-only waits; IK prioritizes crank/heave continuity before torque; firmware caches motion profiles and interleaves stepping with bounded serial reads. Experimental coordinate frame rotates leg azimuths to `(axis0=120°, axis1=240°, axis2=0°)` so axis 2 is cardinal. 27 tests pass; runtime profile query verified.

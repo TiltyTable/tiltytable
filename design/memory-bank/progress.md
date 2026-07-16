@@ -1,6 +1,7 @@
 # Progress
 
 ## Completed
+- [x] Integrated arcade release branch: one-command startup, in-process headless Kinect tracking, tracked completion for every game mode, independent 20/30/60/90 Hz loops, Stewart placement/play lifecycle, and mouse-first cabinet navigation.
 - [x] Browser arcade Mode Forge: portable LevelPackage schema/compiler, Hex Fall + Target Hunt runtimes, 12×12 editor, deterministic simulation, JSON import/export, editor route, and tests.
 - [x] Canonical experimental physical-level anchor: exact absolute step persistence, 12°-bounded endpoint-wait return, differential-only trim validation, roller neutral integration, and fresh-calibration invalidation.
 - [x] Maximum-agility pipeline flashed: 60 Hz pipelined roller targets, adaptive endpoint-only tuning moves, crank/heave-first IK, cached AccelStepper profiles, bounded serial parsing, and axis-2-aligned cardinal frame.
@@ -33,7 +34,7 @@
 - [x] Interactive `stewart_cli.py` for Stewart serial sessions.
 
 ## In Progress
-- [ ] Live roller-ball tilt session with `roller_ball.py` (human at table).
+- [ ] Live projector + Kinect + Stewart smoke test of the integrated arcade runner (human at table).
 
 ## Next Steps
 - [ ] Install `udev/99-tiltytable-rollerball.rules` so roller ball needs no sudo.
