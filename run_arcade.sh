@@ -68,7 +68,11 @@ if [[ "$KIOSK" -eq 1 ]]; then
   # Cursor/SSH shells do not inherit the local GNOME session even though the
   # projector desktop is already running. Attach kiosk Chromium to that X
   # session and its audio/DBus runtime automatically.
-  if [[ -z "${DISPLAY:-}" && -S /tmp/.X11-unix/X0 ]]; then
+  if [[ -S /tmp/.X11-unix/X0 && (
+    -z "${DISPLAY:-}" ||
+    "$DISPLAY" == localhost:* ||
+    "$DISPLAY" == 127.0.0.1:*
+  ) ]]; then
     export DISPLAY=:0
     local_runtime="/run/user/$(id -u)"
     if [[ -r "$local_runtime/gdm/Xauthority" ]]; then
