@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest import mock
 
 import numpy as np
+import cv2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -197,13 +198,38 @@ class ConfiguredMarkerGeometryTests(unittest.TestCase):
             "corner_x": [-990, 20, 30],
             "corner_xy": [-990, 620, 30],
             "corner_y": [10, 620, 30],
-            "edge_x_third": [-323.333, 20, 30],
+            "edge_x": [-323.333, 20, 30],
+            "edge_y": [10, 420, 30],
         })
         self.assertEqual(geometry.world_points["corner_xy"], (-990.0, 620.0, 30.0))
 
     def test_rejects_incomplete_marker_coordinates(self):
         with self.assertRaisesRegex(ValueError, "must contain exactly"):
             tp.TableGeometry(marker_world_points={"corner_origin": [0, 0, 0]})
+
+
+class ImageCellTrackerTests(unittest.TestCase):
+    def test_matches_projected_six_fiducial_layout_and_maps_cells(self):
+        tracker = tp.ImageCellTracker(marker_world_points={
+            "corner_origin": [0, 0, 46.0375],
+            "corner_x": [831.85, 0, 46.0375],
+            "corner_xy": [831.85, 831.85, 46.0375],
+            "corner_y": [0, 831.85, 46.0375],
+            "edge_x": [277.283, 0, 46.0375],
+            "edge_y": [0, 499.11, 46.0375],
+        })
+        table_points = np.array([tracker.table_points[name] for name in tracker.point_names], dtype=np.float32)
+        H = np.array([[900.0, 110.0, 150.0], [45.0, 760.0, 90.0], [0.12, 0.08, 1.0]])
+        pixels = cv2.perspectiveTransform(table_points.reshape(-1, 1, 2), H).reshape(-1, 2)
+        blobs = [tp.MarkerBlob(float(x), float(y), 5.0, 0.0, 0.0, 0.0) for x, y in pixels]
+        random.Random(4).shuffle(blobs)
+
+        matched, fit = tracker._match_and_fit(blobs)
+        self.assertLess(fit.max_residual_px, 1e-3)
+        tracker.H_table_to_image = fit.H_table_to_image
+        center_px = cv2.perspectiveTransform(np.array([[[831.85 * 0.49, 831.85 * 0.49]]], dtype=np.float32), H)[0, 0]
+        self.assertEqual(tracker.cell_from_pixel(*center_px), (6, 6))
+        self.assertEqual(set(matched), set(tracker.point_names))
 
 
 class DetectMarkersBallRejectionTests(unittest.TestCase):
@@ -228,9 +254,9 @@ class DetectMarkersBallRejectionTests(unittest.TestCase):
         ppx = ppy = 200.0
         z_mm = 900.0
 
-        # 5 small marker-sized blobs (radius_mm well under _MAX_MARKER_RADIUS_MM).
+        # 6 small marker-sized blobs (radius_mm well under _MAX_MARKER_RADIUS_MM).
         marker_radius_px = 5.0
-        marker_centers = [(60, 60), (140, 60), (220, 60), (60, 140), (60, 220)]
+        marker_centers = [(60, 60), (140, 60), (220, 60), (60, 140), (60, 220), (140, 140)]
         blobs_px = [(cx, cy, marker_radius_px) for cx, cy in marker_centers]
 
         # One much larger ball-sized blob: its radius in mm exceeds the
@@ -344,7 +370,7 @@ class TablePoseTrackerTests(unittest.TestCase):
         )
         return tp.PoseFitAttempt(ok=True, error=None, debug_frame=None, fit=fit)
 
-    def _failed_attempt(self, error="expected 5 retroreflective markers, found 4"):
+    def _failed_attempt(self, error="expected 6 retroreflective markers, found 4"):
         return tp.PoseFitAttempt(ok=False, error=error, debug_frame=None, fit=None)
 
     def test_before_any_success_apply_reports_untracked_and_stale(self):

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Continuous tracking of the table's pose relative to the (tripod-fixed) Azure
-Kinect, using five retroreflective fiducial markers: one at each table
-corner, plus a fifth marker on an edge.
+Kinect, using six retroreflective fiducial markers: one at each table
+corner, plus one additional marker on each of two adjacent edges.
 
 The table sits on a 3-leg Stewart platform and tilts/heaves during normal
 operation, so the camera-to-table transform is *not* fixed for a session —
@@ -12,7 +12,7 @@ remain visible across the platform's tilt range; that is what makes
 
 Marker layout (world frame = the table's own body-fixed frame) uses
 ``corner_origin``, ``corner_x``, ``corner_xy``, and ``corner_y`` at the four
-play-surface corners, plus ``edge_x_third`` one-third along one edge. The named
+play-surface corners, plus ``edge_x`` and ``edge_y`` on adjacent edges. The named
 corner coordinates are both the pose-fit geometry and the authoritative grid
 boundary: ``world_to_cell()`` derives its axes directly from them, so it does
 not need independently configured table-length values. Update the measured
@@ -74,19 +74,19 @@ import camera_geometry
 # ---------------------------------------------------------------------------
 
 class TableGeometry:
-    """Physical layout of the 5 named table fiducials, plus the
+    """Physical layout of the 6 named table fiducials, plus the
     pairwise-distance-signature matching that recovers point identity.
 
-    The four named corner markers define the play-surface rectangle. The
-    fifth edge marker is deliberately not used as a grid boundary; it adds a
-    well-distributed fifth point to the rigid fit.
+    The four named corner markers define the play-surface rectangle. The two
+    edge markers are not grid boundaries; together they break the square's
+    mirror ambiguity for image-space marker matching.
     """
 
     # Matching tolerances (pairwise-distance-signature match).
     DISTANCE_MATCH_TOL_MM = 50.0        # max per-pair distance error allowed for the best assignment
     DISTANCE_MATCH_AMBIGUITY_MM = 15.0  # runner-up assignment must be at least this much worse
     REQUIRED_POINT_NAMES = (
-        "corner_origin", "corner_x", "corner_xy", "corner_y", "edge_x_third",
+        "corner_origin", "corner_x", "corner_xy", "corner_y", "edge_x", "edge_y",
     )
 
     def __init__(
@@ -111,9 +111,8 @@ class TableGeometry:
             "corner_x": (-side_mm, 0.0, h),
             "corner_xy": (-side_mm, side_mm, h),
             "corner_y": (0.0, side_mm, h),
-            # Keep this off the edge midpoint so the otherwise symmetric
-            # corner layout has a unique distance signature.
-            "edge_x_third": (-side_mm / 3.0, 0.0, h),
+            "edge_x": (-side_mm / 3.0, 0.0, h),
+            "edge_y": (0.0, side_mm * 0.6, h),
         }
         self.world_points = self._validated_world_points(
             default_points if self.marker_world_points is None else self.marker_world_points
@@ -139,7 +138,7 @@ class TableGeometry:
 
     @classmethod
     def _validated_world_points(cls, points: dict) -> dict[str, tuple[float, float, float]]:
-        """Validate and normalize the five named marker centers from config."""
+        """Validate and normalize the six named marker centers from config."""
         if not isinstance(points, dict) or set(points) != set(cls.REQUIRED_POINT_NAMES):
             raise ValueError(
                 "marker_world_points must contain exactly: "
@@ -331,6 +330,142 @@ class MarkerBlob:
     x_mm: float   # camera-frame 3D (right)
     y_mm: float   # camera-frame 3D (down)
     z_mm: float   # camera-frame 3D (depth)
+
+
+@dataclass
+class ImageHomographyFitResult:
+    """Image-space fit from normalized table coordinates to IR pixels."""
+    H_table_to_image: np.ndarray
+    residuals_px: list[float]
+    rms_residual_px: float
+    max_residual_px: float
+
+
+class ImageCellTracker:
+    """Tracks table cells from fiducial image positions, without using
+    depth-derived marker X/Y/Z coordinates for the fit.
+
+    Corner marker centers are inset diagonally from the real surface corners.
+    Their normalized coordinates encode that inset, so the homography maps
+    directly into the full table's [0, 1] x [0, 1] cell space. The ball is
+    intentionally mapped onto that marker plane, as configured for this
+    tracker; no ball depth is used for cell selection.
+    """
+
+    MAX_REPROJECTION_ERROR_PX = 20.0
+    AMBIGUITY_MARGIN_PX = 3.0
+
+    def __init__(
+        self,
+        marker_world_points: dict,
+    ):
+        self.world_points = TableGeometry._validated_world_points(marker_world_points)
+        self.table_points = {name: point[:2] for name, point in self.world_points.items()}
+        self.point_names = list(self.table_points)
+        self.H_table_to_image: Optional[np.ndarray] = None
+        self.last_fit: Optional[ImageHomographyFitResult] = None
+        self.last_error: Optional[str] = None
+        self.last_success_monotonic: Optional[float] = None
+        self.last_attempt: Optional[PoseFitAttempt] = None
+
+    @property
+    def is_tracking(self) -> bool:
+        return self.H_table_to_image is not None
+
+    def age_seconds(self, now: Optional[float] = None) -> Optional[float]:
+        if self.last_success_monotonic is None:
+            return None
+        return (time.monotonic() if now is None else now) - self.last_success_monotonic
+
+    def _match_and_fit(self, blobs: list[MarkerBlob]) -> tuple[dict[str, MarkerBlob], ImageHomographyFitResult]:
+        if len(blobs) != len(self.point_names):
+            raise MatchingError(f"expected {len(self.point_names)} markers to match, got {len(blobs)}")
+        table_pts = np.asarray([self.table_points[name] for name in self.point_names], dtype=np.float32)
+        pixels = np.asarray([[blob.cx, blob.cy] for blob in blobs], dtype=np.float32)
+        best = second = None
+        # The first four named points are the corners. Solve their exact
+        # perspective transform with OpenCV's inexpensive four-point routine,
+        # then score the two remaining edge points. This avoids running a
+        # general homography solve for all 6! assignments every frame.
+        corner_pts = table_pts[:4]
+        for corner_indices in itertools.permutations(range(len(blobs)), 4):
+            H = cv2.getPerspectiveTransform(corner_pts, pixels[list(corner_indices)])
+            remaining = [index for index in range(len(blobs)) if index not in corner_indices]
+            for edge_indices in itertools.permutations(remaining):
+                perm = corner_indices + edge_indices
+                observed = pixels[list(perm)]
+                projected = cv2.perspectiveTransform(table_pts.reshape(-1, 1, 2), H).reshape(-1, 2)
+                residuals = np.linalg.norm(projected - observed, axis=1)
+                candidate = (float(np.max(residuals)), perm, H, residuals)
+                if best is None or candidate[0] < best[0]:
+                    second, best = best, candidate
+                elif second is None or candidate[0] < second[0]:
+                    second = candidate
+        if best is None or best[0] > self.MAX_REPROJECTION_ERROR_PX:
+            error = float("inf") if best is None else best[0]
+            raise MatchingError(
+                f"no image-space assignment matches the fiducial layout within "
+                f"{self.MAX_REPROJECTION_ERROR_PX:.0f}px (best max-error {error:.1f}px)"
+            )
+        if second is not None and second[0] - best[0] < self.AMBIGUITY_MARGIN_PX:
+            raise MatchingError(
+                f"ambiguous image-space marker match: best max-error {best[0]:.1f}px, "
+                f"runner-up {second[0]:.1f}px"
+            )
+        _, perm, H, residuals = best
+        matched = {name: blobs[perm[i]] for i, name in enumerate(self.point_names)}
+        fit = ImageHomographyFitResult(
+            H_table_to_image=H,
+            residuals_px=residuals.tolist(),
+            rms_residual_px=float(np.sqrt(np.mean(residuals ** 2))),
+            max_residual_px=float(np.max(residuals)),
+        )
+        return matched, fit
+
+    def update(
+        self, ir_uint16: np.ndarray, depth_mm: np.ndarray, fx: float, fy: float,
+        ppx: float, ppy: float, marker_ir_threshold: Optional[float] = None,
+        now: Optional[float] = None,
+    ) -> "PoseFitAttempt":
+        try:
+            blobs, debug_frame = detect_markers(
+                ir_uint16, depth_mm, fx, fy, ppx, ppy, ir_min_counts=marker_ir_threshold,
+            )
+            matched, fit = self._match_and_fit(blobs)
+        except DetectionError as exc:
+            attempt = PoseFitAttempt(False, str(exc), exc.debug_frame, None)
+        except MatchingError as exc:
+            attempt = PoseFitAttempt(False, str(exc), debug_frame if "debug_frame" in locals() else None, None)
+        else:
+            attempt = PoseFitAttempt(
+                True, None, debug_frame, fit,
+                matched_points={name: {"pixel": [blob.cx, blob.cy], "residual_px": fit.residuals_px[i]}
+                                for i, (name, blob) in enumerate(matched.items())},
+            )
+            self.H_table_to_image = fit.H_table_to_image
+            self.last_fit = fit
+            self.last_success_monotonic = time.monotonic() if now is None else now
+            self.last_error = None
+        if not attempt.ok:
+            self.last_error = attempt.error
+        self.last_attempt = attempt
+        return attempt
+
+    def cell_from_pixel(self, cx: float, cy: float) -> Optional[tuple[int, int]]:
+        if self.H_table_to_image is None:
+            return None
+        H_image_to_table = np.linalg.inv(self.H_table_to_image)
+        xy = cv2.perspectiveTransform(np.array([[[cx, cy]]], dtype=np.float32), H_image_to_table)[0, 0]
+        origin = np.asarray(self.table_points["corner_origin"])
+        x_corner = np.asarray(self.table_points["corner_x"])
+        y_corner = np.asarray(self.table_points["corner_y"])
+        x_axis = origin - x_corner
+        y_axis = origin - y_corner
+        col_fraction = float(np.dot(xy - x_corner, x_axis) / np.dot(x_axis, x_axis))
+        row_fraction = float(np.dot(xy - y_corner, y_axis) / np.dot(y_axis, y_axis))
+        col = int(np.clip(np.floor(col_fraction * GRID_COLS), 0, GRID_COLS - 1))
+        row = int(np.clip(np.floor(row_fraction * GRID_ROWS), 0, GRID_ROWS - 1))
+        return row, col
 
 
 @dataclass

@@ -318,8 +318,9 @@ to require the `START` confirmation.
 
 ### 7. Azure Kinect ball and table tracking
 
-Mount five retroreflective fiducials: one at each table corner and one more
-along an edge, in the geometry documented at the top of `table_pose.py`.
+Mount six retroreflective fiducials: one at each table corner and one more
+on each of two adjacent edges, in the geometry documented at the top of
+`table_pose.py`.
 Verify the measured marker-center locations in `TableGeometry._rebuild()`;
 the four corner fiducials define the cell-map bounds, so no separate table
 length configuration is needed. Thresholds, ball radius, and camera settings
@@ -327,9 +328,9 @@ live in `config.json`.
 
 Set `table_pose.marker_world_points` in `config.json` to the measured center
 of each fiducial, in millimetres: `corner_origin`, `corner_x`, `corner_xy`,
-`corner_y`, and `edge_x_third`. Each value is `[x, y, z]` in the table frame.
-The fifth marker must not be at the midpoint of a symmetric edge, or the
-distance-only marker matcher cannot distinguish the corner assignments.
+`corner_y`, `edge_x`, and `edge_y`. Each value is `[x, y, z]` in the table
+frame. Place the two edge markers on adjacent edges to break the square's
+mirror ambiguity.
 
 Start the camera service on port 8080:
 
