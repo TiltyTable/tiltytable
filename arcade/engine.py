@@ -532,6 +532,14 @@ class GameEngine:
             )
             ball_payload = self._ball_public_state()
             gauntlet_cleared = len(self.results) if self.mode == "gauntlet" else 0
+            live_mode_score = 0
+            if self.state == GameState.PLAYING and level:
+                if level.is_survival_lava:
+                    live_mode_score = self._survival_visited * int(
+                        level.points_per_tile or 0
+                    )
+                elif level.mode in ("hex_fall", "target_hunt"):
+                    live_mode_score = self._mode_score
             payload: dict[str, Any] = {
                 "state": self.state.value,
                 "mode": self.mode,
@@ -547,7 +555,8 @@ class GameEngine:
                 },
                 "survival": survival_payload,
                 "modeState": self._mode_state,
-                "score": sum(result.score for result in self.results),
+                "score": sum(result.score for result in self.results) + live_mode_score,
+                "currentModeScore": live_mode_score,
                 "levelsCleared": len(self.results),
                 "restarts": self.current_restarts,
                 "results": [result.public_dict() for result in self.results],

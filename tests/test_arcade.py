@@ -89,7 +89,7 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.assertEqual(self.engine.state, GameState.LEVEL_CLEAR)
         result = self.engine.last_level_result
         self.assertIsNotNone(result)
-        self.assertGreater(result.score, 0)
+        self.assertEqual(result.score, 0)
 
     def test_survival_lava_fail_restarts(self) -> None:
         self.begin_level_seven()

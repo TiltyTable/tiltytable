@@ -16,6 +16,7 @@ from arcade.level_packages import (
 )
 from arcade.levels import MANIFEST_PATH, load_levels
 from arcade.server import create_app
+from arcade.survival_lava import survival_score
 from arcade.target_hunt import (
     TargetHuntParams,
     reachable_cells,
@@ -188,6 +189,19 @@ class HexFallTests(unittest.TestCase):
         from arcade.hex_fall import _connected_from
 
         self.assertEqual(_connected_from("A1", active, mapping), active)
+
+
+class LavaScoreTests(unittest.TestCase):
+    def test_score_is_unique_tiles_times_points_less_restarts(self) -> None:
+        self.assertEqual(
+            survival_score(
+                visited_count=12,
+                remaining_seconds=999,
+                restarts=1,
+                points_per_tile=25,
+            ),
+            200,
+        )
 
 
 class EditorRouteTests(unittest.TestCase):

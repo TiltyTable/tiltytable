@@ -16,7 +16,7 @@
       short: "Keep moving while every touched tile heats, warns, then sinks.",
       steps: ["Touching starts a tile timer.", "Red flashing means leave now.", "Survive until time reaches zero."],
       defaults: { survivalSeconds: 40, dwellSeconds: 1.2, warnSeconds: 1.4, pointsPerTile: 25, pitConfirmSeconds: 0.5 },
-      fields: [["survivalSeconds", "Survive for"], ["dwellSeconds", "Safe after touch"], ["warnSeconds", "Red warning"]],
+      fields: [["survivalSeconds", "Survive for"], ["dwellSeconds", "Safe after touch"], ["warnSeconds", "Red warning"], ["pointsPerTile", "Points per new tile"]],
     },
     hex_fall: {
       label: "Hex-A-Fall",
@@ -256,7 +256,9 @@
     if (sim.cells[sim.ball].value === -1) { renderBoard(); endTest(false, "The ball fell into a pit."); return; }
     if (level.mode === "target_hunt" && sim.ball === sim.target) hitTarget();
     if (level.mode === "survival_lava" && !sim.touched[sim.ball]) {
-      sim.touched[sim.ball] = sim.time; sim.cells[sim.ball].color = "#F49400";
+      sim.touched[sim.ball] = sim.time;
+      sim.cells[sim.ball].color = "#F49400";
+      sim.score += Number(level.modeParams.pointsPerTile || 25);
     }
     renderBoard(); updateHud();
   }

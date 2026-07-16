@@ -323,7 +323,5 @@ def survival_score(
     restarts: int,
     points_per_tile: int,
 ) -> int:
-    return max(
-        0,
-        500 + visited_count * points_per_tile + remaining_seconds * 5 - restarts * 100,
-    )
+    del remaining_seconds
+    return max(0, visited_count * points_per_tile - restarts * 100)

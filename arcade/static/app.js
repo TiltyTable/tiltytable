@@ -622,8 +622,8 @@ function renderLevelScore() {
   const survival = ["survival_lava", "hex_fall"].includes(resultLevel?.mode);
   const breakdown = survival
     ? `<div class="result-grid">
-        <div><span>Survival</span><strong>500</strong></div>
-        <div><span>Tile bonus</span><strong>+tiles</strong></div>
+        <div><span>Tiles touched</span><strong>${game.survival?.tilesVisited ?? "—"}</strong></div>
+        <div><span>Points / tile</span><strong>${resultLevel?.pointsPerTile || 0}</strong></div>
         <div><span>Restart penalty</span><strong>−${result.restarts * 100}</strong></div>
       </div>`
     : `<div class="result-grid">
