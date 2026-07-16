@@ -12,7 +12,7 @@
 - Tile maps + game runner: `maps/`, `game_runner.py`
 - Stewart firmware: `arduino/uim5756pm_stewart/`
 - Module servos+LEDs firmware: `arduino/servo_calib/`
-- Archived obsolete sketches: `arduino/archive/`
+- Archived obsolete sketches: `archive/arduino/`
 - Camera (MindVision): `camera/`
 - Design / memory bank: `design/`, `design/memory-bank/`
 - Cursor rules: `.cursor/rules/`

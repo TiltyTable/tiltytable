@@ -190,7 +190,10 @@ def main() -> int:
         tuning = TuningResults.load(args.tuning_config)
     except (ValueError, KeyError, TypeError) as exc:
         parser.error(f"invalid tuning config: {exc}")
-    motor_trim_steps = tuple(tuning.motor_trim_steps)
+    try:
+        motor_trim_steps = tuning.differential_trim_steps()
+    except ValueError as exc:
+        parser.error(f"invalid tuning calibration: {exc}")
     print(
         f"motor trims={motor_trim_steps} "
         f"level anchor={tuning.level_anchor_steps}"

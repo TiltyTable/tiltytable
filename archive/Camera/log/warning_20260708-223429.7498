@@ -1,0 +1,4 @@
+Log file created at: 2026/07/08 22:34:29
+Running on machine: jetson
+Log line format: [IWEF]mmdd hh:mm:ss.uuuuuu threadid file:line] msg
+W0708 22:34:29.642270  7509 MVCameraBase.cpp:100] Device:(name:HT-GE134GM-T-CL sn:045122223033)Lost

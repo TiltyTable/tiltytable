@@ -121,6 +121,20 @@ class TuningResultsTests(unittest.TestCase):
             self.assertEqual(loaded.level_anchor_steps, original.level_anchor_steps)
             self.assertEqual(loaded.level_anchor_model, original.level_anchor_model)
 
+    def test_anchor_rejects_inconsistent_differential_trims(self) -> None:
+        results = TuningResults(
+            motor_trim_steps=[10, 20, 30],
+            level_anchor_steps=[1010, 2020, 3031],
+            level_anchor_model={
+                "roll_deg": 0.0,
+                "pitch_deg": 0.0,
+                "heave_mm": 0.0,
+                "model_steps": [1000, 2000, 3000],
+            },
+        )
+        with self.assertRaisesRegex(ValueError, "do not match"):
+            results.differential_trim_steps()
+
 
 class TuningSessionTests(unittest.TestCase):
     def setUp(self) -> None:

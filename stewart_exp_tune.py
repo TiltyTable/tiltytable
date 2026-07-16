@@ -122,23 +122,44 @@ class TuningResults:
         if not isinstance(model_steps_raw, list) or len(model_steps_raw) != 3:
             raise ValueError("level_anchor_model.model_steps must contain 3 values")
         model_steps = tuple(int(value) for value in model_steps_raw)
-        return PoseSolution(
+        branch_raw = self.level_anchor_model.get("branch_index", [0, 0, 0])
+        if not isinstance(branch_raw, list) or len(branch_raw) != 3:
+            raise ValueError("level_anchor_model.branch_index must contain 3 values")
+        pose = PoseSolution(
             roll_deg=float(self.level_anchor_model["roll_deg"]),
             pitch_deg=float(self.level_anchor_model["pitch_deg"]),
             heave_mm=float(self.level_anchor_model["heave_mm"]),
             crank_deg=tuple(steps_to_crank_deg(value) for value in model_steps),
-            branch_index=tuple(
-                int(value)
-                for value in self.level_anchor_model.get(
-                    "branch_index", [0, 0, 0]
-                )
-            ),
+            branch_index=tuple(int(value) for value in branch_raw),
             closure_margin_mm=0.0,
             worst_advisory_joint_deg=0.0,
             max_crank_delta_deg=0.0,
             dead_center_margin_deg=0.0,
             max_static_torque_nm=0.0,
         )
+        self.differential_trim_steps()
+        return pose
+
+    def differential_trim_steps(self) -> tuple[int, int, int]:
+        """Return the model-to-physical offset, validating an anchored model."""
+        trims = tuple(int(value) for value in self.motor_trim_steps)
+        if len(trims) != 3:
+            raise ValueError("motor_trim_steps must contain three values")
+        if self.level_anchor_steps is None or self.level_anchor_model is None:
+            return trims
+        model_steps_raw = self.level_anchor_model.get("model_steps")
+        if not isinstance(model_steps_raw, list) or len(model_steps_raw) != 3:
+            raise ValueError("level_anchor_model.model_steps must contain 3 values")
+        derived = tuple(
+            int(self.level_anchor_steps[axis]) - int(model_steps_raw[axis])
+            for axis in range(3)
+        )
+        if derived != trims:
+            raise ValueError(
+                "motor trims do not match the canonical anchor model: "
+                f"saved={trims}, derived={derived}"
+            )
+        return trims
 
     def game_origin(self) -> tuple[float, float]:
         anchor = self.anchor_pose()
@@ -200,7 +221,7 @@ class TuningSession:
 
     def refresh(self) -> None:
         status = self.link.status()
-        self.current = status.as_pose(tuple(self.results.motor_trim_steps))
+        self.current = status.as_pose(self.results.differential_trim_steps())
 
     def ensure_armed(self) -> None:
         status = self.link.status()
@@ -219,7 +240,7 @@ class TuningSession:
             return
         self.ensure_armed()
         planned = plan_heave_transition(self.current, 0.0)
-        offsets = tuple(self.results.motor_trim_steps)
+        offsets = self.results.differential_trim_steps()
         for pose in planned:
             self.link.target(pose, offsets)
         self.link.wait_idle()
@@ -269,7 +290,7 @@ class TuningSession:
         self.ensure_armed()
         started = time.monotonic()
         for pose in planned:
-            offsets = tuple(self.results.motor_trim_steps)
+            offsets = self.results.differential_trim_steps()
             self.link.target(pose, offsets)
         self.link.wait_idle()
         elapsed = time.monotonic() - started
@@ -280,7 +301,7 @@ class TuningSession:
     def capture_level_anchor(self) -> None:
         """Persist the current absolute physical level and its IK reference."""
         status = self.link.status()
-        trims = tuple(self.results.motor_trim_steps)
+        trims = self.results.differential_trim_steps()
         model_steps = [
             status.steps[axis] - trims[axis] for axis in range(3)
         ]
@@ -536,6 +557,8 @@ class TuningSession:
         )
         self.link.wait_idle()
         self.results.motor_trim_steps[axis] += pulses
+        self.results.level_anchor_steps = None
+        self.results.level_anchor_model = None
         self.results.save(self.results_path)
         self.refresh()
         print(
@@ -647,7 +670,7 @@ def main() -> int:
         ):
             clear_after_fresh_crank_calibration(results, args.results)
             print("Fresh zero-step calibration cleared stale trims and level anchor.")
-        session.current = status.as_pose(tuple(results.motor_trim_steps))
+        session.current = status.as_pose(results.differential_trim_steps())
         if (
             session.current.heave_mm > 5.0
             and abs(session.current.roll_deg) < 0.1

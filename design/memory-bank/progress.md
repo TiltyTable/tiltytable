@@ -1,6 +1,7 @@
 # Progress
 
 ## Completed
+- [x] Canonical experimental physical-level anchor: exact absolute step persistence, 12°-bounded endpoint-wait return, differential-only trim validation, roller neutral integration, and fresh-calibration invalidation.
 - [x] Maximum-agility pipeline flashed: 60 Hz pipelined roller targets, adaptive endpoint-only tuning moves, crank/heave-first IK, cached AccelStepper profiles, bounded serial parsing, and axis-2-aligned cardinal frame.
 - [x] Supervisor-based Stewart game tuning CLI: manual directional ball-roll thresholds, runtime speed/acceleration profiles, supervised agility reversals, and persisted tuning results.
 - [x] Persistent no-DTR Stewart supervisor with Unix-socket IPC, motion-client ABORT/HOLD cleanup, readonly leases, and non-restarting user service; experimental tools no longer open Arduino serial by default.
@@ -17,7 +18,7 @@
 - [x] Documented trusted 12×12 LED/servo global maps (`module-grid-mapping` rule); cleared stale orientation-mismatch guidance in `tilt_table_cli`.
 - [x] Remapped grid origin to `(0,0)` = top-left (row↓ col→).
 - [x] Module servos: pulse-then-release only; never leave PWM latched (hardware-safety rule).
-- [x] Archived obsolete Arduino sketches under `arduino/archive/`; live modules board = `servo_calib`.
+- [x] Archived obsolete Arduino sketches under `archive/arduino/`; live modules board = `servo_calib`.
 - [x] `game_runner.py` + maps schema; firmware per-channel 3s HOLD timeout on R4.
 - [x] LED palette (9 game colors) + per-tile gain cal tool; game_runner uses them.
 - [x] Archived old `scratch/tilt-table` sandbox.

@@ -2,7 +2,7 @@
 
 This folder adds a simple hardware bridge for four SG90 servos:
 
-- `arduino/archive/pca9685_servo_bridge/pca9685_servo_bridge.ino` (archived; was early Uno R3 servo bridge).
+- `archive/arduino/pca9685_servo_bridge/pca9685_servo_bridge.ino` (archived; was early Uno R3 servo bridge).
   Live module board firmware is `arduino/servo_calib/` on the Uno R4.
 - `servo_cli.py` runs on your Mac and talks to the Arduino over USB serial.
 - `servo_calibration.json` stores the current calibration defaults for channels `0` through `3`.
@@ -96,7 +96,7 @@ Most PCA9685 boards put `GND`, `V+`, and `SIG` in a row on each 3-pin header. Do
 
 ## Upload the Arduino sketch
 
-1. Open `arduino/archive/pca9685_servo_bridge/pca9685_servo_bridge.ino` in the Arduino IDE (archived; prefer `arduino/servo_calib/` for the live R4).
+1. Open `archive/arduino/pca9685_servo_bridge/pca9685_servo_bridge.ino` in the Arduino IDE (archived; prefer `arduino/servo_calib/` for the live R4).
 2. Select board `Arduino Uno`.
 3. Select the Arduino serial port.
 4. Upload the sketch.
