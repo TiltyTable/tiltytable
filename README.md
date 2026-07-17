@@ -409,21 +409,13 @@ Current game behavior:
   active level.
 - The in-process Kinect adapter drives the automatic Floor-is-Lava survival
   mechanics.
-- Chambers 1–6 do not yet automatically detect the finish cell; the operator
-  presses `C` when the marble reaches magenta.
 
-## Simulation and diagnostics
-
-Run the cabinet UI and game logic without hardware:
-
-```bash
-./run_arcade.sh --simulation
-```
+## Arcade diagnostics
 
 Validate maps and Python behavior:
 
 ```bash
-.venv/bin/python3 -m arcade.preflight --port 8081
+.venv/bin/python3 -m arcade.preflight --port 8081 --hardware
 .venv/bin/python3 -m unittest discover -s tests -v
 ```
 

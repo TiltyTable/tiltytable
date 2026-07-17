@@ -1,6 +1,8 @@
 # Progress
 
 ## Completed
+- [x] Shared pit confirmation for every mode, immediate neutral-floor tracking, configurable escalating Hex collapse stages, and larger booth legend/footer/instruction text.
+- [x] Human-review cabinet simplification: no character panels/restart counters, larger controls/status text, LED color legends, common A1 start, and two-frame Snake food capture.
 - [x] Latency-first Open Sauce arcade: three-game selector, timed Lava/Hex touch scoring, timerless Snake escalation, no shipped reach-finish maps, and main's frame-driven/lock-free tracking path preserved.
 - [x] Archived Mode Forge and LevelPackage tooling; active games are edited directly with AI-assisted iteration.
 - [x] Integrated arcade release branch: one-command startup, in-process headless Kinect tracking, tracked completion for every game mode, independent 20/30/60/90 Hz loops, Stewart placement/play lifecycle, and mouse-first cabinet navigation.

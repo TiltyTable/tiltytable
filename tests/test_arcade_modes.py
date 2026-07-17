@@ -2,7 +2,13 @@ from __future__ import annotations
 
 import unittest
 
-from arcade.hex_fall import HexFallParams, start_hex_fall, tick_hex_fall
+from arcade.hex_fall import (
+    HexFallParams,
+    HexFallStage,
+    collapse_stage,
+    start_hex_fall,
+    tick_hex_fall,
+)
 from arcade.levels import load_levels, load_map
 from arcade.target_hunt import (
     TargetHuntParams,
@@ -39,6 +45,7 @@ class CatalogTests(unittest.TestCase):
             ],
         )
         for level in catalog.levels:
+            self.assertEqual(level.start_cell, "A1")
             colors = {str(cell["color"]).upper() for cell in load_map(level).values()}
             self.assertNotIn("#680056", colors)
             self.assertNotIn("#FF00AA", colors)
@@ -49,7 +56,7 @@ class HexFallTests(unittest.TestCase):
         mapping = row_col()
         params = HexFallParams(
             survival_seconds=45,
-            collapse_every_seconds=5,
+            collapse_stages=(HexFallStage(0, 5, 1),),
             points_per_tile=1,
         )
         session = start_hex_fall(params, 0.0)
@@ -69,7 +76,7 @@ class HexFallTests(unittest.TestCase):
         mapping = row_col()
         params = HexFallParams(
             survival_seconds=45,
-            collapse_every_seconds=1,
+            collapse_stages=(HexFallStage(0, 1, 1),),
             collapse_warn_seconds=1,
             seed=11,
         )
@@ -86,7 +93,7 @@ class HexFallTests(unittest.TestCase):
         mapping = row_col()
         params = HexFallParams(
             survival_seconds=2,
-            collapse_every_seconds=10,
+            collapse_stages=(HexFallStage(0, 10, 1),),
             points_per_tile=1,
         )
         session = start_hex_fall(params, 0.0)
@@ -96,17 +103,32 @@ class HexFallTests(unittest.TestCase):
         self.assertEqual(result.remaining_seconds, 0)
         self.assertEqual(result.score, 2)
 
+    def test_collapse_stages_escalate_from_one_to_three_tiles(self) -> None:
+        params = HexFallParams(
+            collapse_stages=(
+                HexFallStage(0, 2.0, 1),
+                HexFallStage(15, 1.6, 2),
+                HexFallStage(30, 1.2, 3),
+            )
+        )
+        self.assertEqual(collapse_stage(params, 0).count, 1)
+        self.assertEqual(collapse_stage(params, 15).count, 2)
+        self.assertEqual(collapse_stage(params, 30).count, 3)
+
 
 class SnakeTests(unittest.TestCase):
     def test_food_scores_and_adds_one_wall_and_one_pit(self) -> None:
         cells = blank_cells()
         mapping = row_col()
-        params = TargetHuntParams(target_confirm_seconds=0.1, seed=7)
+        params = TargetHuntParams(target_confirm_frames=2, seed=7)
         session = start_target_hunt(params, cells, mapping, "A1", 0.0)
         target = session.target_cell
         self.assertIsNotNone(target)
-        tick_target_hunt(session, target, 0.0)
-        result = tick_target_hunt(session, target, 0.2)
+        first = tick_target_hunt(session, target, 0.0, observation_frame=10)
+        self.assertEqual(first.score, 0)
+        duplicate = tick_target_hunt(session, target, 0.01, observation_frame=10)
+        self.assertEqual(duplicate.score, 0)
+        result = tick_target_hunt(session, target, 0.04, observation_frame=11)
         self.assertEqual(result.score, 1)
         self.assertEqual(result.targets_reached, 1)
         self.assertEqual(
@@ -131,7 +153,50 @@ class SnakeTests(unittest.TestCase):
         )
         self.assertFalse(tick_target_hunt(session, None, 100.0).lost)
         session.cells["A1"]["value"] = -1
-        self.assertTrue(tick_target_hunt(session, "A1", 100.1).lost)
+        self.assertFalse(
+            tick_target_hunt(
+                session,
+                "A1",
+                100.1,
+                tracking_confidence=0.9,
+            ).lost
+        )
+        self.assertFalse(
+            tick_target_hunt(
+                session,
+                "A1",
+                100.4,
+                tracking_confidence=0.9,
+            ).lost
+        )
+        self.assertTrue(
+            tick_target_hunt(
+                session,
+                "A1",
+                100.61,
+                tracking_confidence=0.9,
+            ).lost
+        )
+
+    def test_snake_ignores_low_confidence_pit_overlap(self) -> None:
+        cells = blank_cells()
+        cells["A1"]["value"] = -1
+        session = start_target_hunt(
+            TargetHuntParams(seed=3),
+            cells,
+            row_col(),
+            "B1",
+            0.0,
+        )
+        for now in (0.0, 0.3, 0.6, 0.9):
+            self.assertFalse(
+                tick_target_hunt(
+                    session,
+                    "A1",
+                    now,
+                    tracking_confidence=0.5,
+                ).lost
+            )
 
 
 if __name__ == "__main__":

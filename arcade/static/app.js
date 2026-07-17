@@ -118,13 +118,13 @@ const {
 
 function cabinetHint(kind, label) {
   const button = kind === "confirm" ? "RIGHT" : "LEFT";
-  return `<span class="cabinet-hint ${kind}"><i class="pixel-button ${kind}" aria-hidden="true"></i><span>${button} · ${escapeHtml(label)}</span></span>`;
+  return `<span class="cabinet-hint ${kind}"><i class="pixel-button ${kind}" aria-hidden="true"></i><span>${button} ${escapeHtml(label)}</span></span>`;
 }
 
 function confirmHint(label) { return cabinetHint("confirm", label); }
 function backHint(label = "BACK") { return cabinetHint("back", label); }
 function joinHints(...hints) { return hints.filter(Boolean).join('<i class="hint-divider">·</i>'); }
-function navigationHint(label = "CHOOSE") { return `<span class="navigation-hint">ROLL ↑↓ · ${escapeHtml(label)}</span>`; }
+function navigationHint(label = "CHOOSE") { return `<span class="navigation-hint">ROLL ↑↓ ${escapeHtml(label)}</span>`; }
 
 function isSurvivalLevel(level = game?.level) {
   return level?.mode === "survival_lava";
@@ -331,17 +331,10 @@ function updateBallTrackOverlay(ball, trackingEnabled) {
 }
 
 function dialogue(kenText, trollText, compact = false) {
-  return `
-    <div class="dialogue ${compact ? "dialogue-compact" : ""}">
-      <article class="dialogue-panel ken">
-        <p class="dialogue-name">KEN</p>
-        <p class="dialogue-text">${escapeHtml(kenText)}</p>
-      </article>
-      <article class="dialogue-panel troll">
-        <p class="dialogue-name">TROLL</p>
-        <p class="dialogue-text">${escapeHtml(trollText)}</p>
-      </article>
-    </div>`;
+  void kenText;
+  void trollText;
+  void compact;
+  return "";
 }
 
 function shell(content, controls = "", dialogueHtml = "") {
@@ -349,7 +342,6 @@ function shell(content, controls = "", dialogueHtml = "") {
     <section class="scene">
       <header class="topbar">${brand()}${hardwareStatus()}</header>
       <div class="scene-center">${content}</div>
-      ${dialogueHtml}
       <footer class="footer">
         <div class="control-strip">${controls}</div>
       </footer>
@@ -444,11 +436,45 @@ function renderLevelSelect() {
     dialogue(LORE.levelSelect.ken, LORE.levelSelect.troll, true));
 }
 
+function legendItem(color, label, detail, extraClass = "") {
+  return `
+    <div class="legend-item">
+      <i class="legend-swatch ${color} ${extraClass}"></i>
+      <div><strong>${label}</strong><span>${detail}</span></div>
+    </div>`;
+}
+
+function modeLegend(level) {
+  const common = legendItem("cyan", "CYAN", "Start here");
+  if (level.mode === "survival_lava") {
+    return common
+      + legendItem("gray", "GRAY", "Safe untouched floor")
+      + legendItem("orange", "ORANGE", "Touched · points earned")
+      + legendItem("red", "BLINKING RED", "Move now", "blinking")
+      + legendItem("red", "SOLID RED", "Pit · run ends", "pit");
+  }
+  if (level.mode === "hex_fall") {
+    return common
+      + legendItem("gray", "GRAY", "Unclaimed floor")
+      + legendItem("blue", "BLUE", "Claimed · +1 point")
+      + legendItem("red", "BLINKING RED", "Tile about to fall", "blinking")
+      + legendItem("red", "SOLID RED", "Pit · run ends", "pit");
+  }
+  return common
+    + legendItem("gray", "GRAY", "Open floor")
+    + legendItem("blue", "FLASHING BLUE", "Food · +1 point", "blinking")
+    + legendItem("green", "GREEN", "Raised wall")
+    + legendItem("red", "RED", "Pit · run ends", "pit");
+}
+
 function renderRules() {
   const level = game.level;
   return shell(`
     <div class="rules-layout">
-      <div class="level-stamp"><strong>${level.number}</strong><span>GAME</span></div>
+      <aside class="mode-legend">
+        <p class="legend-title">LED GUIDE</p>
+        ${modeLegend(level)}
+      </aside>
       <div class="rules-copy">
         <h1>${escapeHtml(level.title)}</h1>
         <p class="feature">${escapeHtml(level.feature)}</p>
@@ -540,14 +566,13 @@ function renderPlacement() {
         <p class="hud-level">GAME ${level.number} · ${escapeHtml(level.title)}</p>
         <h1>PLACE<br>THE BALL</h1>
         <p class="hud-instruction">${instruction}</p>
-        <div class="hud-stats">
-          ${level.mode === "target_hunt" ? "" : `<div class="hud-stat"><span>TIME LIMIT</span><strong>${levelTimerSeconds(level)}s</strong></div>`}
-          <div class="hud-stat"><span>RESTARTS</span><strong>${game.restarts}</strong></div>
-        </div>
-        <p class="placement-signal ${ready ? "ready" : ""}">${ready ? "BALL READY" : "FIND CYAN"}</p>
+        ${level.mode === "target_hunt" ? "" : `
+          <div class="hud-stats single">
+            <div class="hud-stat"><span>TIME LIMIT</span><strong>${levelTimerSeconds(level)}s</strong></div>
+          </div>`}
       </div>
     </div>`,
-    joinHints(`<span>ROLLER BALL TILTS</span>`, confirmHint("START"), backHint("END RUN")),
+    joinHints(`<span>ROLL TO TILT</span>`, confirmHint("START"), backHint("END RUN")),
     placementDialogue(level));
 }
 
@@ -580,7 +605,7 @@ function renderPlaying() {
       : survival
         ? `Tiles touched <strong>${visited}</strong> · +${level.pointsPerTile || 0} each`
         : `Reach magenta <strong>${cellKeyToCoordinates(level.endCell)}</strong>`;
-  const footer = joinHints(`<span>ROLLER BALL TILTS</span>`, backHint("END RUN"));
+  const footer = joinHints(`<span>ROLL TO TILT</span>`, backHint("END RUN"));
   return shell(`
     <div class="game-layout">
       ${boardMarkup(false)}
@@ -590,7 +615,6 @@ function renderPlaying() {
         ${hunt ? "" : `<div class="timer ${remaining <= 10 ? "danger" : remaining <= 20 ? "warn" : ""}">${String(remaining).padStart(2, "0")}</div>`}
         <div class="hud-stats">
           <div class="hud-stat"><span>RUN SCORE</span><strong>${Number(game.score).toLocaleString()}</strong></div>
-          <div class="hud-stat"><span>RESTARTS</span><strong>${game.restarts}</strong></div>
           ${tracked ? `<div class="hud-stat"><span>${hunt ? "FOOD" : "TILES"}</span><strong>${hunt ? (modeState.targetsReached || 0) : hex ? (modeState.tilesTouched || 0) : visited}</strong></div>` : ""}
         </div>
         <p class="hud-instruction">${instruction}</p>
@@ -654,9 +678,7 @@ function renderLevelScore() {
   const pointsPerTile = resultLevel?.mode === "hex_fall"
     ? (resultLevel?.modeParams?.pointsPerTile || 0)
     : (resultLevel?.pointsPerTile || 0);
-  const survivalThirdStat = resultLevel?.mode === "hex_fall"
-    ? "<div><span>Timer</span><strong>CLEARED</strong></div>"
-    : `<div><span>Restart penalty</span><strong>−${result.restarts * 100}</strong></div>`;
+  const survivalThirdStat = "<div><span>Timer</span><strong>CLEARED</strong></div>";
   const breakdown = survival
     ? `<div class="result-grid">
         <div><span>Tiles touched</span><strong>${touchedTiles}</strong></div>
@@ -666,7 +688,7 @@ function renderLevelScore() {
     : `<div class="result-grid">
         <div><span>Clear</span><strong>1,000</strong></div>
         <div><span>Time bonus</span><strong>+${result.remainingSeconds * 10}</strong></div>
-        <div><span>Restart penalty</span><strong>−${result.restarts * 100}</strong></div>
+        <div><span>Finish</span><strong>CLEARED</strong></div>
       </div>`;
   return shell(`
     <article class="message-card">

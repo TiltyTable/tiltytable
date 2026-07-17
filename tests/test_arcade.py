@@ -123,7 +123,7 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.engine.continue_action()
         self.engine.tick()
         self.engine.confirm_placement()
-        self.ball.set_cell("F6")
+        self.ball.set_cell(self.engine.current_level.start_cell)
         self.assertEqual(self.engine.state, GameState.PLAYING)
 
     def test_survival_win_after_countdown(self) -> None:
@@ -137,7 +137,7 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.assertIsNotNone(result)
         self.assertEqual(result.score, 0)
 
-    def test_survival_lava_fail_restarts(self) -> None:
+    def test_survival_lava_fail_allows_retry(self) -> None:
         self.begin_lava_survival()
         for _ in range(60):
             self.clock.advance(0.12)
@@ -154,7 +154,7 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.engine.select_practice_level(level_id)
         self.engine.continue_action()
         self.engine.tick()
-        self.ball.set_cell("F6")
+        self.ball.set_cell(self.engine.current_level.start_cell)
         self.engine.confirm_placement()
         self.assertEqual(self.engine.state, GameState.PLAYING)
 

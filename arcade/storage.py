@@ -31,7 +31,6 @@ class ScoreStore:
             "levelsCleared": max(0, int(entry["levelsCleared"])),
             "gauntletLevelCount": max(1, int(entry.get("gauntletLevelCount", 3))),
             "elapsedMs": max(0, int(entry["elapsedMs"])),
-            "restarts": max(0, int(entry.get("restarts", 0))),
             "complete": bool(entry.get("complete", False)),
             "createdAt": entry.get("createdAt")
             or datetime.now(timezone.utc).isoformat(timespec="seconds"),

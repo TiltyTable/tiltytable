@@ -15,27 +15,27 @@ The cabinet opens directly to three game modes:
 Lava and Hex keep their mode-specific score when the timer expires. Snake has
 no timer. Dynamic modes have no magenta finish tile.
 
+Hex collapse pacing is configured directly in `arcade/levels.json` with
+`modeParams.collapseStages`. Each stage defines `afterSeconds`, `everySeconds`,
+and `count`; the shipped 45-second round progresses from one tile every 2.0
+seconds, to two every 1.6 seconds, to three every 1.2 seconds.
+
+All modes share `arcade.pit_detection.PitDetector`: neutral-floor observations
+apply immediately, while pits require sustained high-confidence tracking.
+
 The generic `reach_end` engine capability remains available for a future
 procedural level generator, but no reach-the-finish maps ship in this build.
 
 ## Run
 
-Simulation:
-
-```bash
-./run_arcade.sh --simulation
-```
-
-Live cabinet:
-
 ```bash
 ./run_arcade.sh
 ```
 
-Server without kiosk:
+Live server without opening the kiosk browser:
 
 ```bash
-./run_arcade.sh --simulation --no-kiosk
+./run_arcade.sh --no-kiosk
 ```
 
 Open `http://127.0.0.1:8080`.

@@ -4,16 +4,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT"
 
-MODE="--hardware"
 KIOSK=1
 HTTP_PORT="${TILTYTABLE_ARCADE_PORT:-8080}"
 
 for arg in "$@"; do
   case "$arg" in
-    --simulation) MODE="" ;;
     --no-kiosk) KIOSK=0 ;;
     --help)
-      echo "Usage: ./run_arcade.sh [--simulation] [--no-kiosk]"
+      echo "Usage: ./run_arcade.sh [--no-kiosk]"
       exit 0
       ;;
     *)
@@ -50,12 +48,9 @@ if [[ -S /tmp/.X11-unix/X0 && (
 fi
 
 SERVER_ARGS=(--host 0.0.0.0 --port "$HTTP_PORT")
-PREFLIGHT_ARGS=(--port "$HTTP_PORT")
-if [[ -n "$MODE" ]]; then
-  systemctl --user start tiltytable-stewart-supervisor.service
-  SERVER_ARGS+=("$MODE")
-  PREFLIGHT_ARGS+=(--hardware)
-fi
+PREFLIGHT_ARGS=(--port "$HTTP_PORT" --hardware)
+systemctl --user start tiltytable-stewart-supervisor.service
+SERVER_ARGS+=(--hardware)
 if [[ "$KIOSK" -eq 1 ]]; then
   PREFLIGHT_ARGS+=(--check-browser)
 fi

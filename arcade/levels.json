@@ -17,8 +17,6 @@
         "Move before a blinking tile falls.",
         "The run ends when the ball falls into a pit."
       ],
-      "kenLine": "Keep moving and touch new tiles.",
-      "trollLine": "Avoid the pits.",
       "modeParams": {
         "survivalSeconds": 40,
         "dwellSeconds": 1.5,
@@ -34,7 +32,7 @@
       "subtitle": "Claim the floor before it disappears",
       "mode": "hex_fall",
       "map": "maps/arcade-hex-a-fall.json",
-      "startCell": "F6",
+      "startCell": "A1",
       "endCell": "L12",
       "feature": "Random tiles blink red, then fall away.",
       "rules": [
@@ -42,15 +40,28 @@
         "Move away from blinking red tiles.",
         "The run ends when the ball falls into a pit."
       ],
-      "kenLine": "Touch as many new tiles as possible.",
-      "trollLine": "Avoid the pits.",
       "modeParams": {
         "survivalSeconds": 45,
         "pitConfirmSeconds": 0.5,
-        "collapseEverySeconds": 2.5,
-        "collapseCount": 1,
         "collapseWarnSeconds": 1.2,
-        "pointsPerTile": 1
+        "pointsPerTile": 1,
+        "collapseStages": [
+          {
+            "afterSeconds": 0,
+            "everySeconds": 2.0,
+            "count": 1
+          },
+          {
+            "afterSeconds": 15,
+            "everySeconds": 1.6,
+            "count": 2
+          },
+          {
+            "afterSeconds": 30,
+            "everySeconds": 1.2,
+            "count": 3
+          }
+        ]
       },
       "seed": 8
     },
@@ -61,7 +72,7 @@
       "subtitle": "Chase the flashing food",
       "mode": "target_hunt",
       "map": "maps/arcade-snake.json",
-      "startCell": "F6",
+      "startCell": "A1",
       "endCell": "L12",
       "feature": "Each food pickup raises a wall and drops a floor tile.",
       "rules": [
@@ -69,16 +80,15 @@
         "Each point adds one wall and one pit.",
         "The run ends when the ball falls into a pit."
       ],
-      "kenLine": "Chase the flashing blue food.",
-      "trollLine": "Avoid the pits.",
       "modeParams": {
-        "targetConfirmSeconds": 0.2,
+        "targetConfirmFrames": 2,
         "pointsPerTarget": 1,
         "spawnPitCount": 1,
         "spawnWallCount": 1,
         "minimumReachableCells": 2,
         "minimumTargetDistance": 3,
-        "blinkSeconds": 0.25
+        "blinkSeconds": 0.25,
+        "pitConfirmSeconds": 0.5
       },
       "seed": 9
     }

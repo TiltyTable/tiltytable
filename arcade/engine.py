@@ -53,7 +53,6 @@ class LevelResult:
     score: int
     remaining_seconds: int
     elapsed_ms: int
-    restarts: int
 
     def public_dict(self) -> dict[str, Any]:
         return {
@@ -62,7 +61,6 @@ class LevelResult:
             "score": self.score,
             "remainingSeconds": self.remaining_seconds,
             "elapsedMs": self.elapsed_ms,
-            "restarts": self.restarts,
         }
 
 
@@ -91,7 +89,6 @@ class GameEngine:
         self.initials = ""
         self.level_index = 0
         self.results: list[LevelResult] = []
-        self.current_restarts = 0
         self.run_elapsed_ms = 0
         self.attempt_started_at: float | None = None
         self.last_level_result: LevelResult | None = None
@@ -177,7 +174,6 @@ class GameEngine:
         with self.lock:
             state = self.state
             if state == GameState.RULES:
-                self.current_restarts = 0
                 self._prepare_level()
             elif state == GameState.TIME_UP:
                 self._prepare_level(restarting=True)
@@ -189,7 +185,6 @@ class GameEngine:
                 if self.mode != "gauntlet":
                     self.state = GameState.RUN_SUMMARY
                 elif self._advance_gauntlet():
-                    self.current_restarts = 0
                     self.state = GameState.RULES
                 else:
                     self._finalize_score(complete=True)
@@ -270,7 +265,6 @@ class GameEngine:
             if self.state != GameState.PLAYING:
                 return
             self._finish_attempt_elapsed()
-            self.current_restarts += 1
             self.hardware.pause()
             self._prepare_level(restarting=True)
 
@@ -289,14 +283,13 @@ class GameEngine:
                 raise ValueError("Dynamic mode chambers resolve automatically")
             remaining = max(0, math.floor(self._remaining_seconds()))
             elapsed_ms = self._finish_attempt_elapsed()
-            score = max(0, 1000 + remaining * 10 - self.current_restarts * 100)
+            score = max(0, 1000 + remaining * 10)
             result = LevelResult(
                 level_id=level.id,
                 level_number=level.number,
                 score=score,
                 remaining_seconds=remaining,
                 elapsed_ms=elapsed_ms,
-                restarts=self.current_restarts,
             )
             self.results.append(result)
             self.last_level_result = result
@@ -309,14 +302,13 @@ class GameEngine:
         elapsed_ms = self._finish_attempt_elapsed()
         visited = self._survival_visited if self._survival else 0
         points = level.points_per_tile or 0
-        score = survival_score(visited, remaining, self.current_restarts, points)
+        score = survival_score(visited, points)
         result = LevelResult(
             level_id=level.id,
             level_number=level.number,
             score=score,
             remaining_seconds=remaining,
             elapsed_ms=elapsed_ms,
-            restarts=self.current_restarts,
         )
         self.results.append(result)
         self.last_level_result = result
@@ -334,7 +326,6 @@ class GameEngine:
             score=max(0, self._mode_score),
             remaining_seconds=remaining,
             elapsed_ms=elapsed_ms,
-            restarts=self.current_restarts,
         )
         self.results.append(result)
         self.last_level_result = result
@@ -400,7 +391,6 @@ class GameEngine:
 
         if self._remaining_seconds() <= 0:
             self._finish_attempt_elapsed()
-            self.current_restarts += 1
             self.hardware.pause()
             self.state = GameState.TIME_UP
 
@@ -445,7 +435,6 @@ class GameEngine:
 
         if result.ball_on_lava:
             self._finish_attempt_elapsed()
-            self.current_restarts += 1
             self.hardware.pause()
             self._survival = None
             self.state = GameState.SURVIVAL_FAIL
@@ -459,10 +448,13 @@ class GameEngine:
         now: float,
         observation: BallObservation,
     ) -> None:
-        if now - self._last_survival_tick < 0.1 or self._mode_session is None:
+        if self._mode_session is None:
             return
-        self._last_survival_tick = now
         level = self.current_level
+        if level.mode == "hex_fall":
+            if now - self._last_survival_tick < 0.1:
+                return
+            self._last_survival_tick = now
         result = tick_mode(
             str(level.mode),
             self._mode_session,
@@ -472,6 +464,7 @@ class GameEngine:
             now=now,
             row_col=self._row_col_by_key,
             tracking_confidence=observation.confidence,
+            observation_frame=observation.frame_seq,
         )
         self._mode_state = result.public_state
         self._mode_score = result.score
@@ -480,7 +473,6 @@ class GameEngine:
             self._apply_map_cell_updates(result.hardware_updates)
         if result.lost:
             self._finish_attempt_elapsed()
-            self.current_restarts += 1
             self.hardware.pause()
             self._mode_session = None
             self.state = GameState.SURVIVAL_FAIL
@@ -685,7 +677,6 @@ class GameEngine:
                 "score": sum(result.score for result in self.results) + live_mode_score,
                 "currentModeScore": live_mode_score,
                 "levelsCleared": len(self.results),
-                "restarts": self.current_restarts,
                 "placementReady": placement_ready,
                 "results": [result.public_dict() for result in self.results],
                 "lastLevelResult": (
@@ -799,7 +790,6 @@ class GameEngine:
                 "levelsCleared": len(self.results),
                 "gauntletLevelCount": self.catalog.gauntlet_level_count,
                 "elapsedMs": self.run_elapsed_ms,
-                "restarts": sum(result.restarts for result in self.results),
                 "complete": complete,
             }
         )
@@ -832,7 +822,6 @@ class GameEngine:
         self.initials = ""
         self.level_index = 0
         self.results = []
-        self.current_restarts = 0
         self.run_elapsed_ms = 0
         self.attempt_started_at = None
         self.last_level_result = None

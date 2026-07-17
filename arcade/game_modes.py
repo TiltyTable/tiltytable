@@ -54,6 +54,7 @@ def tick_mode(
     now: float,
     row_col: dict[str, tuple[int, int]],
     tracking_confidence: float | None = None,
+    observation_frame: int | None = None,
 ) -> ModeTick:
     if mode == "hex_fall":
         assert isinstance(session, HexFallSession)
@@ -78,7 +79,13 @@ def tick_mode(
         )
     if mode == "target_hunt":
         assert isinstance(session, TargetHuntSession)
-        result = tick_target_hunt(session, ball_cell, now)
+        result = tick_target_hunt(
+            session,
+            ball_cell,
+            now,
+            observation_frame=observation_frame,
+            tracking_confidence=tracking_confidence,
+        )
         return ModeTick(
             hardware_updates=result.hardware_updates,
             public_state={

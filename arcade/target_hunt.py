@@ -7,6 +7,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
+from .pit_detection import PitDetector
+
 TARGET_COLOR = "#001FFF"
 FLOOR_COLOR = "#567DBB"
 PIT_COLOR = "#FF0000"
@@ -15,13 +17,14 @@ WALL_COLOR = "#4DFF00"
 
 @dataclass(frozen=True)
 class TargetHuntParams:
-    target_confirm_seconds: float = 0.3
+    target_confirm_frames: int = 2
     points_per_target: int = 1
     spawn_pit_count: int = 1
     spawn_wall_count: int = 1
     minimum_reachable_cells: int = 2
     minimum_target_distance: int = 3
     blink_seconds: float = 0.25
+    pit_confirm_seconds: float = 0.5
     seed: int = 1
 
 
@@ -33,9 +36,11 @@ class TargetHuntSession:
     rng: random.Random
     target_cell: str | None
     hits: int = 0
-    pending_target_since: float | None = None
+    target_confirm_frames: int = 0
+    last_observation_frame: int | None = None
     target_blink_on: bool = True
     last_blink_at: float = 0.0
+    pit_detector: PitDetector = field(default_factory=PitDetector)
     updates: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -187,14 +192,23 @@ def tick_target_hunt(
     session: TargetHuntSession,
     ball_cell: str | None,
     now: float,
+    observation_frame: int | None = None,
+    tracking_confidence: float | None = None,
 ) -> TargetHuntTickResult:
     updates = list(session.updates)
     session.updates.clear()
 
-    lost = bool(
+    on_pit = bool(
         ball_cell
         and ball_cell in session.cells
         and int(session.cells[ball_cell].get("value", 0)) == -1
+    )
+    lost = session.pit_detector.update(
+        ball_cell=ball_cell,
+        is_pit=on_pit,
+        now=now,
+        tracking_confidence=tracking_confidence,
+        confirm_seconds=session.params.pit_confirm_seconds,
     )
     if (
         session.target_cell
@@ -212,10 +226,17 @@ def tick_target_hunt(
             )
         )
 
+    is_new_observation = (
+        observation_frame is None
+        or observation_frame != session.last_observation_frame
+    )
+    if observation_frame is not None:
+        session.last_observation_frame = observation_frame
+
     if not lost and ball_cell and ball_cell == session.target_cell:
-        if session.pending_target_since is None:
-            session.pending_target_since = now
-        elif now - session.pending_target_since >= session.params.target_confirm_seconds:
+        if is_new_observation:
+            session.target_confirm_frames += 1
+        if session.target_confirm_frames >= session.params.target_confirm_frames:
             previous = session.target_cell
             session.hits += 1
             if previous:
@@ -243,9 +264,9 @@ def tick_target_hunt(
                 )
                 session.target_blink_on = True
                 session.last_blink_at = now
-            session.pending_target_since = None
+            session.target_confirm_frames = 0
     else:
-        session.pending_target_since = None
+        session.target_confirm_frames = 0
 
     return TargetHuntTickResult(
         hardware_updates=updates,
@@ -258,12 +279,13 @@ def tick_target_hunt(
 
 def params_from_dict(raw: dict[str, Any], seed: int = 1) -> TargetHuntParams:
     return TargetHuntParams(
-        target_confirm_seconds=float(raw.get("targetConfirmSeconds", 0.3)),
+        target_confirm_frames=max(1, int(raw.get("targetConfirmFrames", 2))),
         points_per_target=int(raw.get("pointsPerTarget", 1)),
         spawn_pit_count=int(raw.get("spawnPitCount", 1)),
         spawn_wall_count=int(raw.get("spawnWallCount", 1)),
         minimum_reachable_cells=int(raw.get("minimumReachableCells", 2)),
         minimum_target_distance=int(raw.get("minimumTargetDistance", 3)),
         blink_seconds=float(raw.get("blinkSeconds", 0.25)),
+        pit_confirm_seconds=float(raw.get("pitConfirmSeconds", 0.5)),
         seed=seed,
     )

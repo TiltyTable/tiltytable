@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .pit_detection import DEFAULT_MIN_CONFIDENCE, PitDetector
+
 LAVA_COLOR = "#FF0000"
 # Palette ``floor`` hex — legacy map #567DBB nearest-neighbors to ``points`` (blue) on LEDs.
 FLOOR_COLOR = "#C8D0D8"
@@ -13,9 +15,7 @@ VISITED_COLOR = "#F49400"
 WARN_OFF_COLOR = "#000000"
 DEFAULT_SETTLE_SECONDS = 0.0
 DEFAULT_PIT_CONFIRM_SECONDS = 0.5
-DEFAULT_MIN_PIT_CONFIDENCE = 0.7
-# Brief Kinect None gaps while the ball is still on lava do not reset pit dwell.
-PIT_DROPOUT_GRACE_SECONDS = 0.15
+DEFAULT_MIN_PIT_CONFIDENCE = DEFAULT_MIN_CONFIDENCE
 # Keep the warning animation at a readable cadence even though ball-cell
 # selection now runs on every camera frame.
 WARN_BLINK_INTERVAL_SECONDS = 0.12
@@ -57,9 +57,7 @@ class SurvivalLavaSession:
     dwell_cell: str | None = None
     _pending_cell: str | None = None
     _pending_since: float | None = None
-    _pit_cell: str | None = None
-    _pit_since: float | None = None
-    _pit_last_qualify: float | None = None
+    pit_detector: PitDetector = field(default_factory=PitDetector)
     started_at: float = 0.0
 
     def reset(self, started_at: float) -> None:
@@ -69,9 +67,7 @@ class SurvivalLavaSession:
         self.dwell_cell = None
         self._pending_cell = None
         self._pending_since = None
-        self._pit_cell = None
-        self._pit_since = None
-        self._pit_last_qualify = None
+        self.pit_detector.reset()
         self.started_at = started_at
 
 
@@ -167,21 +163,6 @@ def _ball_on_sunk_cell(
     return state is not None and state.phase == PHASE_SUNK
 
 
-def _pit_confidence_ok(
-    tracking_confidence: float | None,
-    min_confidence: float,
-) -> bool:
-    if tracking_confidence is None:
-        return True
-    return tracking_confidence >= min_confidence
-
-
-def _reset_pit_dwell(session: SurvivalLavaSession) -> None:
-    session._pit_cell = None
-    session._pit_since = None
-    session._pit_last_qualify = None
-
-
 def _update_pit_confirm(
     session: SurvivalLavaSession,
     ball_cell: str | None,
@@ -191,45 +172,14 @@ def _update_pit_confirm(
 ) -> bool:
     """Require sustained dwell on a sunk cell before confirming pit fall."""
     params = session.params
-    qualifies = (
-        _ball_on_sunk_cell(session, ball_cell, row_col_for_key)
-        and _pit_confidence_ok(tracking_confidence, params.min_pit_confidence)
+    return session.pit_detector.update(
+        ball_cell=ball_cell,
+        is_pit=_ball_on_sunk_cell(session, ball_cell, row_col_for_key),
+        now=now,
+        tracking_confidence=tracking_confidence,
+        confirm_seconds=params.pit_confirm_seconds,
+        min_confidence=params.min_pit_confidence,
     )
-
-    if qualifies:
-        assert ball_cell is not None
-        if session._pit_cell != ball_cell:
-            session._pit_cell = ball_cell
-            cell = session.cells.get(ball_cell)
-            session._pit_since = (
-                cell.sunk_at if cell is not None and cell.sunk_at is not None else now
-            )
-        session._pit_last_qualify = now
-        if (
-            session._pit_since is not None
-            and now - session._pit_since >= params.pit_confirm_seconds
-        ):
-            return True
-        return False
-
-    if session._pit_cell is None:
-        return False
-
-    if ball_cell is not None and ball_cell != session._pit_cell:
-        _reset_pit_dwell(session)
-        return False
-
-    if ball_cell is None and session._pit_last_qualify is not None:
-        if now - session._pit_last_qualify <= PIT_DROPOUT_GRACE_SECONDS:
-            if (
-                session._pit_since is not None
-                and now - session._pit_since >= params.pit_confirm_seconds
-            ):
-                return True
-            return False
-
-    _reset_pit_dwell(session)
-    return False
 
 
 def _touch_cell(
@@ -280,9 +230,6 @@ def _advance_cell(
         cell.phase = PHASE_SUNK
         cell.sunk_at = now
         updates.append(_entry(key, row, col, -1, LAVA_COLOR))
-        if session.dwell_cell == key:
-            session._pit_cell = key
-            session._pit_since = now
         return
 
     blink_index = int(
@@ -341,9 +288,6 @@ def tick_survival_lava(
 
 def survival_score(
     visited_count: int,
-    remaining_seconds: int,
-    restarts: int,
     points_per_tile: int,
 ) -> int:
-    del remaining_seconds
-    return max(0, visited_count * points_per_tile - restarts * 100)
+    return max(0, visited_count * points_per_tile)
