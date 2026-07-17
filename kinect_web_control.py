@@ -125,6 +125,12 @@ class KinectFrameHub:
             marker_world_points=args.marker_world_points,
         )
         self._last_pose_attempt = None
+        # Read-only snapshot used by ball consumers. Marker fitting can be
+        # expensive; game/UI reads must keep using the last completed pose
+        # instead of waiting on the pose worker's lock.
+        self._pose_homography = None
+        self._pose_last_success_monotonic = None
+        self._pose_last_error = None
         self._pose_debug_jpeg = None
         self._pose_frame_counter = 0
         self.placeholder_pose = (
@@ -375,6 +381,13 @@ class KinectFrameHub:
                         marker_ir_threshold=threshold,
                         debug=not self.headless,
                     )
+                    pose_homography = (
+                        None
+                        if self.table_pose.H_image_to_table is None
+                        else self.table_pose.H_image_to_table.copy()
+                    )
+                    pose_last_success = self.table_pose.last_success_monotonic
+                    pose_last_error = self.table_pose.last_error
                 del capture_ref, ir_frame, depth_frame, task
                 pose_jpeg = None
                 if pose_attempt.debug_frame is not None and not self.headless:
@@ -384,6 +397,9 @@ class KinectFrameHub:
                     )
                 with self.lock:
                     self._last_pose_attempt = pose_attempt
+                    self._pose_homography = pose_homography
+                    self._pose_last_success_monotonic = pose_last_success
+                    self._pose_last_error = pose_last_error
                     if pose_jpeg is not None:
                         self._pose_debug_jpeg = pose_jpeg
                     self.lock.notify_all()
@@ -467,6 +483,9 @@ class KinectFrameHub:
             frame_seq = self._ball_frame_seq
             frame_captured_at = self._ball_frame_captured_at
             processing_ms = self._ball_processing_ms
+            pose_homography = self._pose_homography
+            pose_last_success = self._pose_last_success_monotonic
+            pose_last_error = self._pose_last_error
             if self.detector is None:
                 return {"enabled": False, "frame_seq": frame_seq}
             pos = self.ball_position
@@ -486,8 +505,7 @@ class KinectFrameHub:
         }
 
         if pos is None:
-            with self._pose_lock:
-                table_tracking = self.table_pose.is_tracking
+            table_tracking = pose_homography is not None
             return {
                 "enabled": True, "detected": False, "position": None, "position_world": None,
                 "table_tracking": table_tracking, "pose_stale": None, "pose_age_s": None,
@@ -500,15 +518,22 @@ class KinectFrameHub:
 
         position_world = None
         cell = None
-        with self._pose_lock:
-            age_s = self.table_pose.age_seconds()
-            stale = self.table_pose.last_error is not None
-            table_tracking = self.table_pose.is_tracking
-            if det is not None:
-                mapped_cell = self.table_pose.cell_from_pixel(det.cx, det.cy)
-                if mapped_cell is not None:
-                    row, col = mapped_cell
-                    cell = {"row": row, "col": col}
+        age_s = (
+            max(0.0, time.monotonic() - pose_last_success)
+            if pose_last_success is not None
+            else None
+        )
+        stale = pose_last_error is not None
+        table_tracking = pose_homography is not None
+        if det is not None and pose_homography is not None:
+            mapped_cell = self.table_pose.cell_from_pixel(
+                det.cx,
+                det.cy,
+                image_to_table=pose_homography,
+            )
+            if mapped_cell is not None:
+                row, col = mapped_cell
+                cell = {"row": row, "col": col}
 
         return {
             "enabled": True,
@@ -596,6 +621,9 @@ class KinectWebHandler(BaseHTTPRequestHandler):
                 "camera": self.camera.status_snapshot(),
                 "table_pose": self.camera.pose_state_json(),
             }),
+            # Browser diagnostics only. The arcade engine reads the in-process
+            # KinectFrameHub directly and never uses this HTTP endpoint.
+            "/api/ball/state": lambda: self._send_json(self.camera.get_ball_state()),
             "/api/pose/state": lambda: self._send_json(self.camera.pose_state_json()),
         }
         if path in api:

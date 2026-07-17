@@ -423,9 +423,6 @@ class GameEngine:
         observation: BallObservation,
     ) -> None:
         level = self.current_level
-        if now - self._last_survival_tick < 0.12:
-            return
-        self._last_survival_tick = now
         if self._survival is None:
             return
 
@@ -554,15 +551,28 @@ class GameEngine:
                 row, col = cell_key_to_row_col(cell)
             except ValueError:
                 pass
+        latency = dict(self._tracking_latency or {})
+        latency["frameSeq"] = observation.frame_seq
+        latency["captureToUiMs"] = observation.capture_to_observation_ms
         return {
             "cell": cell,
+            "frameSeq": observation.frame_seq,
             "confidence": round(observation.confidence, 2),
             "row": row,
             "col": col,
             "ageSeconds": observation.age_s,
             "poseFresh": observation.pose_fresh,
-            "latency": self._tracking_latency,
+            "latency": latency or None,
         }
+
+    def live_ball_state(self) -> dict[str, Any] | None:
+        """Return current tracking telemetry without taking the game lock.
+
+        The normal state endpoint is intentionally serialized with game and
+        hardware updates. The browser ball overlay must not wait behind servo
+        I/O, so its dedicated endpoint uses this lock-independent snapshot.
+        """
+        return self._ball_public_state()
 
     def _neutralize_survival_start_cell(self) -> None:
         """Drop cyan placement tint on the start tile once survival play begins."""

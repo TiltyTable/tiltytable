@@ -395,8 +395,16 @@ class ModuleGridHardware(BaseTableHardware):
         with self._state_lock:
             if not self.playing:
                 return
+        led_updates = [update for update in updates if update.get("leds_only")]
+        motion_updates = [update for update in updates if not update.get("leds_only")]
         with self._io_lock:
-            self.table.apply_cells(updates)
+            # Color-only survival updates must not wait for board selection or
+            # the servo settle period. Apply those first when a tick also sinks
+            # another tile so the newly selected cell lights promptly.
+            if led_updates:
+                self.table.apply_cells(led_updates, leds_only=True)
+            if motion_updates:
+                self.table.apply_cells(motion_updates)
 
     def _release_servos(self) -> None:
         if not self.link:

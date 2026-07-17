@@ -149,6 +149,22 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.engine.tick()
         self.assertEqual(self.engine.state, GameState.PLACEMENT)
 
+    def test_new_lava_cell_is_selected_on_next_tracking_frame(self) -> None:
+        self.begin_level_seven()
+        self.engine.tick()
+        self.hardware.updates.clear()
+
+        self.ball.set_cell("G6")
+        self.clock.advance(0.01)
+        self.engine.tick()
+
+        selected = [
+            update for update in self.hardware.updates
+            if update["key"] == "G6" and update["color"] == "#F49400"
+        ]
+        self.assertEqual(len(selected), 1)
+        self.assertTrue(selected[0]["leds_only"])
+
     def test_public_state_includes_ball_when_adapter_present(self) -> None:
         self.ball.set_cell("G7")
         state = self.engine.public_state()
@@ -480,6 +496,27 @@ class ScoreStoreTests(unittest.TestCase):
 
 
 class ModuleGridHardwareTests(unittest.TestCase):
+    def test_led_only_update_skips_servo_path(self) -> None:
+        class FakeTable:
+            def __init__(self) -> None:
+                self.calls: list[tuple[list[dict], bool]] = []
+
+            def apply_cells(self, updates: list[dict], leds_only: bool = False) -> None:
+                self.calls.append((updates, leds_only))
+
+        hardware = ModuleGridHardware(dry_run=True)
+        table = FakeTable()
+        hardware.table = table  # type: ignore[assignment]
+        hardware.playing = True
+        update = {
+            "key": "F6", "row": 5, "col": 5, "value": 0,
+            "color": "#F49400", "leds_only": True,
+        }
+
+        hardware.apply_cell_updates([update])
+
+        self.assertEqual(table.calls, [([update], True)])
+
     def test_module_start_delay_is_loaded_and_applied_between_boards(self) -> None:
         delay_s = load_module_start_delay_ms() / 1000.0
         self.assertGreater(delay_s, 0.0)
@@ -566,6 +603,30 @@ class ModuleGridHardwareTests(unittest.TestCase):
 
 
 class ArcadeApiTests(unittest.TestCase):
+    def test_ball_endpoint_uses_live_snapshot_without_full_game_state(self) -> None:
+        ball = ManualBallAdapter()
+        ball.set_cell("G6")
+        with tempfile.TemporaryDirectory() as temp:
+            app = create_app(
+                hardware=SimulatedTableHardware(),
+                score_path=Path(temp) / "scores.json",
+                start_ticker=False,
+                ball_adapter=ball,
+            )
+            engine = app.config["GAME_ENGINE"]
+            with patch.object(
+                engine,
+                "public_state",
+                side_effect=AssertionError("full state should not be read"),
+            ):
+                response = app.test_client().get("/api/ball")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.get_json()
+            self.assertEqual(payload["ball"]["cell"], "G6")
+            self.assertEqual(payload["ball"]["row"], 5)
+            self.assertEqual(payload["ball"]["col"], 6)
+
     def test_tilt_lifecycle_tracks_placement_and_play(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             tilt = FakeTiltAdapter()

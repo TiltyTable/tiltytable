@@ -133,6 +133,17 @@ def create_app(
     def state():
         return jsonify({"ok": True, "game": engine.public_state()})
 
+    @app.get("/api/ball")
+    def ball_state():
+        return jsonify({
+            "ok": True,
+            "ball": engine.live_ball_state(),
+            "trackingEnabled": bool(
+                engine.ball_adapter is not None
+                and getattr(engine.ball_adapter, "is_live", False)
+            ),
+        })
+
     @app.post("/api/action")
     def action():
         body: dict[str, Any] = request.get_json(silent=True) or {}

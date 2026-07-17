@@ -99,6 +99,8 @@ new ResizeObserver(syncIrCanvas).observe(irFeed);
 irFeed.addEventListener('load', syncIrCanvas);
 
 let stateTimer = null;
+let ballStateTimer = null;
+let ballStateInFlight = false;
 
 function fmtMm(value) {
   if (value === null || value === undefined) return '--';
@@ -133,6 +135,19 @@ async function fetchState() {
   }
 }
 
+async function fetchBallState() {
+  if (ballStateInFlight) return;
+  ballStateInFlight = true;
+  try {
+    const response = await fetch('/api/ball/state', { cache: 'no-store' });
+    renderBall(await response.json());
+  } catch (error) {
+    console.error('fetchBallState failed:', error);
+  } finally {
+    ballStateInFlight = false;
+  }
+}
+
 function renderState(state) {
   cameraDot.className = `status-dot ${state.camera.status}`;
   cameraStatus.textContent = state.camera.status;
@@ -144,7 +159,9 @@ function renderState(state) {
 }
 
 fetchState();
+fetchBallState();
 stateTimer = window.setInterval(fetchState, 350);
+ballStateTimer = window.setInterval(fetchBallState, 33);
 
 function renderBall(ball) {
   // The IR feed and brightness slider work regardless of ball tracking (the

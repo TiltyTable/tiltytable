@@ -42,7 +42,15 @@ class SurvivalLavaLogicTests(unittest.TestCase):
         self.assertEqual(len(result.hardware_updates), 1)
         self.assertEqual(result.hardware_updates[0]["color"], VISITED_COLOR)
         self.assertEqual(result.hardware_updates[0]["value"], 0)
+        self.assertTrue(result.hardware_updates[0]["leds_only"])
         self.assertFalse(result.ball_cell_heating)
+
+    def test_unchanged_warning_frame_emits_no_hardware_write(self) -> None:
+        session = SurvivalLavaSession(params=self.params, started_at=0.0)
+        tick_survival_lava(session, "F6", 0.0, self.row_col)
+        tick_survival_lava(session, "F6", 2.0, self.row_col)
+        result = tick_survival_lava(session, "F6", 2.05, self.row_col)
+        self.assertEqual(result.hardware_updates, [])
 
     def test_warn_phase_after_arm_delay(self) -> None:
         session = SurvivalLavaSession(params=self.params, started_at=0.0)

@@ -245,6 +245,23 @@ class ImageCellTrackerTests(unittest.TestCase):
         self.assertEqual(tracker.cell_from_pixel(*center_px), (6, 6))
         self.assertEqual(set(matched), set(tracker.point_names))
 
+    def test_maps_with_caller_owned_pose_snapshot(self):
+        tracker, H, _pixels = self._tracker_and_projection()
+        image_to_table = np.linalg.inv(H)
+        center_px = cv2.perspectiveTransform(
+            np.array([[[831.85 * 0.49, 831.85 * 0.49]]], dtype=np.float32),
+            H,
+        )[0, 0]
+
+        # No live transform is installed on the tracker; high-frequency ball
+        # mapping can still use the last completed snapshot.
+        self.assertIsNone(tracker.H_image_to_table)
+        self.assertEqual(
+            tracker.cell_from_pixel(*center_px, image_to_table=image_to_table),
+            (6, 6),
+        )
+        self.assertIsNone(tracker.H_image_to_table)
+
     def test_selects_best_six_markers_when_ball_is_an_extra_blob(self):
         tracker, _H, pixels = self._tracker_and_projection()
         expected_pixels = {tuple(float(value) for value in pixel) for pixel in pixels}

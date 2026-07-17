@@ -107,6 +107,8 @@ let lastTimerBand = null;
 let requestInFlight = false;
 let devBallCell = null;
 let refreshInFlight = false;
+let ballRefreshInFlight = false;
+let liveBall = null;
 let cabinetConfirmPresses = null;
 let cabinetBackPresses = null;
 let cabinetNavigationUp = null;
@@ -289,7 +291,7 @@ function ballTrackOverlay() {
   const conf = Number(ball.confidence ?? 0);
   const dimmed = !kinectActive;
   const confClass = conf >= 0.75 ? "ok" : conf >= 0.4 ? "warn" : "low";
-  const latency = ball.latency?.captureToGameMs;
+  const latency = ball.latency?.captureToUiMs ?? ball.latency?.captureToGameMs;
   const averageLatency = ball.latency?.averageCaptureToGameMs;
   const p95Latency = ball.latency?.p95CaptureToGameMs;
   const latencyText = Number.isFinite(latency)
@@ -303,6 +305,30 @@ function ballTrackOverlay() {
       <span class="ball-track-conf ${confClass}">${conf.toFixed(1)}</span>
       <span class="ball-track-latency">${latencyText}</span>
     </aside>`;
+}
+
+function updateBallTrackOverlay(ball, trackingEnabled) {
+  if (!ball) return;
+  liveBall = ball;
+  if (game) game.ball = ball;
+  const overlay = document.querySelector(".ball-track-overlay");
+  if (!overlay) return;
+
+  overlay.classList.toggle("dimmed", !trackingEnabled);
+  const coordinates = Number.isInteger(ball.col) && Number.isInteger(ball.row)
+    ? `(${ball.col},${ball.row})`
+    : "—";
+  const confidence = Number(ball.confidence ?? 0);
+  const confidenceNode = overlay.querySelector(".ball-track-conf");
+  overlay.querySelector(".ball-track-cell").textContent = coordinates;
+  confidenceNode.textContent = confidence.toFixed(1);
+  confidenceNode.className = `ball-track-conf ${confidence >= 0.75 ? "ok" : confidence >= 0.4 ? "warn" : "low"}`;
+  const latency = ball.latency?.captureToUiMs ?? ball.latency?.captureToGameMs;
+  const average = ball.latency?.averageCaptureToGameMs;
+  const p95 = ball.latency?.p95CaptureToGameMs;
+  overlay.querySelector(".ball-track-latency").textContent = Number.isFinite(latency)
+    ? `${latency.toFixed(0)}ms avg ${average?.toFixed(0) ?? "—"} p95 ${p95?.toFixed(0) ?? "—"}`
+    : "—";
 }
 
 function dialogue(kenText, trollText, compact = false) {
@@ -780,6 +806,7 @@ async function refresh() {
     const response = await fetch("/api/state", { cache: "no-store" });
     const payload = await response.json();
     game = payload.game;
+    if (liveBall) game.ball = liveBall;
     handleStateAudio();
     render();
     handleCabinetButtons();
@@ -787,6 +814,20 @@ async function refresh() {
     console.error("State refresh failed", error);
   } finally {
     refreshInFlight = false;
+  }
+}
+
+async function refreshBall() {
+  if (ballRefreshInFlight) return;
+  ballRefreshInFlight = true;
+  try {
+    const response = await fetch("/api/ball", { cache: "no-store" });
+    const payload = await response.json();
+    if (payload.ok) updateBallTrackOverlay(payload.ball, payload.trackingEnabled);
+  } catch (error) {
+    console.error("Ball refresh failed", error);
+  } finally {
+    ballRefreshInFlight = false;
   }
 }
 
@@ -1038,4 +1079,6 @@ document.addEventListener("keydown", event => {
 });
 
 refresh();
-setInterval(refresh, 16);
+refreshBall();
+setInterval(refresh, 50);
+setInterval(refreshBall, 16);

@@ -16,6 +16,9 @@ DEFAULT_PIT_CONFIRM_SECONDS = 0.5
 DEFAULT_MIN_PIT_CONFIDENCE = 0.7
 # Brief Kinect None gaps while the ball is still on lava do not reset pit dwell.
 PIT_DROPOUT_GRACE_SECONDS = 0.15
+# Keep the warning animation at a readable cadence even though ball-cell
+# selection now runs on every camera frame.
+WARN_BLINK_INTERVAL_SECONDS = 0.12
 
 PHASE_NEUTRAL = "neutral"
 PHASE_TOUCHED = "touched_yellow"
@@ -41,6 +44,7 @@ class CellSurvivalState:
     touched_at: float | None = None
     warning_started_at: float | None = None
     warn_blink_on: bool = False
+    warn_blink_index: int = -1
     sunk_at: float | None = None
 
 
@@ -88,7 +92,15 @@ def _cell_state(session: SurvivalLavaSession, key: str) -> CellSurvivalState:
     return session.cells[key]
 
 
-def _entry(key: str, row: int, col: int, value: int, color: str) -> dict[str, Any]:
+def _entry(
+    key: str,
+    row: int,
+    col: int,
+    value: int,
+    color: str,
+    *,
+    leds_only: bool = False,
+) -> dict[str, Any]:
     return {
         "key": key,
         "row": row,
@@ -96,6 +108,7 @@ def _entry(key: str, row: int, col: int, value: int, color: str) -> dict[str, An
         "value": value,
         "color": color,
         "rgb": (0, 0, 0),
+        "leds_only": leds_only,
     }
 
 
@@ -233,7 +246,9 @@ def _touch_cell(
     state.touched_at = now
     session.visited.add(key)
     row, col = row_col_for_key[key]
-    updates.append(_entry(key, row, col, 0, VISITED_COLOR))
+    # The tile is already physically flat. Re-pulsing its servo here adds
+    # roughly 0.75s of avoidable board-select/settle latency to the yellow LED.
+    updates.append(_entry(key, row, col, 0, VISITED_COLOR, leds_only=True))
 
 
 def _advance_cell(
@@ -256,6 +271,7 @@ def _advance_cell(
         cell.phase = PHASE_WARNING
         cell.warning_started_at = cell.touched_at + params.dwell_seconds
         cell.warn_blink_on = True
+        cell.warn_blink_index = -1
 
     if cell.phase != PHASE_WARNING or cell.warning_started_at is None:
         return
@@ -269,9 +285,15 @@ def _advance_cell(
             session._pit_since = now
         return
 
+    blink_index = int(
+        (now - cell.warning_started_at) / WARN_BLINK_INTERVAL_SECONDS
+    )
+    if blink_index == cell.warn_blink_index:
+        return
+    cell.warn_blink_index = blink_index
+    cell.warn_blink_on = blink_index % 2 == 0
     color = LAVA_COLOR if cell.warn_blink_on else WARN_OFF_COLOR
-    updates.append(_entry(key, row, col, 0, color))
-    cell.warn_blink_on = not cell.warn_blink_on
+    updates.append(_entry(key, row, col, 0, color, leds_only=True))
 
 
 def tick_survival_lava(

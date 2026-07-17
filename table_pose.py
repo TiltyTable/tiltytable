@@ -485,14 +485,25 @@ class ImageCellTracker:
         self.last_attempt = attempt
         return attempt
 
-    def cell_from_pixel(self, cx: float, cy: float) -> Optional[tuple[int, int]]:
-        if self.H_image_to_table is None and self.H_table_to_image is not None:
+    def cell_from_pixel(
+        self,
+        cx: float,
+        cy: float,
+        image_to_table: Optional[np.ndarray] = None,
+    ) -> Optional[tuple[int, int]]:
+        """Map a pixel with the current transform or a caller-owned snapshot.
+
+        Supplying a snapshot lets high-frequency consumers keep using the last
+        completed pose while a newer marker fit is running in another thread.
+        """
+        if image_to_table is None and self.H_image_to_table is None and self.H_table_to_image is not None:
             self.H_image_to_table = np.linalg.inv(self.H_table_to_image)
-        if self.H_image_to_table is None:
+        transform = self.H_image_to_table if image_to_table is None else image_to_table
+        if transform is None:
             return None
         xy = cv2.perspectiveTransform(
             np.array([[[cx, cy]]], dtype=np.float32),
-            self.H_image_to_table,
+            transform,
         )[0, 0]
         origin = np.asarray(self.table_points["corner_origin"])
         x_corner = np.asarray(self.table_points["corner_x"])
