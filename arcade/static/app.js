@@ -359,8 +359,8 @@ function abandonOverlay() {
         <h1>END RUN?</h1>
         <p class="decision-copy">Choose with the cabinet buttons</p>
         <div class="cabinet-decision">
-          <div class="cabinet-choice confirm">${confirmHint("END RUN")}</div>
           <div class="cabinet-choice back">${backHint("KEEP PLAYING")}</div>
+          <div class="cabinet-choice confirm">${confirmHint("END RUN")}</div>
         </div>
         ${dialogue(LORE.abandonOverlay.ken, LORE.abandonOverlay.troll, true)}
       </article>

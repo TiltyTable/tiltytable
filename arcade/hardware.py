@@ -4,6 +4,7 @@ import copy
 import json
 import threading
 import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,8 @@ from game_runner import (
 START_COLOR = "#00E5FF"
 END_COLOR = "#FF00AA"
 DEFAULT_ARCADE_CONFIG = Path(__file__).with_name("config.json")
+LED_UPDATE_QUEUE_CAPACITY = 256
+MOTION_UPDATE_QUEUE_CAPACITY = 256
 
 
 def load_module_start_delay_ms(
@@ -183,6 +186,18 @@ class ModuleGridHardware(BaseTableHardware):
         self._unstick_busy = False
         self._effect_busy = False
         self._load_phase = ""
+        # LED-only effects must never hold up the camera/game tick. Touch
+        # feedback has its own priority queue so warning blinks cannot delay a
+        # newly visited tile turning yellow.
+        self._led_update_queue: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._priority_led_update_queue: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._led_update_ready = threading.Condition()
+        self._led_update_worker: threading.Thread | None = None
+        # Servo drops are much slower than tracking because each PCA board must
+        # be selected, settled, and released. Run them independently too.
+        self._motion_update_queue: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._motion_update_ready = threading.Condition()
+        self._motion_update_worker: threading.Thread | None = None
 
     def initialize(self) -> None:
         with self._state_lock:
@@ -221,6 +236,8 @@ class ModuleGridHardware(BaseTableHardware):
                 table.all_off()
             self.link = link
             self.table = table
+            self._start_led_update_worker()
+            self._start_motion_update_worker()
             with self._state_lock:
                 self.ready = True
         except Exception as exc:
@@ -278,6 +295,8 @@ class ModuleGridHardware(BaseTableHardware):
         if not self.ready or not self.table:
             raise HardwareError("module grid is not initialized")
         self._stop_animations()
+        self._clear_led_updates()
+        self._clear_motion_updates()
         with self._state_lock:
             if self.busy:
                 raise HardwareError("module grid is already loading")
@@ -417,6 +436,8 @@ class ModuleGridHardware(BaseTableHardware):
     def pause(self) -> None:
         with self._state_lock:
             self.playing = False
+        self._clear_led_updates()
+        self._clear_motion_updates()
         self._animation_stop.set()
         self._release_servos()
 
@@ -432,6 +453,8 @@ class ModuleGridHardware(BaseTableHardware):
             self._dynamic = []
             self._play_started_at = None
         self._animation_stop.set()
+        self._clear_led_updates()
+        self._clear_motion_updates()
         self._release_servos()
 
     def apply_cell_updates(self, updates: list[dict[str, Any]]) -> None:
@@ -442,14 +465,136 @@ class ModuleGridHardware(BaseTableHardware):
                 return
         led_updates = [update for update in updates if update.get("leds_only")]
         motion_updates = [update for update in updates if not update.get("leds_only")]
-        with self._io_lock:
-            # Color-only survival updates must not wait for board selection or
-            # the servo settle period. Apply those first when a tick also sinks
-            # another tile so the newly selected cell lights promptly.
-            if led_updates:
-                self.table.apply_cells(led_updates, leds_only=True)
-            if motion_updates:
-                self.table.apply_cells(motion_updates)
+        if led_updates:
+            self._enqueue_led_updates(led_updates)
+        if motion_updates:
+            self._enqueue_motion_updates(motion_updates)
+
+    def _start_led_update_worker(self) -> None:
+        if self._led_update_worker is not None and self._led_update_worker.is_alive():
+            return
+
+        def drain_led_updates() -> None:
+            while not self._stop.is_set():
+                with self._led_update_ready:
+                    ready = self._led_update_ready.wait_for(
+                        lambda: (
+                            self._stop.is_set()
+                            or self._priority_led_update_queue
+                            or self._led_update_queue
+                        ),
+                        timeout=0.5,
+                    )
+                    if self._stop.is_set():
+                        return
+                    if not ready:
+                        continue
+                    queue = (
+                        self._priority_led_update_queue
+                        if self._priority_led_update_queue
+                        else self._led_update_queue
+                    )
+                    updates = [queue.popitem(last=True)[1]]
+                with self._state_lock:
+                    playing = self.playing
+                if not playing or self.table is None:
+                    continue
+                try:
+                    # LP commands do not touch the selected PCA board, and Link
+                    # serializes individual writes. Do not wait behind a servo
+                    # board's 450 ms settle period.
+                    self.table.apply_cells(updates, leds_only=True)
+                except Exception as exc:
+                    self.error = str(exc)
+
+        self._led_update_worker = threading.Thread(
+            target=drain_led_updates,
+            name="arcade-led-updates",
+            daemon=True,
+        )
+        self._led_update_worker.start()
+
+    def _enqueue_led_updates(self, updates: list[dict[str, Any]]) -> None:
+        with self._led_update_ready:
+            for update in updates:
+                key = str(update["key"])
+                priority = bool(update.get("led_priority"))
+                selected = (
+                    self._priority_led_update_queue
+                    if priority
+                    else self._led_update_queue
+                )
+                other = (
+                    self._led_update_queue
+                    if priority
+                    else self._priority_led_update_queue
+                )
+                other.pop(key, None)
+                selected[key] = update
+                selected.move_to_end(key)
+            while (
+                len(self._priority_led_update_queue) + len(self._led_update_queue)
+                > LED_UPDATE_QUEUE_CAPACITY
+            ):
+                queue = self._led_update_queue or self._priority_led_update_queue
+                queue.popitem(last=False)
+            self._led_update_ready.notify()
+
+    def _clear_led_updates(self) -> None:
+        with self._led_update_ready:
+            self._led_update_queue.clear()
+            self._priority_led_update_queue.clear()
+
+    def _start_motion_update_worker(self) -> None:
+        if (
+            self._motion_update_worker is not None
+            and self._motion_update_worker.is_alive()
+        ):
+            return
+
+        def drain_motion_updates() -> None:
+            while not self._stop.is_set():
+                with self._motion_update_ready:
+                    ready = self._motion_update_ready.wait_for(
+                        lambda: self._stop.is_set() or self._motion_update_queue,
+                        timeout=0.5,
+                    )
+                    if self._stop.is_set():
+                        return
+                    if not ready:
+                        continue
+                    updates = list(self._motion_update_queue.values())
+                    self._motion_update_queue.clear()
+                with self._state_lock:
+                    playing = self.playing
+                if not playing or self.table is None:
+                    continue
+                try:
+                    with self._io_lock:
+                        self.table.apply_cells(updates)
+                except Exception as exc:
+                    self.error = str(exc)
+
+        self._motion_update_worker = threading.Thread(
+            target=drain_motion_updates,
+            name="arcade-motion-updates",
+            daemon=True,
+        )
+        self._motion_update_worker.start()
+
+    def _enqueue_motion_updates(self, updates: list[dict[str, Any]]) -> None:
+        with self._motion_update_ready:
+            for update in updates:
+                key = str(update["key"])
+                self._motion_update_queue[key] = update
+                self._motion_update_queue.move_to_end(key)
+            while len(self._motion_update_queue) > MOTION_UPDATE_QUEUE_CAPACITY:
+                self._motion_update_queue.popitem(last=False)
+            self._motion_update_ready.notify()
+
+    def _clear_motion_updates(self) -> None:
+        with self._motion_update_ready:
+            self._motion_update_queue.clear()
 
     def unstick_cell(self, row: int, col: int) -> bool:
         if not self.table:
@@ -530,6 +675,10 @@ class ModuleGridHardware(BaseTableHardware):
 
     def shutdown(self) -> None:
         self._stop.set()
+        with self._led_update_ready:
+            self._led_update_ready.notify_all()
+        with self._motion_update_ready:
+            self._motion_update_ready.notify_all()
         self._stop_animations()
         if self.table:
             try:
@@ -556,5 +705,9 @@ class ModuleGridHardware(BaseTableHardware):
                 "error": self.error,
                 "level": self.level,
                 "loadPhase": self._load_phase,
+                "ledQueueDepth": (
+                    len(self._priority_led_update_queue) + len(self._led_update_queue)
+                ),
+                "motionQueueDepth": len(self._motion_update_queue),
                 "port": self.port,
             }

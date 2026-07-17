@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import io
 import tempfile
+import threading
 import time
 import unittest
 from contextlib import redirect_stdout
@@ -473,18 +474,32 @@ class ScoreStoreTests(unittest.TestCase):
 
 
 class ModuleGridHardwareTests(unittest.TestCase):
+    def test_led_worker_survives_an_empty_queue_timeout(self) -> None:
+        hardware = ModuleGridHardware(dry_run=True)
+        hardware._start_led_update_worker()
+
+        time.sleep(0.6)
+
+        self.assertTrue(hardware._led_update_worker.is_alive())
+        hardware._stop.set()
+        with hardware._led_update_ready:
+            hardware._led_update_ready.notify_all()
+
     def test_led_only_update_skips_servo_path(self) -> None:
         class FakeTable:
             def __init__(self) -> None:
                 self.calls: list[tuple[list[dict], bool]] = []
+                self.called = threading.Event()
 
             def apply_cells(self, updates: list[dict], leds_only: bool = False) -> None:
                 self.calls.append((updates, leds_only))
+                self.called.set()
 
         hardware = ModuleGridHardware(dry_run=True)
         table = FakeTable()
         hardware.table = table  # type: ignore[assignment]
         hardware.playing = True
+        hardware._start_led_update_worker()
         update = {
             "key": "F6", "row": 5, "col": 5, "value": 0,
             "color": "#F49400", "leds_only": True,
@@ -492,7 +507,51 @@ class ModuleGridHardwareTests(unittest.TestCase):
 
         hardware.apply_cell_updates([update])
 
+        self.assertTrue(table.called.wait(0.25))
         self.assertEqual(table.calls, [([update], True)])
+        hardware._stop.set()
+        with hardware._led_update_ready:
+            hardware._led_update_ready.notify_all()
+
+    def test_led_update_is_not_blocked_by_servo_motion(self) -> None:
+        class BlockingTable:
+            def __init__(self) -> None:
+                self.motion_started = threading.Event()
+                self.release_motion = threading.Event()
+                self.led_seen = threading.Event()
+
+            def apply_cells(self, _updates: list[dict], leds_only: bool = False) -> None:
+                if leds_only:
+                    self.led_seen.set()
+                    return
+                self.motion_started.set()
+                self.release_motion.wait(1.0)
+
+        hardware = ModuleGridHardware(dry_run=True)
+        table = BlockingTable()
+        hardware.table = table  # type: ignore[assignment]
+        hardware.playing = True
+        hardware._start_led_update_worker()
+        hardware._start_motion_update_worker()
+
+        hardware.apply_cell_updates([
+            {"key": "A1", "row": 0, "col": 0, "value": -1, "color": "#FF0000"}
+        ])
+        self.assertTrue(table.motion_started.wait(0.25))
+        hardware.apply_cell_updates([
+            {
+                "key": "B1", "row": 0, "col": 1, "value": 0,
+                "color": "#F49400", "leds_only": True, "led_priority": True,
+            }
+        ])
+
+        self.assertTrue(table.led_seen.wait(0.25))
+        table.release_motion.set()
+        hardware._stop.set()
+        with hardware._led_update_ready:
+            hardware._led_update_ready.notify_all()
+        with hardware._motion_update_ready:
+            hardware._motion_update_ready.notify_all()
 
     def test_module_start_delay_is_loaded_and_applied_between_boards(self) -> None:
         delay_s = load_module_start_delay_ms() / 1000.0

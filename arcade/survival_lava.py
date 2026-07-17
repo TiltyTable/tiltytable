@@ -96,8 +96,9 @@ def _entry(
     color: str,
     *,
     leds_only: bool = False,
+    led_priority: bool = False,
 ) -> dict[str, Any]:
-    return {
+    entry = {
         "key": key,
         "row": row,
         "col": col,
@@ -106,6 +107,9 @@ def _entry(
         "rgb": (0, 0, 0),
         "leds_only": leds_only,
     }
+    if led_priority:
+        entry["led_priority"] = True
+    return entry
 
 
 def _update_dwell_cell(
@@ -198,7 +202,17 @@ def _touch_cell(
     row, col = row_col_for_key[key]
     # The tile is already physically flat. Re-pulsing its servo here adds
     # roughly 0.75s of avoidable board-select/settle latency to the yellow LED.
-    updates.append(_entry(key, row, col, 0, VISITED_COLOR, leds_only=True))
+    updates.append(
+        _entry(
+            key,
+            row,
+            col,
+            0,
+            VISITED_COLOR,
+            leds_only=True,
+            led_priority=True,
+        )
+    )
 
 
 def _advance_cell(

@@ -9,7 +9,7 @@
  * (one per 4x4 module — not daisy-chained).
  *
  * "Dumb" executor: drives servo pulse widths in MICROSECONDS and LED
- * strip colors, and acks every command. ALL calibration data lives on
+ * strip colors. Pixel LED writes are batched and intentionally silent; ALL calibration data lives on
  * the host (servo_tool.py + the JSON config) — nothing is stored here.
  *
  * Wiring:
@@ -57,8 +57,9 @@
  *                   MAX_LEDS_PER_STRIP for Uno SRAM safety).
  *                   → "OK LN <s> <n>"
  *   LP <s> <i> <r> <g> <b>  Set ONE pixel <i> on strip <s> to RGB, leaving
- *                   every other pixel on that strip untouched.
- *                   → "OK LP <s> <i> <r> <g> <b>"
+ *                   every other pixel on that strip untouched. Pixel writes
+ *                   are coalesced and shown at most every 8 ms; no reply is
+ *                   emitted so a burst cannot fill the serial TX buffer.
  *   E / D         Accepted no-ops (OE hardwired). → "OK E" / "OK D"
  *   M             Report free SRAM in bytes.       → "MEM <bytes>"
  *                   AVR-only (classic Uno/Nano/Mega); on non-AVR boards
@@ -129,6 +130,7 @@ static const uint16_t NUM_LEDS_PER_STRIP  = 8;    // initial/default; host sends
 // Uno R4 has 32KB RAM. 9 strands × ~50 px × 3 B ≈ 1.4KB at real sizes;
 // MAX is a typo guard, not a tight budget.
 static const uint16_t MAX_LEDS_PER_STRIP  = 200;
+static const uint8_t  LED_COMMIT_INTERVAL_MS = 8;
 
 // Color order: these strips are physically RGB-ordered, not GRB.
 Adafruit_NeoPixel strip0(NUM_LEDS_PER_STRIP, LED_PIN_0, NEO_RGB + NEO_KHZ800);
@@ -144,6 +146,8 @@ Adafruit_NeoPixel *ledStrips[NUM_STRIPS] = {
     &strip0, &strip1, &strip2, &strip3, &strip4,
     &strip5, &strip6, &strip7, &strip8
 };
+bool ledDirty[NUM_STRIPS] = {false};
+uint32_t lastLedCommitMillis = 0;
 
 // ---- stall/stuck-on watchdog -----------------------------------------
 static const uint32_t WATCHDOG_TIMEOUT_MS = 5000;  // no host activity -> release all
@@ -329,11 +333,25 @@ void setLedColor(uint8_t idx, uint8_t r, uint8_t g, uint8_t b) {
     Adafruit_NeoPixel *s = ledStrips[idx];
     uint32_t c = s->Color(r, g, b);
     for (uint16_t i = 0; i < s->numPixels(); i++) s->setPixelColor(i, c);
-    s->show();
+    ledDirty[idx] = true;
+}
+
+void flushDirtyLeds(bool force = false) {
+    const uint32_t now = millis();
+    if (!force && (now - lastLedCommitMillis) < LED_COMMIT_INTERVAL_MS) return;
+    bool committed = false;
+    for (uint8_t i = 0; i < NUM_STRIPS; i++) {
+        if (!ledDirty[i]) continue;
+        ledStrips[i]->show();
+        ledDirty[i] = false;
+        committed = true;
+    }
+    if (committed) lastLedCommitMillis = now;
 }
 
 void allLedsOff() {
     for (uint8_t i = 0; i < NUM_STRIPS; i++) setLedColor(i, 0, 0, 0);
+    flushDirtyLeds(true);
 }
 
 void setOnePixel(uint8_t idx, uint16_t pixel, uint8_t r, uint8_t g, uint8_t b) {
@@ -341,7 +359,7 @@ void setOnePixel(uint8_t idx, uint16_t pixel, uint8_t r, uint8_t g, uint8_t b) {
     Adafruit_NeoPixel *s = ledStrips[idx];
     if (pixel >= s->numPixels()) return;   // silently ignore out-of-range (safe no-op)
     s->setPixelColor(pixel, s->Color(r, g, b));
-    s->show();
+    ledDirty[idx] = true;
 }
 
 void resizeStrip(uint8_t idx, uint16_t count) {
@@ -350,6 +368,7 @@ void resizeStrip(uint8_t idx, uint16_t count) {
     ledStrips[idx]->updateLength(count);
     ledStrips[idx]->clear();
     ledStrips[idx]->show();
+    ledDirty[idx] = false;
 }
 
 void printHelp() {
@@ -362,7 +381,7 @@ void printHelp() {
     Serial.println(F("  L <s> <r> <g> <b> set LED strip s (0-8) to RGB (0-255 each)"));
     Serial.println(F("  LX                all LED strips off"));
     Serial.println(F("  LN <s> <n>        resize strip s to n pixels (clears it)"));
-    Serial.println(F("  LP <s> <i> <r> <g> <b>  set one pixel i on strip s"));
+    Serial.println(F("  LP <s> <i> <r> <g> <b>  queue one pixel update on strip s"));
     Serial.println(F("  E / D             no-ops (OE hardwired to GND)"));
     Serial.println(F("  M                 report free SRAM bytes"));
     Serial.println(F("  ?                 this help"));
@@ -433,11 +452,6 @@ void handleLine(char *line) {
                     strip >= 0 && strip < NUM_STRIPS && pixel >= 0 &&
                     r >= 0 && r <= 255 && g >= 0 && g <= 255 && b >= 0 && b <= 255) {
                     setOnePixel((uint8_t)strip, (uint16_t)pixel, (uint8_t)r, (uint8_t)g, (uint8_t)b);
-                    Serial.print(F("OK LP ")); Serial.print(strip);
-                    Serial.print(' ');         Serial.print(pixel);
-                    Serial.print(' ');         Serial.print(r);
-                    Serial.print(' ');         Serial.print(g);
-                    Serial.print(' ');         Serial.println(b);
                 } else { Serial.print(F("ERR ")); Serial.println(line); }
                 return;
             }
@@ -446,6 +460,7 @@ void handleLine(char *line) {
                 strip >= 0 && strip < NUM_STRIPS &&
                 r >= 0 && r <= 255 && g >= 0 && g <= 255 && b >= 0 && b <= 255) {
                 setLedColor((uint8_t)strip, (uint8_t)r, (uint8_t)g, (uint8_t)b);
+                flushDirtyLeds(true);
                 Serial.print(F("OK L ")); Serial.print(strip);
                 Serial.print(' ');        Serial.print(r);
                 Serial.print(' ');        Serial.print(g);
@@ -500,6 +515,11 @@ void loop() {
             lineBuf[lineLen++] = ch;
         }
     }
+
+    // Apply all pixel changes received in this serial burst together. This
+    // keeps incoming ball-tracking LED commands flowing while NeoPixel output
+    // is limited to one refresh per dirty strip every few milliseconds.
+    flushDirtyLeds();
 
     // Per-channel hold timeout: independent of host heartbeat.
     const uint32_t now = millis();

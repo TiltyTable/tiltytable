@@ -360,9 +360,6 @@ class Table:
         strip, idx = loc
         r, g, b = rgb
         self.link.send(f"LP {strip} {idx} {r} {g} {b}")
-        if not self.link.dry_run:
-            count = self._strip_led_counts.get(strip, 50)
-            time.sleep(max(0.03, count * 0.0003))
         return True
 
     def pulse_servo(self, row, col, value):
