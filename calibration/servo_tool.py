@@ -19,6 +19,7 @@ SUBCOMMANDS
     calibrate         interactive: jog each servo, tag rec/neu/ext, save.
     drive             interactive: move servos by NAME (e.g. "0 extended").
     drive <ch> <pos>  one-shot: move one channel to a named position, exit.
+    test              select one/all modules and pose all of their servos.
 
 COMMON OPTIONS
     --port  /dev/cu.usbmodemXXXX   (auto-detected if omitted)
@@ -31,6 +32,9 @@ EXAMPLES
     python3 servo_tool.py --i2c-address 0x43 calibrate  # just one board
     python3 servo_tool.py drive
     python3 servo_tool.py drive 3 extended
+    python3 servo_tool.py test                              # interactive; starts on all modules
+    python3 servo_tool.py test neutral                      # one-shot; all modules
+    python3 servo_tool.py test extended --module 0x43       # one-shot; one module
 
 GLOBAL CALIBRATE MODE: for `calibrate` specifically, omitting BOTH
 --i2c-address and --config loads every board's servo_config_0x4X.json at
@@ -1384,6 +1388,85 @@ def run_drive(link, cfg):
             print("   ? unknown — type 'help'")
 
 
+# ================================ TEST ===================================
+TEST_HELP = """\
+   TEST COMMANDS  (initial module selection: all)
+     recessed | neutral | extended   pose every servo in the selection, then RELEASE each
+     module all                       select all modules
+     module <addr>                    select one module, e.g. module 0x43
+     status                           show the current selection
+     help / q                         help / quit
+
+   Modules and servos are commanded one after another with no added delay.
+   Each servo still gets its normal settle time and is never left energized.
+"""
+
+
+def parse_test_module(value):
+    """Return 'all' or a canonical module address from BOARD_ORDER."""
+    if str(value).lower() == "all":
+        return "all"
+    addr = format_i2c_address(parse_i2c_address(value)).lower()
+    if addr not in BOARD_ORDER:
+        raise ValueError(
+            f"module {value!r} is not installed; choose all or "
+            f"{', '.join(BOARD_ORDER)}"
+        )
+    return addr
+
+
+def run_test_position(link, configs, selection, pos_key):
+    """Pose every calibrated servo in one module or all modules.
+
+    Each servo uses its own saved pulse width and is released before moving
+    on. There is no additional pacing between servos or modules.
+    """
+    modules = BOARD_ORDER if selection == "all" else [selection]
+    moved = 0
+    for addr in modules:
+        cfg = configs[addr]
+        link.set_i2c_address(int(addr, 16))
+        channels = sorted((int(ch) for ch in cfg.get("servos", {})), key=int)
+        print(f"Testing module {addr}: {pos_key}")
+        for ch in channels:
+            if move_named(link, cfg, ch, pos_key):
+                moved += 1
+    print(f"Test complete: moved and released {moved} servo(s).")
+    return moved
+
+
+def run_test(link, configs, initial_selection="all"):
+    selection = initial_selection
+    print(TEST_HELP)
+    print(f"Selected modules: {selection}")
+    while True:
+        try:
+            raw = input(f"[test:{selection}] > ").strip()
+        except EOFError:
+            raw = "q"
+        if not raw:
+            continue
+        parts = raw.lower().split()
+        cmd = parts[0]
+        if len(parts) == 1 and cmd in POS_ALIASES:
+            run_test_position(link, configs, selection, POS_ALIASES[cmd])
+        elif cmd == "module" and len(parts) == 2:
+            try:
+                selection = parse_test_module(parts[1])
+                print(f"Selected modules: {selection}")
+            except (ValueError, argparse.ArgumentTypeError) as ex:
+                print(f"   ! {ex}")
+        elif cmd == "status" and len(parts) == 1:
+            print(f"Selected modules: {selection}")
+        elif cmd in ("help", "?") and len(parts) == 1:
+            print(TEST_HELP)
+        elif cmd in ("quit", "q", "exit") and len(parts) == 1:
+            link.send("X")
+            return
+        else:
+            print("   ? unknown — type 'help'")
+
+
 # =============================== SWEEP ===================================
 def run_sweep(link, cfg, ch, lo, hi, period):
     """Continuously sweep one channel between lo..hi microseconds until Ctrl-C.
@@ -1531,6 +1614,10 @@ def main():
     d.add_argument("position", nargs="?", help="one-shot: rec/neu/ext")
     d.add_argument("--release", action="store_true",
                    help="(ignored; release is always on — kept for old scripts)")
+    tst = sub.add_parser("test", help="pose all servos on one module or all modules")
+    tst.add_argument("position", nargs="?", help="optional one-shot: rec/neu/ext")
+    tst.add_argument("--module", default="all", metavar="ADDR|all",
+                     help="module address or 'all' (default: all)")
     pk = sub.add_parser("park", help="move servos to named positions, cut power, refresh periodically")
     pk.add_argument("assignments", nargs="+", metavar="CH:POS",
                     help="e.g. 12:extended 13:neutral 14:recessed")
@@ -1556,6 +1643,41 @@ def main():
                      help=f"fallback high us if uncalibrated (default {SOFT_MAX})")
     swa.add_argument("--period", type=float, default=3.0, help="seconds per full cycle")
     args = ap.parse_args()
+
+    if args.mode == "test":
+        try:
+            selection = parse_test_module(args.module)
+        except (ValueError, argparse.ArgumentTypeError) as ex:
+            ap.error(str(ex))
+        pos_key = None
+        if args.position is not None:
+            pos = args.position.lower()
+            if pos not in POS_ALIASES:
+                ap.error(f"position must be one of {list(POS_ALIASES)}")
+            pos_key = POS_ALIASES[pos]
+
+        configs = {}
+        for addr in BOARD_ORDER:
+            path = find_config_for_address(int(addr, 16))
+            cfg = load_config(path)
+            cfg["i2c_address"] = addr
+            configs[addr] = cfg
+
+        port = args.port or autodetect_port()
+        if not port:
+            sys.exit("No serial port found. Pass --port /dev/cu.usbmodemXXXX")
+        print(f"Connecting to {port} @ {args.baud} …")
+        link = Link(port, args.baud)
+        link.open_wait()
+        try:
+            if pos_key is None:
+                run_test(link, configs, selection)
+            else:
+                run_test_position(link, configs, selection, pos_key)
+        finally:
+            link.send("X")
+            link.close()
+        return
 
     global_mode = (args.mode == "calibrate" and args.i2c_address is None and args.config is None)
     if global_mode:

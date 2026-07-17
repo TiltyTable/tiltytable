@@ -221,6 +221,21 @@ cd ..
 This updates `servo_config_0x40.json` through `servo_config_0x48.json`. Module
 servos are pulse-then-release; do not leave them energized against a stop.
 
+To pose-test the calibrated servos, start the interactive tester (its initial
+selection is all modules), or run a position once for one module:
+
+```bash
+cd calibration
+../.venv/bin/python3 servo_tool.py --port /dev/arduino-modules test
+../.venv/bin/python3 servo_tool.py --port /dev/arduino-modules test extended --module 0x43
+cd ..
+```
+
+Inside the tester, use `module all` or `module 0x43` to change the selection,
+then enter `recessed`, `neutral`, or `extended`. Modules and servos are
+commanded one after another without added pacing, and every servo is released
+after it reaches the requested position.
+
 ### 3. Servo-to-cell mapping
 
 Visually associate every PCA9685 channel with the LED cell that moves. This
