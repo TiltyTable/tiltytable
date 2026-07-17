@@ -26,30 +26,32 @@ only to configure each UIM5756PM motor to MCS=4; it is not game firmware.
 
 ### Programs running for a complete live game
 
-The current system is four cooperating host processes:
+Start the complete host stack with one launcher. The launcher ensures the
+persistent Stewart serial supervisor is running, then starts the integrated
+arcade process and projector kiosk:
 
 | Process | Purpose | Owns |
 | --- | --- | --- |
 | `stewart_supervisor.py` | Persistent serial owner and motion lease server | `/dev/arduino-stewart` |
-| `kinect_web_control.py` | Azure Kinect capture, ball detection, continuous table-pose fit, ball-to-cell API | Azure Kinect; HTTP `:8080` |
-| One `stewart_platform_control_*.py` | Trackball input, free-heave IK, and Stewart targets | Trackball; supervisor motion lease |
-| `run_arcade.sh` | Arcade server, projector UI, level logic, servos, and LEDs | `/dev/arduino-modules`; HTTP `:8081` |
+| `arcade.server` (started by `run_arcade.sh`) | Kinect capture and ball/table tracking; trackball and Stewart control; level logic, scoring, servos, LEDs, and projector UI | Azure Kinect; trackball; supervisor motion lease; `/dev/arduino-modules`; HTTP `:8080` by default |
 
-The launcher does not currently start Kinect or Stewart control itself. Start
-those services first using the commands in [Run the complete game](#run-the-complete-game).
+Do not start `kinect_web_control.py` or a standalone
+`stewart_platform_control_*.py` beside the live arcade. Those remain useful as
+diagnostic programs, but the arcade owns those devices during a game.
 
 ## Essential source and configuration
 
 | Game element | Runtime source | Required configuration |
 | --- | --- | --- |
-| Trackball + Stewart position control | `stewart_platform_control_position.py`, `stewart_platform_control_common.py` | CLI gains/signs; optional `--step-offsets` |
+| Trackball + Stewart position control | `arcade/stewart_tilt.py`, `stewart_platform_control_position.py`, `stewart_platform_control_common.py` | Controller defaults; Arduino EEPROM position/calibration |
 | Trackball + Stewart velocity control | `stewart_platform_control_velocity.py`, `stewart_platform_control_common.py` | CLI gain, decay, signs, and limits |
 | Stewart IK | `analysis/stewart_exp_kinematics.py` | Geometry constants in that module |
 | Stewart serial ownership | `stewart_supervisor.py`, `stewart_supervisor_client.py`, `stewart_exp_probe.py` | Supervisor Unix socket; Arduino EEPROM position/calibration |
 | Module servos and LEDs | `arcade/hardware.py`, `game_runner.py` | Grid, servo, palette, and LED calibration JSON files below |
-| Azure Kinect ball tracking | `kinect_web_control.py`, `ball_tracker.py`, `camera_geometry.py`, `live_capture_viewer.py` | `config.json` ball settings |
+| Azure Kinect ball tracking | `arcade/ball_adapters.py`, `kinect_web_control.py`, `ball_tracker.py`, `camera_geometry.py` | `config.json` ball settings |
 | Continuous table tracking | `table_pose.py` | `config.json` marker dimensions/threshold; five measured marker locations in `TableGeometry._rebuild()` |
 | Arcade game | `arcade/server.py`, `arcade/engine.py`, `arcade/survival_lava.py` | `arcade/levels.json`, `maps/arcade-level-*.json` |
+| Arcade cabinet input | `arcade/stewart_tilt.py` | `arcade/config.json` trackball navigation sensitivity |
 | Cabinet UI | `arcade/static/` | 854×480 browser kiosk launched by `run_arcade.sh` |
 
 The live module grid requires all of these calibration files:
@@ -345,74 +347,43 @@ pass `--ball-tracking` or set `ball.ball_tracking` to `true`.
 
 ## Run the complete game
 
-Use four terminals, or convert terminals 2–4 into supervised services after
-hardware validation.
-
-### Terminal 1: permanent Stewart supervisor
-
-Normally this is already running as the user service:
+After completing hardware setup, calibration, and the one-time supervisor
+installation above, launch the entire game from the repository root:
 
 ```bash
-systemctl --user start tiltytable-stewart-supervisor.service
-```
-
-For foreground diagnostics instead:
-
-```bash
-.venv/bin/python3 stewart_supervisor.py
-```
-
-Never run both instances at once.
-
-### Terminal 2: Azure Kinect tracker
-
-```bash
-.venv/bin/python3 kinect_web_control.py --http-port 8080
-```
-
-### Terminal 3: trackball and Stewart control
-
-Run exactly one controller. Direct position control is the recommended game
-mode: trackball X changes pitch and Y changes roll.
-
-```bash
-.venv/bin/python3 stewart_platform_control_position.py \
-  --max-tilt 10 --degrees-per-count 0.04
-```
-
-The alternative interprets swipes as angular-velocity impulses with decay:
-
-```bash
-.venv/bin/python3 stewart_platform_control_velocity.py \
-  --max-tilt 10 --velocity-per-count 0.6 --velocity-decay-s 0.35
-```
-
-Both programs default to the supervisor socket, auto-detect the trackball,
-initialize from current Arduino motor positions, and allow IK to choose heave.
-Use `--roll-sign -1` or `--pitch-sign -1` only if the corresponding physical
-axis is reversed.
-
-### Terminal 4: arcade server and projector kiosk
-
-The Kinect service defaults to port 8080, so run the arcade on 8081 and pass
-the Kinect base URL:
-
-```bash
-TILTYTABLE_KINECT_URL=http://127.0.0.1:8080 \
-TILTYTABLE_ARCADE_PORT=8081 \
 ./run_arcade.sh
 ```
 
-Use `--no-kiosk` to run only the server and open
-`http://127.0.0.1:8081/` manually.
+The launcher runs hardware preflight, starts the persistent Stewart supervisor
+user service if needed, and starts one arcade process. That arcade process owns
+the Azure Kinect tracker, trackball/Stewart motion client, module servos and
+LEDs, game engine, HTTP server, and projector kiosk. It initializes Stewart IK
+from the current Arduino motor positions and uses the firmware's EEPROM
+calibration directly.
 
-Current integration behavior:
+When launched from SSH, `run_arcade.sh` attaches the arcade process to the local
+GPU-backed projector display (`:0`) before starting Kinect capture. The Azure
+Kinect depth engine requires that OpenGL display even though the integrated
+tracker does not render preview windows; an SSH-forwarded display such as
+`localhost:10.0` is not sufficient.
+
+Set `TILTYTABLE_ARCADE_PORT` only when the default port `8080` is unavailable:
+
+```bash
+TILTYTABLE_ARCADE_PORT=8081 ./run_arcade.sh
+```
+
+Use `--no-kiosk` to run only the server and open
+`http://127.0.0.1:8080/` manually (or the port selected with
+`TILTYTABLE_ARCADE_PORT`).
+
+Current game behavior:
 
 - The arcade process exclusively drives module servos and LEDs.
-- The separate Stewart controller physically tilts the table but is not yet an
-  in-process arcade adapter; the arcade API currently reports tilt integration
-  as disabled even while the controller is running.
-- Kinect ball cells drive the automatic Floor-is-Lava survival mechanics.
+- The in-process Stewart adapter reads the trackball and enables tilt during an
+  active level.
+- The in-process Kinect adapter drives the automatic Floor-is-Lava survival
+  mechanics.
 - Chambers 1–6 do not yet automatically detect the finish cell; the operator
   presses `C` when the marble reaches magenta.
 

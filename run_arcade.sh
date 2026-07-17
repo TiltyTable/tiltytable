@@ -28,6 +28,27 @@ if [[ ! -x ".venv/bin/python3" ]]; then
   exit 1
 fi
 
+# The Kinect depth engine needs the local GPU-backed X display even though its
+# integrated frame hub is headless. SSH shells often inherit localhost:10.0,
+# which has no usable GLX/OpenGL 4.4 context. Attach the whole launcher to the
+# projector session before starting preflight or the arcade process.
+if [[ -S /tmp/.X11-unix/X0 && (
+  -z "${DISPLAY:-}" ||
+  "$DISPLAY" == localhost:* ||
+  "$DISPLAY" == 127.0.0.1:*
+) ]]; then
+  export DISPLAY=:0
+  local_runtime="/run/user/$(id -u)"
+  if [[ -r "$local_runtime/gdm/Xauthority" ]]; then
+    export XAUTHORITY="$local_runtime/gdm/Xauthority"
+  fi
+  export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$local_runtime}"
+  if [[ -S "$local_runtime/bus" ]]; then
+    export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$local_runtime/bus}"
+  fi
+  echo "Using local projector display $DISPLAY"
+fi
+
 SERVER_ARGS=(--host 0.0.0.0 --port "$HTTP_PORT")
 PREFLIGHT_ARGS=(--port "$HTTP_PORT")
 if [[ -n "$MODE" ]]; then
@@ -65,26 +86,6 @@ done
 echo "TiltyTable Arcade: $URL"
 
 if [[ "$KIOSK" -eq 1 ]]; then
-  # Cursor/SSH shells do not inherit the local GNOME session even though the
-  # projector desktop is already running. Attach kiosk Chromium to that X
-  # session and its audio/DBus runtime automatically.
-  if [[ -S /tmp/.X11-unix/X0 && (
-    -z "${DISPLAY:-}" ||
-    "$DISPLAY" == localhost:* ||
-    "$DISPLAY" == 127.0.0.1:*
-  ) ]]; then
-    export DISPLAY=:0
-    local_runtime="/run/user/$(id -u)"
-    if [[ -r "$local_runtime/gdm/Xauthority" ]]; then
-      export XAUTHORITY="$local_runtime/gdm/Xauthority"
-    fi
-    export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$local_runtime}"
-    if [[ -S "$local_runtime/bus" ]]; then
-      export DBUS_SESSION_BUS_ADDRESS="${DBUS_SESSION_BUS_ADDRESS:-unix:path=$local_runtime/bus}"
-    fi
-    echo "Using local projector display $DISPLAY"
-  fi
-
   if command -v chromium-browser >/dev/null 2>&1; then
     SNAP_REEXEC=0 chromium-browser --kiosk --app="$URL" --window-size=854,480 \
       --no-first-run --disable-gpu &
@@ -103,4 +104,3 @@ if [[ "$KIOSK" -eq 1 ]]; then
 fi
 
 wait "$SERVER_PID"
-

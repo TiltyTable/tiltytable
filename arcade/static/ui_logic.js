@@ -18,5 +18,44 @@
     return "open-overlay";
   }
 
-  return { shiftInitials, backIntent };
+  function cabinetButtonIntent(
+    previousConfirm,
+    previousBack,
+    nextConfirm,
+    nextBack,
+  ) {
+    if (nextBack > previousBack) return "back";
+    if (nextConfirm > previousConfirm) return "confirm";
+    return null;
+  }
+
+  function cabinetNavigationKeys(previousUp, previousDown, nextUp, nextDown) {
+    const keys = [];
+    const upSteps = Math.min(4, Math.max(0, nextUp - previousUp));
+    const downSteps = Math.min(4, Math.max(0, nextDown - previousDown));
+    for (let index = 0; index < upSteps; index += 1) keys.push("ArrowUp");
+    for (let index = 0; index < downSteps; index += 1) keys.push("ArrowDown");
+    return keys;
+  }
+
+  function cellKeyToCoordinates(key) {
+    const match = /^([A-L])(1[0-2]|[1-9])$/i.exec(String(key || ""));
+    if (!match) return "—";
+    const x = match[1].toUpperCase().charCodeAt(0) - 65;
+    const y = Number(match[2]) - 1;
+    return `(${x},${y})`;
+  }
+
+  function ballOverlayVisible(debugEnabled, state) {
+    return Boolean(debugEnabled || state === "placement" || state === "playing");
+  }
+
+  return {
+    shiftInitials,
+    backIntent,
+    cabinetButtonIntent,
+    cabinetNavigationKeys,
+    cellKeyToCoordinates,
+    ballOverlayVisible,
+  };
 });

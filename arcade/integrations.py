@@ -24,6 +24,10 @@ class TiltStatus:
     enabled: bool = False
     active: bool = False
     error: str = ""
+    confirm_presses: int = 0
+    back_presses: int = 0
+    navigation_up: int = 0
+    navigation_down: int = 0
 
 
 class BallTrackingAdapter(Protocol):
@@ -42,4 +46,3 @@ class TiltControlAdapter(Protocol):
     def set_active(self, active: bool) -> None: ...
     def status(self) -> TiltStatus: ...
     def stop(self) -> None: ...
-

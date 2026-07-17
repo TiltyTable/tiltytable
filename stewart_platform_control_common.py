@@ -36,10 +36,13 @@ DEFAULT_TRACKBALL = (
 )
 INPUT_EVENT = struct.Struct("llHHI")
 EV_SYN = 0x00
+EV_KEY = 0x01
 EV_REL = 0x02
 SYN_REPORT = 0x00
 REL_X = 0x00
 REL_Y = 0x01
+BTN_LEFT = 0x110
+BTN_RIGHT = 0x111
 
 
 def signed32(value: int) -> int:
@@ -122,12 +125,16 @@ def find_trackball() -> Path | None:
 
 @dataclass
 class TrackballAccumulator:
-    """Accumulate REL_X/REL_Y and publish only complete SYN_REPORT frames."""
+    """Publish trackball motion and button presses on complete input frames."""
 
     frame_dx: int = 0
     frame_dy: int = 0
     pending_dx: int = 0
     pending_dy: int = 0
+    frame_left_presses: int = 0
+    frame_right_presses: int = 0
+    pending_left_presses: int = 0
+    pending_right_presses: int = 0
 
     def feed_bytes(self, data: bytes) -> None:
         for offset in range(
@@ -142,16 +149,32 @@ class TrackballAccumulator:
                     self.frame_dx += value
                 elif code == REL_Y:
                     self.frame_dy += value
+            elif event_type == EV_KEY and value == 1:
+                if code == BTN_LEFT:
+                    self.frame_left_presses += 1
+                elif code == BTN_RIGHT:
+                    self.frame_right_presses += 1
             elif event_type == EV_SYN and code == SYN_REPORT:
                 self.pending_dx += self.frame_dx
                 self.pending_dy += self.frame_dy
+                self.pending_left_presses += self.frame_left_presses
+                self.pending_right_presses += self.frame_right_presses
                 self.frame_dx = 0
                 self.frame_dy = 0
+                self.frame_left_presses = 0
+                self.frame_right_presses = 0
 
     def pop(self) -> tuple[int, int]:
         result = self.pending_dx, self.pending_dy
         self.pending_dx = 0
         self.pending_dy = 0
+        return result
+
+    def pop_buttons(self) -> tuple[int, int]:
+        """Return `(left, right)` press counts since the previous call."""
+        result = self.pending_left_presses, self.pending_right_presses
+        self.pending_left_presses = 0
+        self.pending_right_presses = 0
         return result
 
 
@@ -182,6 +205,9 @@ class TrackballDevice:
 
     def pop(self) -> tuple[int, int]:
         return self.accumulator.pop()
+
+    def pop_buttons(self) -> tuple[int, int]:
+        return self.accumulator.pop_buttons()
 
 
 def add_common_arguments(parser: argparse.ArgumentParser) -> None:

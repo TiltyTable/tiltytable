@@ -16,7 +16,10 @@ from analysis.stewart_exp_kinematics import (
 )
 from stewart_platform_control_common import (
     EV_REL,
+    EV_KEY,
     EV_SYN,
+    BTN_LEFT,
+    BTN_RIGHT,
     INPUT_EVENT,
     REL_X,
     REL_Y,
@@ -33,7 +36,11 @@ from stewart_platform_control_position import (
     command_or_retain_last_valid,
 )
 from stewart_platform_control_velocity import apply_velocity_counts
-from arcade.stewart_tilt import StewartTiltService
+from arcade.stewart_tilt import (
+    StewartTiltService,
+    load_navigation_counts_per_step,
+    navigation_steps,
+)
 
 
 def event(event_type: int, code: int, value: int) -> bytes:
@@ -176,6 +183,26 @@ class SharedStewartControlTests(unittest.TestCase):
         )
         self.assertEqual(accumulator.pop(), (7, -4))
 
+    def test_trackball_buttons_publish_once_per_press_frame(self) -> None:
+        accumulator = TrackballAccumulator()
+        accumulator.feed_bytes(event(EV_KEY, BTN_RIGHT, 1))
+        self.assertEqual(accumulator.pop_buttons(), (0, 0))
+        accumulator.feed_bytes(event(EV_SYN, SYN_REPORT, 0))
+        self.assertEqual(accumulator.pop_buttons(), (0, 1))
+        accumulator.feed_bytes(
+            event(EV_KEY, BTN_RIGHT, 0)
+            + event(EV_KEY, BTN_LEFT, 1)
+            + event(EV_SYN, SYN_REPORT, 0)
+        )
+        self.assertEqual(accumulator.pop_buttons(), (1, 0))
+
+    def test_vertical_trackball_motion_becomes_menu_navigation(self) -> None:
+        counts = load_navigation_counts_per_step()
+        self.assertEqual(counts, 36)
+        self.assertEqual(navigation_steps(15, 0, counts), (0, 0, 15))
+        self.assertEqual(navigation_steps(24, 15, counts), (0, 1, 3))
+        self.assertEqual(navigation_steps(-73, 0, counts), (2, 0, -1))
+
     def test_symmetric_calibration_transition_uses_one_branch(self) -> None:
         final = plan_heave_transition(calibrated_solution(), 0.0)[-1]
         self.assertEqual(final.branch_index, (0, 0, 0))
@@ -251,6 +278,7 @@ class ArcadeStewartTiltTests(unittest.TestCase):
             self.closed = False
             self._lock = threading.Lock()
             self._events: list[tuple[int, int]] = []
+            self._buttons: list[tuple[int, int]] = []
 
         def open(self) -> None:
             self.opened = True
@@ -269,6 +297,14 @@ class ArcadeStewartTiltTests(unittest.TestCase):
             with self._lock:
                 self._events.append((dx, dy))
 
+        def pop_buttons(self) -> tuple[int, int]:
+            with self._lock:
+                return self._buttons.pop(0) if self._buttons else (0, 0)
+
+        def push_buttons(self, left: int = 0, right: int = 0) -> None:
+            with self._lock:
+                self._buttons.append((left, right))
+
     @staticmethod
     def wait_until(predicate, timeout: float = 0.5) -> None:
         deadline = time.monotonic() + timeout
@@ -280,6 +316,7 @@ class ArcadeStewartTiltTests(unittest.TestCase):
 
     def test_arcade_tilt_only_commands_during_level_scope(self) -> None:
         controller = self.FakeController()
+        controller.current = SimpleNamespace(roll_deg=2.0, pitch_deg=-1.0)
         trackball = self.FakeTrackball()
         service = StewartTiltService(
             controller=controller,
@@ -296,10 +333,22 @@ class ArcadeStewartTiltTests(unittest.TestCase):
         time.sleep(0.03)
         self.assertEqual(controller.commands, [])
 
+        trackball.push(0, 72)
+        self.wait_until(lambda: service.status().navigation_down == 1)
+
         service.set_active(True)
         self.wait_until(lambda: service.status().active)
+        self.assertEqual(
+            (controller.current.roll_deg, controller.current.pitch_deg),
+            (0.0, 0.0),
+        )
         trackball.push(8, -4)
         self.wait_until(lambda: bool(controller.commands))
+
+        trackball.push_buttons(right=1)
+        self.wait_until(lambda: service.status().confirm_presses == 1)
+        trackball.push_buttons(left=1)
+        self.wait_until(lambda: service.status().back_presses == 1)
 
         service.set_active(False)
         self.wait_until(lambda: not service.status().active)

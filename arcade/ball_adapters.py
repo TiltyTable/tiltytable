@@ -145,7 +145,6 @@ class InProcessKinectBallAdapter:
                 args = parse_args(["--config", str(self.config_path)])
                 args.color_resolution = "off"
                 args.aligned_depth = False
-                args.depth_engine_display = ""
                 args.ball_tracking = True
                 hub = KinectFrameHub(args, headless=True)
                 self._hub = hub

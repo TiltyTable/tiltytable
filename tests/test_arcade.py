@@ -64,6 +64,10 @@ class FakeTiltAdapter:
         self.started = False
         self.active = False
         self.requests: list[bool] = []
+        self.confirm_presses = 0
+        self.back_presses = 0
+        self.navigation_up = 0
+        self.navigation_down = 0
 
     def start(self) -> None:
         self.started = True
@@ -73,7 +77,14 @@ class FakeTiltAdapter:
         self.requests.append(active)
 
     def status(self) -> TiltStatus:
-        return TiltStatus(enabled=self.started, active=self.active)
+        return TiltStatus(
+            enabled=self.started,
+            active=self.active,
+            confirm_presses=self.confirm_presses,
+            back_presses=self.back_presses,
+            navigation_up=self.navigation_up,
+            navigation_down=self.navigation_down,
+        )
 
     def stop(self) -> None:
         self.started = False
@@ -470,6 +481,15 @@ class ArcadeApiTests(unittest.TestCase):
             engine.tick()
             self.assertTrue(engine.tilt_requested())
             client = app.test_client()
+            tilt.confirm_presses = 2
+            tilt.back_presses = 1
+            tilt.navigation_up = 3
+            tilt.navigation_down = 4
+            state = client.get("/api/state").get_json()["game"]
+            self.assertEqual(state["integrations"]["tilt"]["confirmPresses"], 2)
+            self.assertEqual(state["integrations"]["tilt"]["backPresses"], 1)
+            self.assertEqual(state["integrations"]["tilt"]["navigationUp"], 3)
+            self.assertEqual(state["integrations"]["tilt"]["navigationDown"], 4)
             client.post("/api/action", json={"action": "confirm-placement"})
             self.assertTrue(tilt.active)
             client.post("/api/action", json={"action": "complete"})
@@ -526,4 +546,3 @@ class ArcadeApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

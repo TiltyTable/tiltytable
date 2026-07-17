@@ -619,6 +619,18 @@ class GameEngine:
                     "tilt": {
                         "enabled": bool(tilt_status and tilt_status.enabled),
                         "active": bool(tilt_status and tilt_status.active),
+                        "confirmPresses": int(
+                            tilt_status.confirm_presses if tilt_status else 0
+                        ),
+                        "backPresses": int(
+                            tilt_status.back_presses if tilt_status else 0
+                        ),
+                        "navigationUp": int(
+                            tilt_status.navigation_up if tilt_status else 0
+                        ),
+                        "navigationDown": int(
+                            tilt_status.navigation_down if tilt_status else 0
+                        ),
                         "label": (
                             getattr(self.tilt_adapter, "label", "Stewart + roller ball")
                             if self.tilt_adapter is not None

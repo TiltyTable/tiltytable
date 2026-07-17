@@ -106,8 +106,19 @@ let lastTimerSecond = null;
 let lastTimerBand = null;
 let requestInFlight = false;
 let devBallCell = null;
+let cabinetConfirmPresses = null;
+let cabinetBackPresses = null;
+let cabinetNavigationUp = null;
+let cabinetNavigationDown = null;
 const DEBUG_BALL_OVERLAY = new URLSearchParams(location.search).get("debug") === "1";
-const { shiftInitials, backIntent } = window.ArcadeUiLogic;
+const {
+  shiftInitials,
+  backIntent,
+  cabinetButtonIntent,
+  cabinetNavigationKeys,
+  cellKeyToCoordinates,
+  ballOverlayVisible,
+} = window.ArcadeUiLogic;
 
 function uiButton(label, action, options = {}) {
   const classes = ["arcade-button", options.primary ? "primary" : "", options.compact ? "compact" : ""]
@@ -118,6 +129,16 @@ function uiButton(label, action, options = {}) {
     .join(" ");
   return `<button type="button" class="${classes}" data-ui-action="${action}" ${attributes}>${escapeHtml(label)}</button>`;
 }
+
+function cabinetHint(kind, label) {
+  const button = kind === "confirm" ? "RIGHT" : "LEFT";
+  return `<span class="cabinet-hint"><i class="pixel-button ${kind}" aria-hidden="true"></i><span>${button} · ${escapeHtml(label)}</span></span>`;
+}
+
+function confirmHint(label) { return cabinetHint("confirm", label); }
+function backHint(label = "BACK") { return cabinetHint("back", label); }
+function joinHints(...hints) { return hints.filter(Boolean).join('<i class="hint-divider">·</i>'); }
+function navigationHint(label = "CHOOSE") { return `<span>ROLL ↑↓ · ${escapeHtml(label)}</span>`; }
 
 function isSurvivalLevel(level = game?.level) {
   return level?.mode === "survival_lava";
@@ -266,19 +287,21 @@ function hardwareStatus() {
 function ballTrackOverlay() {
   const tracking = game?.integrations?.tracking;
   const kinectActive = Boolean(tracking?.enabled);
-  if (!DEBUG_BALL_OVERLAY) return "";
+  if (!ballOverlayVisible(DEBUG_BALL_OVERLAY, game?.state)) return "";
   if (!game?.ball) return "";
 
   const ball = game.ball;
-  const cell = ball.cell || "—";
+  const coordinates = Number.isInteger(ball.col) && Number.isInteger(ball.row)
+    ? `(${ball.col},${ball.row})`
+    : "—";
   const conf = Number(ball.confidence ?? 0);
   const dimmed = !kinectActive;
   const confClass = conf >= 0.75 ? "ok" : conf >= 0.4 ? "warn" : "low";
 
   return `
     <aside class="ball-track-overlay ${dimmed ? "dimmed" : ""}" aria-hidden="true">
-      <span class="ball-track-label">BALL CELL</span>
-      <span class="ball-track-cell">${escapeHtml(cell)}</span>
+      <span class="ball-track-label">BALL (X,Y)</span>
+      <span class="ball-track-cell">${escapeHtml(coordinates)}</span>
       <span class="ball-track-conf ${confClass}">${conf.toFixed(1)}</span>
     </aside>`;
 }
@@ -336,7 +359,7 @@ function renderSetup() {
       <p class="hero-sub">${fault ? "Dungeon systems need an attendant." : "Tilty's escape begins here."}</p>
       <div class="action-row">${uiButton(fault ? "TRY AGAIN" : "START", "setup", { primary: true })}</div>
     </article>`,
-    `LEFT CLICK TO ${fault ? "TRY AGAIN" : "START"}`,
+    confirmHint(fault ? "TRY AGAIN" : "START"),
     dialogue(lore.ken, lore.troll, true));
 }
 
@@ -378,7 +401,7 @@ function renderAttract() {
         ${leaderboardRows(8)}
       </aside>
     </div>`,
-    `LEFT CLICK SELECTS`,
+    joinHints(navigationHint(), confirmHint("SELECT")),
     dialogue(LORE.attract.ken, LORE.attract.troll));
 }
 
@@ -400,7 +423,7 @@ function renderInitials() {
       </div>
       <div class="action-row">${uiButton("LOCK IT IN", "set-initials", { primary: true })}</div>
     </div>`,
-    `LEFT CLICK CHANGES LETTERS · RIGHT CLICK BACK`,
+    joinHints(navigationHint("CHANGE LETTER"), confirmHint("LOCK IN"), backHint()),
     dialogue(LORE.initials.ken, LORE.initials.troll, true));
 }
 
@@ -418,7 +441,7 @@ function renderLevelSelect() {
           </button>`).join("")}
       </div>
     </div>`,
-    `LEFT CLICK SELECTS · RIGHT CLICK TITLE`,
+    joinHints(navigationHint(), confirmHint("SELECT"), backHint("TITLE")),
     dialogue(LORE.levelSelect.ken, LORE.levelSelect.troll, true));
 }
 
@@ -436,7 +459,7 @@ function renderRules() {
         <div class="action-row action-row-left">${uiButton("BUILD CHAMBER", "continue", { primary: true })}</div>
       </div>
     </div>`,
-    `LEFT CLICK CONTINUES · RIGHT CLICK ENDS RUN`,
+    joinHints(confirmHint("CONTINUE"), backHint("END RUN")),
     dialogue(level.kenLine || LORE.playing.ken, level.trollLine || LORE.playing.troll));
 }
 
@@ -483,7 +506,7 @@ function boardMarkup(waiting = false) {
       if (cell.dynamicType === "delayed_trap") classes.push("delayed-trap");
       if (waiting && cell.key === game.level.startCell) classes.push("waiting");
       if (waiting && cell.blinkUntilPlay) classes.push("waiting", "points");
-      return `<i class="${classes.join(" ")}" title="${cell.key}"></i>`;
+      return `<i class="${classes.join(" ")}" title="${cellKeyToCoordinates(cell.key)}"></i>`;
     }).join("")
   }</div></div>`;
 }
@@ -505,10 +528,10 @@ function renderPlacement() {
   const hasBlinkFloor = (game.mapCells || []).some(cell => cell.blinkUntilPlay);
   const ready = Boolean(game.placementReady);
   const instruction = ready
-    ? `Ball found on cyan <strong>${level.startCell}</strong>`
+    ? `Ball found on cyan <strong>${cellKeyToCoordinates(level.startCell)}</strong>`
     : hasBlinkFloor
-      ? `Set the ball on cyan <strong>${level.startCell}</strong> — blue rises on start`
-      : `Set the ball on cyan <strong>${level.startCell}</strong>`;
+      ? `Set the ball on cyan <strong>${cellKeyToCoordinates(level.startCell)}</strong> — blue rises on start`
+      : `Set the ball on cyan <strong>${cellKeyToCoordinates(level.startCell)}</strong>`;
   return shell(`
     <div class="game-layout">
       ${boardMarkup(true)}
@@ -524,7 +547,7 @@ function renderPlacement() {
         <div class="action-row action-row-left">${uiButton("START ESCAPE", "confirm-placement", { primary: true })}</div>
       </div>
     </div>`,
-    `ROLLER BALL TILTS · LEFT CLICK STARTS · RIGHT CLICK ENDS RUN`,
+    joinHints(`<span>ROLLER BALL TILTS</span>`, confirmHint("START"), backHint("END RUN")),
     placementDialogue(level));
 }
 
@@ -542,11 +565,11 @@ function renderPlaying() {
   const kenLine = hunt
     ? (remaining <= 5
       ? "Five seconds — reach that flashing blue tile!"
-      : `Target ${modeState.targetCell || "lost"} — each hit buys time but builds the trap.`)
+      : `Target ${modeState.targetCell ? cellKeyToCoordinates(modeState.targetCell) : "lost"} — each hit buys time but builds the trap.`)
     : hex
       ? (remaining <= 10
         ? "Ten seconds — flashing tiles are about to disappear!"
-        : `Collect blue ${modeState.pointCell || "points"} while random floor tiles flash before falling.`)
+        : `Collect blue ${modeState.pointCell ? cellKeyToCoordinates(modeState.pointCell) : "points"} while random floor tiles flash before falling.`)
       : survival
     ? (heating
       ? "Red flash behind you — that tile is about to sink!"
@@ -563,13 +586,13 @@ function renderPlaying() {
     : timerTrollLine(remaining);
   const timerLabel = hunt ? "TARGET HUNT" : tracked ? (heating ? "HEATING" : "SURVIVE") : null;
   const instruction = hunt
-    ? `Reach blue <strong>${modeState.targetCell || "—"}</strong> · targets ${modeState.targetsReached || 0}`
+    ? `Reach blue <strong>${cellKeyToCoordinates(modeState.targetCell)}</strong> · targets ${modeState.targetsReached || 0}`
     : hex
-      ? `Reach blue <strong>${modeState.pointCell || "—"}</strong> · points ${modeState.pointsCollected || 0} · floor ${openTiles}`
+      ? `Reach blue <strong>${cellKeyToCoordinates(modeState.pointCell)}</strong> · points ${modeState.pointsCollected || 0} · floor ${openTiles}`
       : survival
         ? `Tiles touched <strong>${visited}</strong> · +${level.pointsPerTile || 0} each`
-        : `Reach magenta <strong>${level.endCell}</strong>`;
-  const footer = `ROLLER BALL TILTS · RIGHT CLICK ENDS RUN`;
+        : `Reach magenta <strong>${cellKeyToCoordinates(level.endCell)}</strong>`;
+  const footer = joinHints(`<span>ROLLER BALL TILTS</span>`, backHint("END RUN"));
   return shell(`
     <div class="game-layout">
       ${boardMarkup(false)}
@@ -606,7 +629,7 @@ function renderSurvivalFail() {
       <p class="result-number">−100</p>
       <div class="action-row">${uiButton("TRY AGAIN", "continue", { primary: true })}</div>
     </article>`,
-    `LEFT CLICK RETRIES · RIGHT CLICK ENDS RUN`,
+    joinHints(confirmHint("TRY AGAIN"), backHint("END RUN")),
     dialogue(LORE.survivalFail.ken, game.level?.trollLine || LORE.survivalFail.troll, true));
 }
 
@@ -618,7 +641,7 @@ function renderTimeUp() {
       <p class="result-number">−100</p>
       <div class="action-row">${uiButton("TRY AGAIN", "continue", { primary: true })}</div>
     </article>`,
-    `LEFT CLICK RETRIES · RIGHT CLICK ENDS RUN`,
+    joinHints(confirmHint("TRY AGAIN"), backHint("END RUN")),
     dialogue(LORE.timeUp.ken, game.level?.trollLine || LORE.timeUp.troll, true));
 }
 
@@ -635,7 +658,7 @@ function renderLevelClear() {
       <p class="decision-copy">${sub}</p>
       <div class="action-row">${uiButton("SEE SCORE", "continue", { primary: true })}</div>
     </article>`,
-    `LEFT CLICK CONTINUES`,
+    confirmHint("CONTINUE"),
     dialogue(LORE.levelClear.ken, LORE.levelClear.troll, true));
 }
 
@@ -666,7 +689,7 @@ function renderLevelScore() {
       ${breakdown}
       <div class="action-row">${uiButton(nextLabel, "continue", { primary: true })}</div>
     </article>`,
-    `LEFT CLICK CONTINUES`,
+    confirmHint("CONTINUE"),
     dialogue(LORE.levelScore.ken, LORE.levelScore.troll, true));
 }
 
@@ -684,7 +707,7 @@ function renderSummary() {
       <p class="decision-copy">${game.mode === "practice" ? "Tilty knows the route now." : "Tiltelle's light flickers ahead."}</p>
       <div class="action-row">${uiButton(next, "continue", { primary: true })}</div>
     </article>`,
-    `LEFT CLICK CONTINUES`,
+    confirmHint("CONTINUE"),
     dialogue(LORE.runSummary.ken, LORE.runSummary.troll, true));
 }
 
@@ -698,7 +721,7 @@ function renderAbandoned() {
       ${saved ? `<p class="decision-copy">${Number(game.score).toLocaleString()} PTS SAVED</p>` : ""}
       <div class="action-row">${uiButton("CONTINUE", "continue", { primary: true })}</div>
     </article>`,
-    `LEFT CLICK CONTINUES`,
+    confirmHint("CONTINUE"),
     dialogue(LORE.abandoned.ken, LORE.abandoned.troll, true));
 }
 
@@ -709,7 +732,7 @@ function renderLeaderboard() {
       <aside class="leader-card" style="margin-top:16px">${leaderboardRows(10)}</aside>
       <div class="action-row">${uiButton("TITLE SCREEN", "continue", { primary: true })}</div>
     </div>`,
-    `LEFT CLICK RETURNS`,
+    confirmHint("TITLE"),
     dialogue(LORE.leaderboard.ken, LORE.leaderboard.troll, true));
 }
 
@@ -767,8 +790,61 @@ async function refresh() {
     game = payload.game;
     handleStateAudio();
     render();
+    handleCabinetButtons();
   } catch (error) {
     console.error("State refresh failed", error);
+  }
+}
+
+function handleCabinetButtons() {
+  const tilt = game?.integrations?.tilt;
+  if (!tilt?.enabled) {
+    cabinetConfirmPresses = null;
+    cabinetBackPresses = null;
+    cabinetNavigationUp = null;
+    cabinetNavigationDown = null;
+    return;
+  }
+  const nextConfirm = Number(tilt.confirmPresses || 0);
+  const nextBack = Number(tilt.backPresses || 0);
+  const nextUp = Number(tilt.navigationUp || 0);
+  const nextDown = Number(tilt.navigationDown || 0);
+  if (
+    cabinetConfirmPresses === null
+    || cabinetBackPresses === null
+    || cabinetNavigationUp === null
+    || cabinetNavigationDown === null
+  ) {
+    cabinetConfirmPresses = nextConfirm;
+    cabinetBackPresses = nextBack;
+    cabinetNavigationUp = nextUp;
+    cabinetNavigationDown = nextDown;
+    return;
+  }
+  const intent = cabinetButtonIntent(
+    cabinetConfirmPresses,
+    cabinetBackPresses,
+    nextConfirm,
+    nextBack,
+  );
+  const navigationKeys = cabinetNavigationKeys(
+    cabinetNavigationUp,
+    cabinetNavigationDown,
+    nextUp,
+    nextDown,
+  );
+  cabinetConfirmPresses = nextConfirm;
+  cabinetBackPresses = nextBack;
+  cabinetNavigationUp = nextUp;
+  cabinetNavigationDown = nextDown;
+  if (intent === "back") {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+  } else if (intent === "confirm") {
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+  } else {
+    navigationKeys.forEach(key => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key }));
+    });
   }
 }
 
@@ -830,6 +906,10 @@ function handleBack() {
 }
 
 app.addEventListener("click", event => {
+  if (game?.integrations?.tilt?.enabled && event.detail > 0) {
+    event.preventDefault();
+    return;
+  }
   const control = event.target.closest("[data-ui-action]");
   if (!control || requestInFlight) return;
   audio.enable();
@@ -863,6 +943,7 @@ app.addEventListener("click", event => {
 
 app.addEventListener("contextmenu", event => {
   event.preventDefault();
+  if (game?.integrations?.tilt?.enabled) return;
   audio.enable();
   handleBack();
 });
@@ -911,7 +992,22 @@ document.addEventListener("keydown", event => {
       }
       break;
     case "initials":
-      if (/^[a-z]$/i.test(key)) {
+      if (key === "ArrowUp" || key === "ArrowDown") {
+        initialsDraft = shiftInitials(
+          initialsDraft,
+          initialsCursor,
+          key === "ArrowUp" ? 1 : -1,
+        );
+        audio.click();
+        render();
+      } else if (key === "ArrowLeft" || key === "ArrowRight") {
+        initialsCursor = Math.max(
+          0,
+          Math.min(2, initialsCursor + (key === "ArrowRight" ? 1 : -1)),
+        );
+        audio.click();
+        render();
+      } else if (/^[a-z]$/i.test(key)) {
         const letters = initialsDraft.padEnd(3, "A").slice(0, 3).split("");
         letters[initialsCursor] = key.toUpperCase();
         initialsDraft = letters.join("");

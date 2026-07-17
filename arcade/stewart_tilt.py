@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from pathlib import Path
 
-from stewart_exp_tune import TuningResults, TuningSession
 from stewart_platform_control_common import (
     DEFAULT_SOCKET,
     StewartPlatformController,
@@ -21,6 +21,33 @@ from stewart_platform_control_position import (
 
 from .integrations import TiltStatus
 
+DEFAULT_ARCADE_CONFIG = Path(__file__).with_name("config.json")
+
+
+def load_navigation_counts_per_step(
+    config_path: Path = DEFAULT_ARCADE_CONFIG,
+) -> int:
+    with Path(config_path).open(encoding="utf-8") as config_file:
+        config = json.load(config_file)
+    value = config.get("trackball", {}).get("navigation_counts_per_step")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(
+            "arcade trackball.navigation_counts_per_step must be a positive integer"
+        )
+    return value
+
+
+def navigation_steps(
+    delta_y: int,
+    remainder: int,
+    counts_per_step: int,
+) -> tuple[int, int, int]:
+    """Convert vertical trackball counts into `(up, down, remainder)` steps."""
+    total = remainder + delta_y
+    signed_steps = int(total / counts_per_step)
+    remainder = total - signed_steps * counts_per_step
+    return max(0, -signed_steps), max(0, signed_steps), remainder
+
 
 class StewartTiltService:
     """Read the cabinet roller ball continuously and tilt only during a level."""
@@ -30,15 +57,17 @@ class StewartTiltService:
     def __init__(
         self,
         *,
-        tuning_path: Path = Path("calibration/stewart_game_tuning.json"),
         socket_path: Path = DEFAULT_SOCKET,
         device_path: Path | None = None,
+        arcade_config_path: Path = DEFAULT_ARCADE_CONFIG,
         controller: object | None = None,
         trackball: object | None = None,
     ) -> None:
-        self.tuning_path = Path(tuning_path)
         self.socket_path = Path(socket_path)
         self.device_path = Path(device_path) if device_path is not None else None
+        self.navigation_counts_per_step = load_navigation_counts_per_step(
+            arcade_config_path
+        )
         self.controller = controller
         self.trackball = trackball
 
@@ -49,10 +78,12 @@ class StewartTiltService:
         self._active = False
         self._enabled = False
         self._error = ""
+        self._confirm_presses = 0
+        self._back_presses = 0
+        self._navigation_up = 0
+        self._navigation_down = 0
+        self._navigation_remainder = 0
         self._args = None
-        self._tuning: TuningResults | None = None
-        self._origin_roll = 0.0
-        self._origin_pitch = 0.0
         self._desired_roll = 0.0
         self._desired_pitch = 0.0
 
@@ -63,21 +94,17 @@ class StewartTiltService:
 
         try:
             if self.controller is None or self.trackball is None:
-                tuning = TuningResults.load(self.tuning_path)
                 args = build_parser().parse_args([])
                 args.socket = self.socket_path
-                args.step_offsets = tuning.differential_trim_steps()
                 device = self.device_path or find_trackball()
                 if device is None:
                     raise RuntimeError("roller ball input device was not found")
                 self.controller = StewartPlatformController(args)
                 self.trackball = TrackballDevice(device)
                 self._args = args
-                self._tuning = tuning
             else:
                 args = build_parser().parse_args([])
                 self._args = args
-                self._tuning = TuningResults()
 
             self.trackball.open()
             self.controller.open(arm=False, calibrate_if_needed=False)
@@ -110,6 +137,10 @@ class StewartTiltService:
                 enabled=self._enabled,
                 active=self._active,
                 error=self._error,
+                confirm_presses=self._confirm_presses,
+                back_presses=self._back_presses,
+                navigation_up=self._navigation_up,
+                navigation_down=self._navigation_down,
             )
 
     def stop(self) -> None:
@@ -144,9 +175,28 @@ class StewartTiltService:
                     continue
                 last_update = now
                 dx, dy = self.trackball.pop()
+                pop_buttons = getattr(self.trackball, "pop_buttons", None)
+                left_presses, right_presses = (
+                    pop_buttons() if pop_buttons is not None else (0, 0)
+                )
                 with self._lock:
+                    self._back_presses += left_presses
+                    self._confirm_presses += right_presses
                     requested = self._requested_active
                     active = self._active
+
+                if not requested and not active:
+                    up, down, self._navigation_remainder = navigation_steps(
+                        dy,
+                        self._navigation_remainder,
+                        self.navigation_counts_per_step,
+                    )
+                    if up or down:
+                        with self._lock:
+                            self._navigation_up += up
+                            self._navigation_down += down
+                else:
+                    self._navigation_remainder = 0
 
                 if requested and not active:
                     self._enter_level()
@@ -174,11 +224,11 @@ class StewartTiltService:
 
                 absolute_roll, absolute_pitch, _ = command_or_retain_last_valid(
                     self.controller,
-                    self._origin_roll + self._desired_roll,
-                    self._origin_pitch + self._desired_pitch,
+                    self._desired_roll,
+                    self._desired_pitch,
                 )
-                self._desired_roll = absolute_roll - self._origin_roll
-                self._desired_pitch = absolute_pitch - self._origin_pitch
+                self._desired_roll = absolute_roll
+                self._desired_pitch = absolute_pitch
         except Exception as exc:
             with self._lock:
                 self._error = str(exc)
@@ -191,20 +241,9 @@ class StewartTiltService:
 
     def _enter_level(self) -> None:
         assert self.controller is not None
-        assert self._tuning is not None
-        self._origin_roll, self._origin_pitch = self._tuning.game_origin()
-        if self._tuning.level_anchor_steps is not None:
-            session = TuningSession(
-                self.controller.link,
-                self._tuning,
-                self.tuning_path,
-            )
-            session.current = self.controller.current
-            session.level()
-            self.controller.current = session.current
-            self.controller.armed = True
-        else:
-            self.controller.move_to(self._origin_roll, self._origin_pitch)
+        if self.controller.current is None:
+            raise RuntimeError("Stewart controller has no current pose")
+        self.controller.move_to(0.0, 0.0)
         self._desired_roll = 0.0
         self._desired_pitch = 0.0
         with self._lock:

@@ -2,28 +2,17 @@
 
 Jetson-hosted cabinet UI for the 854×480 projector.
 
-## V1 flow
+## Game flow
 
 - Scored gauntlet: initials → Chambers 1–2 (gauntlet) → leaderboard
 - Practice: title screen → all 7 chambers; no score saved
 - Module-grid maps, start-tile placement, timers, scoring, retries
-- Keyboard-confirmed finish (`C`) until Azure Kinect tracking is integrated
+- Keyboard-confirmed finish (`C`) for chambers that do not yet detect completion
 - Synthesized arcade music/effects through the projector audio output
-
-Kinect tracking is V2. Stewart and roller-ball tilt are V3.
+- In-process Azure Kinect ball/table tracking
+- In-process trackball and Stewart tilt control through the persistent supervisor
 
 ## Run
-
-## Parallel dev ports
-
-When Kinect tooling already owns the default HTTP port, run arcade on another:
-
-| Service | Port |
-| --- | --- |
-| Kinect / other stack | `8080` |
-| Arcade | `TILTYTABLE_ARCADE_PORT=8081 ./run_arcade.sh` (default `8080`) |
-
-The kiosk Chromium `--app=` URL uses the same `HTTP_PORT` as the server.
 
 Simulation (no hardware):
 
@@ -31,13 +20,13 @@ Simulation (no hardware):
 ./run_arcade.sh --simulation
 ```
 
-Live module grid:
+Complete live game:
 
 ```bash
 ./run_arcade.sh
 ```
 
-Server only:
+Simulation server only:
 
 ```bash
 ./run_arcade.sh --simulation --no-kiosk
@@ -48,9 +37,16 @@ when available. On the Jetson, Chromium is launched with `SNAP_REEXEC=0` to
 avoid the stock Tegra kernel's snap-confine capability incompatibility.
 Scores are stored locally in ignored `var/arcade/scores.json`.
 
+In live mode the launcher starts the persistent Stewart supervisor user service
+if needed. The arcade process then owns Kinect tracking, the trackball/Stewart
+motion client, the module grid, game engine, and UI. Do not also run the
+standalone Kinect or Stewart controller programs.
+
 Before starting, the launcher verifies the HTTP port, all level maps referenced
-in `arcade/levels.json`, and—in live mode—the module serial alias plus complete
-144-cell LED/servo calibration.
+in `arcade/levels.json`, and—in live mode—the module serial alias, Stewart
+supervisor socket, trackball, Kinect, and complete 144-cell LED/servo
+calibration. Override the HTTP port when needed with
+`TILTYTABLE_ARCADE_PORT=8081 ./run_arcade.sh`; the kiosk uses the same port.
 
 ## Browser level and mode editor
 
@@ -100,6 +96,20 @@ The schema is `arcade/level-package.schema.json`. Installation compiles the
 package back into an `arcade/levels.json` entry plus `maps/<level-id>.json`.
 
 ## Keyboard
+
+The cabinet trackball buttons mirror the keyboard controls:
+
+- Green right button: confirm/continue (Enter)
+- Pink left button: back/end-run menu (Escape)
+- Roll the trackball up/down: move through menus and change the selected initial
+
+Trackball menu sensitivity is configured by
+`trackball.navigation_counts_per_step` in `arcade/config.json`. Larger values
+require more physical movement for each UI step.
+
+During placement and play, the ball-tracking overlay reports zero-based
+`(x,y)` cells from `(0,0)` at the top-left through `(11,11)` at the bottom-right.
+Letter-number keys such as `A1` remain an internal map-storage format.
 
 | Key | Action |
 | --- | --- |

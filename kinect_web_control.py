@@ -157,7 +157,10 @@ class KinectFrameHub:
 
     def _run(self):
         args = self.args
-        if args.depth_engine_display and not self.headless:
+        # The Azure Kinect depth engine requires an OpenGL context even when
+        # this hub does not render preview frames.  In particular, an SSH
+        # forwarded DISPLAY commonly lacks the GL 4.4 context the engine needs.
+        if args.depth_engine_display:
             set_display(args.depth_engine_display, "depth engine", quiet=not args.verbose)
 
         try:
