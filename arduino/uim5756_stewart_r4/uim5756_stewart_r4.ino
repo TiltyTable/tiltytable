@@ -260,6 +260,16 @@ void setMotionProfile(uint8_t axis, float speedSteps, float accelSteps) {
   configuredAccelSteps[axis] = accelSteps;
 }
 
+void restoreFullMotionProfiles() {
+  for (uint8_t axis = 0; axis < AXES; axis++) {
+    setMotionProfile(
+      axis,
+      profileSpeedDegS * STEPS_PER_CRANK_REV / 360.0,
+      profileAccelDegS2 * STEPS_PER_CRANK_REV / 360.0
+    );
+  }
+}
+
 void applyCoordinatedTargets(const long target[AXES]) {
   long maxDelta = 0;
   for (uint8_t axis = 0; axis < AXES; axis++) {
@@ -397,6 +407,11 @@ void handleCommand(String command) {
     action.toUpperCase();
     if (action == "BEGIN") {
       setEnable(false);
+      // Coordinated TARGET moves scale each axis independently. An axis that
+      // barely moved may therefore still have the 0.001 minimum profile from
+      // its last target. Calibration jogs must always start from the full
+      // configured profile instead of inheriting that stale per-axis scale.
+      restoreFullMotionProfiles();
       armed = false;
       calibrating = true;
       calibrated = false;
@@ -497,6 +512,16 @@ void handleCommand(String command) {
     }
     Serial.println();
   } else if (first == "HOLD" || first == "ABORT") {
+    if (first == "ABORT" && calibrating) {
+      // An interrupted calibration is uncalibrated by definition, but it may
+      // still have an enabled CAL JOG in flight. Stop and disable it before
+      // leaving calibration mode.
+      setEnable(false);
+      calibrating = false;
+      armed = false;
+      Serial.println(F("OK ABORT CALIBRATION_DISABLED"));
+      return;
+    }
     if (!calibrated || !anyAxisEnabled()) {
       armed = false;
       Serial.println(

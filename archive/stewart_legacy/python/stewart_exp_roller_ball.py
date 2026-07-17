@@ -13,6 +13,10 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from analysis.stewart_exp_kinematics import (
     NoSolutionError,
     experimental_geometry,
@@ -20,11 +24,6 @@ from analysis.stewart_exp_kinematics import (
     plan_heave_transition,
 )
 from stewart_exp_probe import ExpLink, calibrate
-from stewart_exp_tune import (
-    TuningResults,
-    TuningSession,
-    clear_after_fresh_crank_calibration,
-)
 from stewart_supervisor_client import DEFAULT_SOCKET
 
 EVENT_ROOT = Path("/dev/input")
@@ -118,11 +117,6 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("device", nargs="?")
     parser.add_argument("--socket", type=Path, default=DEFAULT_SOCKET)
-    parser.add_argument(
-        "--tuning-config",
-        type=Path,
-        default=Path("calibration/stewart_game_tuning.json"),
-    )
     parser.add_argument("--max-tilt", type=float, default=10.0)
     parser.add_argument("--scale", type=float, default=0.04)
     parser.add_argument("--rate-hz", type=float, default=60.0)
@@ -187,18 +181,6 @@ def main() -> int:
     )
     geometry = experimental_geometry()
     try:
-        tuning = TuningResults.load(args.tuning_config)
-    except (ValueError, KeyError, TypeError) as exc:
-        parser.error(f"invalid tuning config: {exc}")
-    try:
-        motor_trim_steps = tuning.differential_trim_steps()
-    except ValueError as exc:
-        parser.error(f"invalid tuning calibration: {exc}")
-    print(
-        f"motor trims={motor_trim_steps} "
-        f"level anchor={tuning.level_anchor_steps}"
-    )
-    try:
         link.open()
         link.require_ok(
             f"PROFILE {args.crank_speed:.3f} {args.crank_accel:.3f}",
@@ -208,34 +190,23 @@ def main() -> int:
         assert status is not None
         if not status.calibrated:
             status = calibrate(link)
-            clear_after_fresh_crank_calibration(tuning, args.tuning_config)
-            motor_trim_steps = (0, 0, 0)
-            print("Fresh crank calibration cleared stale trims and level anchor.")
-        current = status.as_pose(motor_trim_steps)
-        session = TuningSession(link, tuning, args.tuning_config)
-        session.current = current
+        current = status.as_pose()
         vectors = TrackballVectorAccumulator()
         interval = 1.0 / args.rate_hz
         last_update = time.monotonic()
 
         link.require_ok("ARM CONFIRM", "OK ARM")
-        if tuning.level_anchor_steps is not None:
-            print("Returning to canonical physical level anchor...")
-            session.move_to_level_anchor()
-            assert session.current is not None
-            current = session.current
-        elif current.heave_mm > 5.0 and abs(current.roll_deg) < 0.1 and abs(
+        if current.heave_mm > 5.0 and abs(current.roll_deg) < 0.1 and abs(
             current.pitch_deg
         ) < 0.1:
             print("Preparing low-heave agile operating pose...")
             transition = plan_heave_transition(current, 0.0, geometry=geometry)
             for pose in transition:
-                link.target(pose, motor_trim_steps)
+                link.target(pose)
             link.wait_idle()
             current = transition[-1]
-        origin_roll, origin_pitch = tuning.game_origin()
-        desired_roll = current.roll_deg - origin_roll
-        desired_pitch = current.pitch_deg - origin_pitch
+        desired_roll = current.roll_deg
+        desired_pitch = current.pitch_deg
         print(
             "Live: Y→roll, X→pitch; stopping the ball holds position. "
             "Ctrl-C aborts and holds."
@@ -281,14 +252,12 @@ def main() -> int:
                 )
 
             next_roll, next_pitch = step_toward(
-                current.roll_deg - origin_roll,
-                current.pitch_deg - origin_pitch,
+                current.roll_deg,
+                current.pitch_deg,
                 desired_roll,
                 desired_pitch,
                 args.target_step,
             )
-            next_roll += origin_roll
-            next_pitch += origin_pitch
             if (
                 abs(next_roll - current.roll_deg) < 1e-8
                 and abs(next_pitch - current.pitch_deg) < 1e-8
@@ -312,11 +281,11 @@ def main() -> int:
                     "\nNo continuous IK step; retaining last valid target.",
                     file=sys.stderr,
                 )
-                desired_roll = current.roll_deg - origin_roll
-                desired_pitch = current.pitch_deg - origin_pitch
+                desired_roll = current.roll_deg
+                desired_pitch = current.pitch_deg
                 continue
 
-            link.target(solution, motor_trim_steps)
+            link.target(solution)
             current = solution
             print(
                 f"\rr={current.roll_deg:+5.2f}° p={current.pitch_deg:+5.2f}° "

@@ -31,21 +31,6 @@ provided on the command line.
   continuity terms before comparing branch combinations and uses the branch
   tuple as a deterministic final tie-break.
 
-### Persisted tuning offsets
-
-- The committed baseline of `calibration/stewart_game_tuning.json` contains motor offsets
-  `[-8340, -5200, -5300]`, equivalent to approximately
-  `[-187.65°, -117.0°, -119.25°]` at 16,000 steps per crank revolution.
-- Those values are large enough to behave like absolute pose coordinates, not
-  small differential corrections. Adding them to every IK result makes the
-  physical effect depend strongly on the selected heave and branch.
-- Under the checked geometry, applying those offsets to a nominal level pose
-  produces forward-kinematic tilt that changes with heave. This is consistent
-  with a platform that does not look level after returning to logical zero.
-- The two new controllers therefore default to `(0, 0, 0)` step offsets and do
-  not load the legacy tuning file. Corrections must be deliberately supplied
-  with `--step-offsets S0 S1 S2`.
-
 ### Other code-path issues found and archived
 
 - The legacy firmware's `solveCrankAngle()` clamps an out-of-range cosine
@@ -142,9 +127,8 @@ heave transition.
 
 - `stewart_exp_probe.py`: made `ExpLink` supervisor-only and captured a parsed
   `startup_status` as part of every live connection.
-- `stewart_exp_roller_ball.py`, `stewart_exp_tune.py`, and
-  `stewart_platform_control_common.py`: initialize their current IK pose from
-  that supervisor-owned snapshot.
+- `stewart_exp_tune.py` and `stewart_platform_control_common.py`: initialize
+  their current IK pose from that supervisor-owned snapshot.
 - `stewart_exp_profile.py`: reads and prints `STATUS` before profile commands.
 - `tests/test_stewart_supervisor.py`: verifies that opening an `ExpLink`
   captures nonzero signed motor positions without substituting zeroes.
