@@ -29,6 +29,7 @@ class FoodFrenzyTests(unittest.TestCase):
         self.params = FoodFrenzyParams(
             round_seconds=30,
             target_confirm_frames=2,
+            blink_seconds=0.25,
             celebration_seconds=1,
             seed=10,
         )
@@ -69,6 +70,16 @@ class FoodFrenzyTests(unittest.TestCase):
         self.assertEqual(next_round.round_number, 2)
         self.assertEqual(len(next_round.target_cells), 2)
         self.assertEqual(next_round.remaining_seconds, 30)
+
+    def test_food_targets_blink_off_and_on(self) -> None:
+        target = next(iter(self.session.target_cells))
+        off = tick_food_frenzy(self.session, None, 0.25)
+        self.assertEqual(off.hardware_updates[-1]["key"], target)
+        self.assertEqual(off.hardware_updates[-1]["color"], "#000000")
+
+        on = tick_food_frenzy(self.session, None, 0.50)
+        self.assertEqual(on.hardware_updates[-1]["key"], target)
+        self.assertEqual(on.hardware_updates[-1]["color"], "#001FFF")
 
     def test_duplicate_camera_frame_does_not_collect_food(self) -> None:
         target = next(iter(self.session.target_cells))

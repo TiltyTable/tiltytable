@@ -14,6 +14,7 @@ FLOOR_COLOR = "#567DBB"
 class FoodFrenzyParams:
     round_seconds: float = 30.0
     target_confirm_frames: int = 2
+    blink_seconds: float = 0.25
     celebration_seconds: float = 1.0
     points_per_food: int = 1
     seed: int = 1
@@ -34,6 +35,8 @@ class FoodFrenzySession:
     confirm_frames: int = 0
     last_observation_frame: int | None = None
     celebrating_until: float | None = None
+    target_blink_on: bool = True
+    last_blink_at: float = 0.0
     updates: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -67,7 +70,11 @@ def _entry(
     }
 
 
-def _spawn_food(session: FoodFrenzySession, ball_cell: str | None) -> None:
+def _spawn_food(
+    session: FoodFrenzySession,
+    ball_cell: str | None,
+    now: float,
+) -> None:
     candidates = [
         key
         for key, cell in session.cells.items()
@@ -76,6 +83,8 @@ def _spawn_food(session: FoodFrenzySession, ball_cell: str | None) -> None:
     session.rng.shuffle(candidates)
     count = min(session.round_number, len(candidates))
     session.target_cells = set(candidates[:count])
+    session.target_blink_on = True
+    session.last_blink_at = now
     session.updates.extend(
         _entry(key, session.row_col, FOOD_COLOR)
         for key in sorted(session.target_cells)
@@ -98,7 +107,7 @@ def start_food_frenzy(
         remaining_seconds=params.round_seconds,
         last_tick_at=now,
     )
-    _spawn_food(session, ball_cell)
+    _spawn_food(session, ball_cell, now)
     return session
 
 
@@ -118,7 +127,7 @@ def tick_food_frenzy(
             session.celebrating_until = None
             session.round_number += 1
             session.remaining_seconds = session.params.round_seconds
-            _spawn_food(session, ball_cell)
+            _spawn_food(session, ball_cell, now)
             updates.extend(session.updates)
             session.updates.clear()
         return FoodFrenzyTickResult(
@@ -135,6 +144,18 @@ def tick_food_frenzy(
     session.remaining_seconds = max(0.0, session.remaining_seconds - elapsed)
     lost = session.remaining_seconds <= 0.0
     effect: str | None = None
+
+    if (
+        session.target_cells
+        and now - session.last_blink_at >= session.params.blink_seconds
+    ):
+        session.target_blink_on = not session.target_blink_on
+        session.last_blink_at = now
+        blink_color = FOOD_COLOR if session.target_blink_on else "#000000"
+        updates.extend(
+            _entry(key, session.row_col, blink_color)
+            for key in sorted(session.target_cells)
+        )
 
     is_new_observation = (
         observation_frame is None
@@ -182,6 +203,7 @@ def params_from_dict(raw: dict[str, Any], seed: int = 1) -> FoodFrenzyParams:
     return FoodFrenzyParams(
         round_seconds=float(raw.get("roundSeconds", 30)),
         target_confirm_frames=max(1, int(raw.get("targetConfirmFrames", 2))),
+        blink_seconds=float(raw.get("blinkSeconds", 0.25)),
         celebration_seconds=float(raw.get("celebrationSeconds", 1)),
         points_per_food=int(raw.get("pointsPerFood", 1)),
         seed=seed,

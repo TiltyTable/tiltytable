@@ -110,6 +110,7 @@
       "modeParams": {
         "roundSeconds": 30,
         "targetConfirmFrames": 2,
+        "blinkSeconds": 0.25,
         "celebrationSeconds": 1.0,
         "pointsPerFood": 1
       },

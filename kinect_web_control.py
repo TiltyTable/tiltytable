@@ -180,14 +180,6 @@ class KinectFrameHub:
             set_display(args.depth_engine_display, "depth engine", quiet=not args.verbose)
 
         try:
-            device_count = connected_device_count()
-            if device_count <= args.device_id:
-                self._set_status(
-                    "error",
-                    f"No Azure Kinect device at index {args.device_id}; found {device_count} device(s).",
-                )
-                return
-
             # The application consumes only the depth sensor's illuminated IR
             # (Active Brightness) image. Keep the RGB camera disabled in every
             # mode and never materialize depth images in user space.
@@ -199,8 +191,42 @@ class KinectFrameHub:
                 camera_fps=FPS_VALUES[args.fps],
                 synchronized_images_only=False,
             )
-            self.k4a = PyK4A(config=config, device_id=args.device_id)
-            self.k4a.start()
+            # The Jetson USB controller can briefly enumerate the Kinect while
+            # its depth MCU is still recovering.  The SDK reports that
+            # transient state as "libusb device(s) are all unavailable" and
+            # otherwise leaves the web server alive with a permanently dead
+            # camera thread.  Retry the complete open a few times so a USB
+            # reset does not require manually restarting the service.
+            last_exc = None
+            for attempt in range(1, 6):
+                device_count = connected_device_count()
+                if device_count <= args.device_id:
+                    last_exc = RuntimeError(
+                        f"No Azure Kinect device at index {args.device_id}; "
+                        f"found {device_count} device(s)."
+                    )
+                else:
+                    try:
+                        self.k4a = PyK4A(config=config, device_id=args.device_id)
+                        self.k4a.start()
+                        last_exc = None
+                        break
+                    except (K4AException, RuntimeError, ValueError) as exc:
+                        last_exc = exc
+                        if self.k4a is not None and self.k4a.is_running:
+                            self.k4a.stop()
+                        self.k4a = None
+
+                if attempt < 5:
+                    print(
+                        f"Kinect open attempt {attempt}/5 failed: {last_exc}; retrying...",
+                        file=sys.stderr,
+                    )
+                    time.sleep(2.0)
+
+            if last_exc is not None:
+                raise last_exc
+
             self._set_status("running")
 
             mat = self.k4a.calibration.get_camera_matrix(CalibrationType.DEPTH)

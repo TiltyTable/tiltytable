@@ -231,7 +231,7 @@ class StewartTiltService:
 
                 if not requested and not active:
                     up, down, self._navigation_remainder = navigation_steps(
-                        dy,
+                        -dx,
                         self._navigation_remainder,
                         self.navigation_counts_per_step,
                     )

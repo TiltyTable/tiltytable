@@ -484,6 +484,7 @@ h1 {
   grid-template-columns: repeat(12, 1fr);
   grid-template-rows: repeat(12, 1fr);
   gap: 2px;
+  transform: rotate(180deg);
 }
 
 .tile {
