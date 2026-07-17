@@ -6,6 +6,12 @@
   "modules": {
     "start_delay_ms": 10
   },
+  "unstick": {
+    "lift_fraction": 0.15,
+    "lift_ms": 180,
+    "neutral_ms": 100,
+    "cooldown_ms": 2500
+  },
   "tracking": {
     "game_tick_ms": 10
   }

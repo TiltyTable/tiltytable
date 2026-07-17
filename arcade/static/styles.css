@@ -1137,6 +1137,7 @@ h1,
 .legend-swatch.blue { background: var(--blue); }
 .legend-swatch.green { background: var(--green); }
 .legend-swatch.red { background: var(--red); }
+.legend-swatch.white { background: #fff; }
 .legend-swatch.blinking { animation: danger 500ms steps(2) infinite; }
 .legend-swatch.pit { box-shadow: inset 0 0 0 7px #16051f, inset 0 0 14px #000; }
 
@@ -1204,6 +1205,14 @@ h1,
 .tile.points { background: var(--blue); box-shadow: 0 0 10px var(--blue); }
 .tile.start { background: var(--cyan); box-shadow: 0 0 11px var(--cyan); }
 .tile.finish { background: var(--pink); box-shadow: 0 0 11px var(--pink); }
+.board-wrap.celebrating .tile {
+  animation: board-celebrate 250ms steps(2) infinite;
+}
+
+@keyframes board-celebrate {
+  0%, 100% { background: #fff; box-shadow: 0 0 12px #fff; }
+  50% { background: #080323; box-shadow: none; }
+}
 
 .hud { gap: clamp(10px, 2vh, 20px); }
 .hud-level {
@@ -1520,12 +1529,12 @@ html, body, body * { cursor: none !important; }
   .pixel-button { width: 28px; height: 19px; }
   .cabinet-decision { margin-top: 12px; }
   .cabinet-choice .cabinet-hint { font-size: 24px; }
-  .rules-layout { grid-template-columns: 42% 1fr; gap: 22px; padding: 8px 24px; }
-  .mode-legend { gap: 5px; padding: 9px; }
+  .rules-layout { grid-template-columns: 48% 1fr; gap: 16px; padding: 8px 16px; }
+  .mode-legend { gap: 4px; padding: 8px; }
   .legend-title { font-size: 13px; }
-  .legend-item { grid-template-columns: 31px 1fr; gap: 8px; }
-  .legend-item strong { font-size: 12px; }
-  .legend-item span { font-size: 16px; line-height: 1.25; }
+  .legend-item { grid-template-columns: 36px 1fr; gap: 7px; }
+  .legend-item strong { font-size: 11px; }
+  .legend-item span { font-size: 18px; line-height: 1.15; }
   .rule { font-size: 16px; line-height: 1.35; }
   .rules-copy .feature { font-size: 15px; line-height: 1.4; }
   .hud-instruction { font-size: 16px; line-height: 1.4; }

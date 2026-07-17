@@ -1,6 +1,7 @@
 # Progress
 
 ## Completed
+- [x] Host-only neutral-tile unstick action and Food Frenzy escalating 30-second food rounds with efficient full-board LED celebration.
 - [x] Shared pit confirmation for every mode, immediate neutral-floor tracking, configurable escalating Hex collapse stages, and larger booth legend/footer/instruction text.
 - [x] Human-review cabinet simplification: no character panels/restart counters, larger controls/status text, LED color legends, common A1 start, and two-frame Snake food capture.
 - [x] Latency-first Open Sauce arcade: three-game selector, timed Lava/Hex touch scoring, timerless Snake escalation, no shipped reach-finish maps, and main's frame-driven/lock-free tracking path preserved.

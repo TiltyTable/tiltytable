@@ -151,6 +151,8 @@ def create_app(
                 engine.confirm_placement()
             elif name == "restart":
                 engine.restart()
+            elif name == "unstick":
+                engine.unstick()
             elif name == "complete":
                 engine.complete_level()
             elif name == "abandon":

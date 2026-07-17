@@ -131,12 +131,13 @@ function isSurvivalLevel(level = game?.level) {
 }
 
 function isTrackedMode(level = game?.level) {
-  return ["survival_lava", "hex_fall", "target_hunt"].includes(level?.mode);
+  return ["survival_lava", "hex_fall", "target_hunt", "food_frenzy"].includes(level?.mode);
 }
 
 function levelTimerSeconds(level = game?.level) {
   return level?.survivalSeconds
     ?? level?.modeParams?.survivalSeconds
+    ?? level?.modeParams?.roundSeconds
     ?? level?.timeLimitSeconds
     ?? null;
 }
@@ -448,23 +449,29 @@ function modeLegend(level) {
   const common = legendItem("cyan", "CYAN", "Start here");
   if (level.mode === "survival_lava") {
     return common
-      + legendItem("gray", "GRAY", "Safe untouched floor")
-      + legendItem("orange", "ORANGE", "Touched · points earned")
+      + legendItem("gray", "GRAY", "Open floor")
+      + legendItem("orange", "ORANGE", "Touched + points")
       + legendItem("red", "BLINKING RED", "Move now", "blinking")
-      + legendItem("red", "SOLID RED", "Pit · run ends", "pit");
+      + legendItem("red", "SOLID RED", "Pit / lose", "pit");
   }
   if (level.mode === "hex_fall") {
     return common
-      + legendItem("gray", "GRAY", "Unclaimed floor")
-      + legendItem("blue", "BLUE", "Claimed · +1 point")
-      + legendItem("red", "BLINKING RED", "Tile about to fall", "blinking")
-      + legendItem("red", "SOLID RED", "Pit · run ends", "pit");
+      + legendItem("gray", "GRAY", "Open floor")
+      + legendItem("blue", "BLUE", "Claimed +1")
+      + legendItem("red", "BLINKING RED", "Falling soon", "blinking")
+      + legendItem("red", "SOLID RED", "Pit / lose", "pit");
+  }
+  if (level.mode === "food_frenzy") {
+    return common
+      + legendItem("gray", "GRAY", "Open floor")
+      + legendItem("blue", "FLASHING BLUE", "Food +1", "blinking")
+      + legendItem("white", "WHITE FLASH", "Round clear");
   }
   return common
     + legendItem("gray", "GRAY", "Open floor")
-    + legendItem("blue", "FLASHING BLUE", "Food · +1 point", "blinking")
-    + legendItem("green", "GREEN", "Raised wall")
-    + legendItem("red", "RED", "Pit · run ends", "pit");
+    + legendItem("blue", "FLASHING BLUE", "Food +1", "blinking")
+    + legendItem("green", "GREEN", "Wall")
+    + legendItem("red", "RED", "Pit / lose", "pit");
 }
 
 function renderRules() {
@@ -492,12 +499,13 @@ function renderRules() {
 
 function renderLoading() {
   const restarting = game.state === "restarting";
+  const applying = game.hardware?.loadPhase === "applying";
   return shell(`
     <div>
       <p class="kicker">GAME ${game.level.number}</p>
-      <h1 class="screen-title">${restarting ? "RESETTING" : "GET READY"}</h1>
+      <h1 class="screen-title">${restarting || applying ? "RESETTING BOARD" : "GET READY"}</h1>
       <div class="loading-bars"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <p class="decision-copy">${escapeHtml(game.level.title)}</p>
+      <p class="decision-copy">${applying ? "MOVING ALL 144 TILES · ABOUT 15 SECONDS" : escapeHtml(game.level.title)}</p>
     </div>`,
     `STAND CLEAR`,
     dialogue(LORE.loading.ken, game.level?.trollLine || LORE.loading.troll, true));
@@ -526,7 +534,8 @@ function sortedCells() {
 }
 
 function boardMarkup(waiting = false) {
-  return `<div class="board-wrap"><div class="board">${
+  const celebrating = Boolean(game.modeState?.celebrating);
+  return `<div class="board-wrap ${celebrating ? "celebrating" : ""}"><div class="board">${
     sortedCells().map(cell => {
       const classes = ["tile", tileClass(cell)];
       if (cell.dynamic) classes.push("dynamic");
@@ -582,6 +591,7 @@ function renderPlaying() {
   const survival = isSurvivalLevel();
   const hex = level.mode === "hex_fall";
   const hunt = level.mode === "target_hunt";
+  const frenzy = level.mode === "food_frenzy";
   const tracked = isTrackedMode();
   const visited = game.survival?.tilesVisited ?? 0;
   const heating = Boolean(game.survival?.heating);
@@ -589,6 +599,8 @@ function renderPlaying() {
   const openTiles = (game.mapCells || []).filter(cell => Number(cell.value) === 0).length;
   const kenLine = hunt
     ? "Reach the flashing blue food."
+    : frenzy
+      ? "Collect every flashing food before time expires."
     : hex
       ? "Touch new tiles. Move away from red flashes."
       : survival
@@ -597,15 +609,31 @@ function renderPlaying() {
       ? (remaining <= 10 ? "Ten seconds left." : "Thirty seconds left.")
       : (level.kenLine || LORE.playing.ken));
   const trollLine = tracked ? "Avoid the pits." : timerTrollLine(remaining);
-  const modeLabel = hunt ? "SNAKE" : hex ? "HEX-A-FALL" : survival ? "LAVA SURVIVAL" : null;
+  const modeLabel = hunt
+    ? "SNAKE"
+    : frenzy
+      ? `FOOD FRENZY · ROUND ${modeState.round || 1}`
+      : hex
+        ? "HEX-A-FALL"
+        : survival
+          ? "LAVA SURVIVAL"
+          : null;
   const instruction = hunt
     ? `Food <strong>${cellKeyToCoordinates(modeState.targetCell)}</strong> · points ${modeState.targetsReached || 0}`
+    : frenzy
+      ? modeState.celebrating
+        ? `Round cleared · next round adds one more food`
+        : `Food left <strong>${(modeState.targetCells || []).length}</strong> · collected ${modeState.foodsCollected || 0}`
     : hex
       ? `Tiles touched <strong>${modeState.tilesTouched || 0}</strong> · floor ${openTiles}`
       : survival
         ? `Tiles touched <strong>${visited}</strong> · +${level.pointsPerTile || 0} each`
         : `Reach magenta <strong>${cellKeyToCoordinates(level.endCell)}</strong>`;
-  const footer = joinHints(`<span>ROLL TO TILT</span>`, backHint("END RUN"));
+  const footer = joinHints(
+    `<span>ROLL TO TILT</span>`,
+    confirmHint("UNSTICK"),
+    backHint("END RUN"),
+  );
   return shell(`
     <div class="game-layout">
       ${boardMarkup(false)}
@@ -615,7 +643,7 @@ function renderPlaying() {
         ${hunt ? "" : `<div class="timer ${remaining <= 10 ? "danger" : remaining <= 20 ? "warn" : ""}">${String(remaining).padStart(2, "0")}</div>`}
         <div class="hud-stats">
           <div class="hud-stat"><span>RUN SCORE</span><strong>${Number(game.score).toLocaleString()}</strong></div>
-          ${tracked ? `<div class="hud-stat"><span>${hunt ? "FOOD" : "TILES"}</span><strong>${hunt ? (modeState.targetsReached || 0) : hex ? (modeState.tilesTouched || 0) : visited}</strong></div>` : ""}
+          ${tracked ? `<div class="hud-stat"><span>${hunt || frenzy ? "FOOD" : "TILES"}</span><strong>${hunt ? (modeState.targetsReached || 0) : frenzy ? (modeState.foodsCollected || 0) : hex ? (modeState.tilesTouched || 0) : visited}</strong></div>` : ""}
         </div>
         <p class="hud-instruction">${instruction}</p>
       </div>
@@ -625,11 +653,12 @@ function renderPlaying() {
 }
 
 function renderSurvivalFail() {
+  const timedOut = game.level?.mode === "food_frenzy";
   return shell(`
     <article class="message-card">
       <p class="kicker">Game ${game.level.number}</p>
-      <h1 style="color:var(--red)">PIT!</h1>
-      <p class="decision-copy">The ball fell through the floor.</p>
+      <h1 style="color:var(--red)">${timedOut ? "TIME!" : "PIT!"}</h1>
+      <p class="decision-copy">${timedOut ? "The feast got away." : "The ball fell through the floor."}</p>
       <p class="result-number">${Number(game.score).toLocaleString()} PTS</p>
     </article>`,
     joinHints(confirmHint("TRY AGAIN"), backHint("END RUN")),
@@ -1035,6 +1064,10 @@ document.addEventListener("keydown", event => {
       if (key === "Enter" || key === " ") postAction("confirm-placement");
       break;
     case "playing":
+      if (key === "Enter" || key === " ") {
+        postAction("unstick");
+        break;
+      }
       if (!game.integrations?.tracking?.enabled) {
         const current = devBallCell || game.ball?.cell || game.level.startCell;
         const [row, col] = cellKeyToRowCol(current);

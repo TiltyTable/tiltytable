@@ -9,6 +9,7 @@ mouse-first 854×480 cabinet flow. Live projector/Kinect/Stewart validation
 remains before release handoff.
 
 ## Recent Changes
+- 2026-07-16 | Added host-only green-button unstick for confidently tracked neutral cells (15% lift, neutral return, immediate release, cooldown) and Food Frenzy: 30-second escalating multi-food rounds with full-board LED celebration between rounds.
 - 2026-07-16 | Unified delayed, confidence-gated pit detection across Lava, Hex, and Snake while keeping neutral-floor updates immediate. Hex now has configurable 1→2→3 tile collapse stages, and cabinet legend/instruction/footer text was enlarged for booth readability.
 - 2026-07-16 | Simplified the live Open Sauce cabinet after human playtest: removed Ken/Troll panels and restart accounting, enlarged cabinet chrome/actions, added per-mode LED legends, standardized A1 starts and palette semantics, and changed Snake food capture to two distinct Kinect frames at camera cadence.
 - 2026-07-16 | Built latency-first three-game arcade branch from main `26c8008`: direct Lava/Hex/Snake selector, 40s Lava and 45s Hex timers with touch scoring, timerless Snake food escalation, no shipped reach-finish levels, and preserved frame-driven tracking plus split `/api/state`/`/api/ball` polling.

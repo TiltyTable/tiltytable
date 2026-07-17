@@ -50,6 +50,8 @@ class Level:
             return float(self.survival_seconds or 0)
         if self.mode == "hex_fall":
             return float((self.mode_params or {}).get("survivalSeconds", 0))
+        if self.mode == "food_frenzy":
+            return float((self.mode_params or {}).get("roundSeconds", 0))
         return float(self.time_limit_seconds or 0)
 
     def public_dict(self) -> dict[str, Any]:
@@ -216,10 +218,12 @@ def validate_level(level: Level) -> None:
             raise ValueError(f"{level.id}: warnSeconds must be positive")
         if level.points_per_tile is None or level.points_per_tile < 0:
             raise ValueError(f"{level.id}: pointsPerTile must be >= 0")
-    if level.mode in ("hex_fall", "target_hunt") and not level.mode_params:
+    if level.mode in ("hex_fall", "target_hunt", "food_frenzy") and not level.mode_params:
         raise ValueError(f"{level.id}: {level.mode} requires modeParams")
     if level.mode == "hex_fall" and level.countdown_seconds <= 0:
         raise ValueError(f"{level.id}: survivalSeconds must be positive")
+    if level.mode == "food_frenzy" and level.countdown_seconds <= 0:
+        raise ValueError(f"{level.id}: roundSeconds must be positive")
 
 
 def load_map(level: Level) -> dict[str, dict[str, Any]]:

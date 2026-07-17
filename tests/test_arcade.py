@@ -194,6 +194,32 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.assertEqual(sum(cell["value"] == 1 for cell in state["mapCells"]), 1)
         self.assertEqual(sum(cell["value"] == -1 for cell in state["mapCells"]), 1)
 
+    def test_unstick_only_pulses_confident_neutral_ball_cell(self) -> None:
+        self.begin_dynamic_level("snake")
+        self.ball.set_cell("A1")
+        self.assertTrue(self.engine.unstick())
+        self.assertEqual(self.hardware.unstick_calls, [(0, 0)])
+        self.assertFalse(self.engine.unstick())
+
+        self.clock.advance(2.5)
+        cell = next(cell for cell in self.engine.map_cells if cell["key"] == "A1")
+        cell["value"] = -1
+        cell["sunk"] = True
+        self.assertFalse(self.engine.unstick())
+
+    def test_food_frenzy_round_clear_triggers_board_flash(self) -> None:
+        self.begin_dynamic_level("food-frenzy")
+        self.clock.advance(0.01)
+        self.engine.tick()
+        target = self.engine.public_state()["modeState"]["targetCells"][0]
+        self.ball.set_cell(target)
+        self.clock.advance(0.01)
+        self.engine.tick()
+        self.clock.advance(0.01)
+        self.engine.tick()
+        self.assertEqual(self.hardware.flash_calls, 1)
+        self.assertEqual(self.engine.public_state()["score"], 1)
+
     def test_new_lava_cell_is_selected_on_next_tracking_frame(self) -> None:
         self.begin_lava_survival()
         self.engine.tick()
@@ -220,14 +246,14 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.assertEqual(state["ball"]["confidence"], 1.0)
         self.assertFalse(state["integrations"]["tracking"]["enabled"])
 
-    def test_catalog_contains_only_three_dynamic_modes(self) -> None:
+    def test_catalog_contains_four_dynamic_modes(self) -> None:
         self.assertEqual(
             [level.id for level in self.catalog.levels],
-            ["lava-survival", "hex-a-fall", "snake"],
+            ["lava-survival", "hex-a-fall", "snake", "food-frenzy"],
         )
         self.assertEqual(
             {level.mode for level in self.catalog.levels},
-            {"survival_lava", "hex_fall", "target_hunt"},
+            {"survival_lava", "hex_fall", "target_hunt", "food_frenzy"},
         )
 
 

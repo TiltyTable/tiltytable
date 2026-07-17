@@ -5,6 +5,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from .food_frenzy import (
+    FoodFrenzySession,
+    params_from_dict as frenzy_params,
+    start_food_frenzy,
+    tick_food_frenzy,
+)
 from .hex_fall import HexFallSession, params_from_dict as hex_params, start_hex_fall, tick_hex_fall
 from .target_hunt import (
     TargetHuntSession,
@@ -21,6 +27,7 @@ class ModeTick:
     won: bool = False
     lost: bool = False
     score: int = 0
+    effect: str | None = None
 
 
 def start_mode(
@@ -32,7 +39,7 @@ def start_mode(
     cells: dict[str, dict[str, Any]],
     row_col: dict[str, tuple[int, int]],
     ball_cell: str | None,
-) -> HexFallSession | TargetHuntSession:
+) -> HexFallSession | TargetHuntSession | FoodFrenzySession:
     if mode == "hex_fall":
         return start_hex_fall(hex_params(params, seed), now, cells)
     if mode == "target_hunt":
@@ -41,12 +48,20 @@ def start_mode(
             "A1",
         )
         return start_target_hunt(hunt_params(params, seed), cells, row_col, start, now)
+    if mode == "food_frenzy":
+        return start_food_frenzy(
+            frenzy_params(params, seed),
+            cells,
+            row_col,
+            ball_cell,
+            now,
+        )
     raise ValueError(f"unsupported runtime mode: {mode}")
 
 
 def tick_mode(
     mode: str,
-    session: HexFallSession | TargetHuntSession,
+    session: HexFallSession | TargetHuntSession | FoodFrenzySession,
     params: dict[str, Any],
     *,
     seed: int,
@@ -94,5 +109,26 @@ def tick_mode(
             },
             lost=result.lost,
             score=result.score,
+        )
+    if mode == "food_frenzy":
+        assert isinstance(session, FoodFrenzySession)
+        result = tick_food_frenzy(
+            session,
+            ball_cell,
+            now,
+            observation_frame=observation_frame,
+        )
+        return ModeTick(
+            hardware_updates=result.hardware_updates,
+            public_state={
+                "remainingSeconds": result.remaining_seconds,
+                "targetCells": list(result.target_cells),
+                "round": result.round_number,
+                "foodsCollected": result.foods_collected,
+                "celebrating": result.celebrating,
+            },
+            lost=result.lost,
+            score=result.score,
+            effect=result.effect,
         )
     raise ValueError(f"unsupported runtime mode: {mode}")

@@ -380,6 +380,62 @@ class Table:
         self.link.send(f"P {ch} {us}")
         return True
 
+    def unstick_cell(
+        self,
+        row,
+        col,
+        *,
+        lift_fraction=0.15,
+        lift_s=0.18,
+        neutral_s=0.10,
+    ):
+        """Briefly lift one neutral tile, return to neutral, then release."""
+        loc = self.servo_at(row, col)
+        if not loc:
+            return False
+        addr, ch = loc
+        servo = self.servo_configs.get(addr, {}).get("servos", {}).get(str(ch))
+        if not servo or "neutral" not in servo or "extended" not in servo:
+            return False
+        neutral_us = int(servo["neutral"])
+        extended_us = int(servo["extended"])
+        lift_us = round(
+            neutral_us + max(0.0, min(1.0, lift_fraction)) * (
+                extended_us - neutral_us
+            )
+        )
+        self.link.select_board(addr)
+        try:
+            self.link.send(f"P {ch} {lift_us}")
+            if not self.link.dry_run:
+                time.sleep(max(0.0, lift_s))
+            self.link.send(f"P {ch} {neutral_us}")
+            if not self.link.dry_run:
+                time.sleep(max(0.0, neutral_s))
+        finally:
+            self.link.send(f"O {ch}")
+        return True
+
+    def fill_all_leds(self, rgb):
+        """Fill every configured strip with one raw RGB color."""
+        r, g, b = (max(0, min(255, int(value))) for value in rgb)
+        for strip in sorted(self._strip_led_counts):
+            self.link.send(f"L {strip} {r} {g} {b}")
+
+    def average_led_rgb(self, color):
+        samples = []
+        for row in range(GRID_ROWS):
+            for col in range(GRID_COLS):
+                samples.append(
+                    self.cell_led_rgb(
+                        {"row": row, "col": col, "color": color, "rgb": (0, 0, 0)}
+                    )
+                )
+        return tuple(
+            round(sum(sample[channel] for sample in samples) / len(samples))
+            for channel in range(3)
+        )
+
     def cell_led_rgb(self, cell):
         """Map JSON color → LED RGB. Black/off stays unlit."""
         color = cell.get("color", "#000000")

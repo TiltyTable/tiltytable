@@ -91,6 +91,29 @@
         "pitConfirmSeconds": 0.5
       },
       "seed": 9
+    },
+    {
+      "id": "food-frenzy",
+      "number": 4,
+      "title": "Food Frenzy",
+      "subtitle": "Clear an ever-growing feast",
+      "mode": "food_frenzy",
+      "map": "maps/arcade-food-frenzy.json",
+      "startCell": "A1",
+      "endCell": "L12",
+      "feature": "Each round adds another flashing food tile.",
+      "rules": [
+        "Collect every flashing blue food before time expires.",
+        "The board flashes, then the next round adds one more food.",
+        "Clear as many foods as possible."
+      ],
+      "modeParams": {
+        "roundSeconds": 30,
+        "targetConfirmFrames": 2,
+        "celebrationSeconds": 1.0,
+        "pointsPerFood": 1
+      },
+      "seed": 10
     }
   ]
 }

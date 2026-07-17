@@ -4,13 +4,15 @@ Jetson-hosted 854×480 Open Sauce cabinet game.
 
 ## Games
 
-The cabinet opens directly to three game modes:
+The cabinet opens directly to four game modes:
 
 - **Lava Survival** — touched tiles score, warn, and sink. Survive 40 seconds.
 - **Hex-A-Fall** — unique touched tiles score while random tiles warn and sink.
   Survive 45 seconds.
 - **Snake** — collect flashing food for one point; every pickup raises one wall
   and sinks one floor tile. The run ends when the ball falls into a pit.
+- **Food Frenzy** — collect every food before a 30-second round timer expires;
+  each cleared round flashes the board and adds one more simultaneous food.
 
 Lava and Hex keep their mode-specific score when the timer expires. Snake has
 no timer. Dynamic modes have no magenta finish tile.
@@ -66,6 +68,11 @@ tools at the same time.
 - `R`: restart.
 - `M`: mute.
 
+During play, green/right triggers a host-side unstick pulse only when Kinect
+confidently places the ball on a neutral floor tile. The tile lifts 15% toward
+extended, returns to neutral, and immediately releases; the 2.5-second cooldown
+prevents repeated servo pulses.
+
 ## Maps and tiles
 
 The active catalog is `arcade/levels.json`. Maps:
@@ -73,6 +80,7 @@ The active catalog is `arcade/levels.json`. Maps:
 - `maps/arcade-lava-survival.json`
 - `maps/arcade-hex-a-fall.json`
 - `maps/arcade-snake.json`
+- `maps/arcade-food-frenzy.json`
 
 Servo `value` controls physics:
 

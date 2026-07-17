@@ -24,6 +24,7 @@ from .survival_lava import (
 
 TRACKING_CONFIDENCE_MIN = 0.7
 END_CELL_DWELL_SECONDS = 0.25
+UNSTICK_COOLDOWN_SECONDS = 2.5
 
 
 class GameState(str, Enum):
@@ -110,6 +111,7 @@ class GameEngine:
         self._last_ball_ingest_at: float | None = None
         self._tracking_latency: dict[str, Any] | None = None
         self._tracking_latency_samples: deque[float] = deque(maxlen=120)
+        self._last_unstick_at: float | None = None
 
     @property
     def current_level(self) -> Level:
@@ -240,7 +242,7 @@ class GameEngine:
                 self._survival_ball_cell = None
                 self._survival_heating = False
                 self._neutralize_survival_start_cell()
-            elif self.current_level.mode in ("hex_fall", "target_hunt"):
+            elif self.current_level.mode in ("hex_fall", "target_hunt", "food_frenzy"):
                 self._survival = None
                 self._mode_session = start_mode(
                     self.current_level.mode,
@@ -274,12 +276,48 @@ class GameEngine:
             raise ValueError("Ball cell override is not available")
         adapter.set_cell(cell)  # type: ignore[attr-defined]
 
+    def unstick(self) -> bool:
+        with self.lock:
+            if self.state != GameState.PLAYING:
+                return False
+            now = self.clock()
+            if (
+                self._last_unstick_at is not None
+                and now - self._last_unstick_at < UNSTICK_COOLDOWN_SECONDS
+            ):
+                return False
+            observation = self._ball_observation()
+            if (
+                observation.cell is None
+                or observation.confidence < TRACKING_CONFIDENCE_MIN
+            ):
+                return False
+            cell = next(
+                (
+                    candidate
+                    for candidate in self.map_cells
+                    if candidate["key"] == observation.cell
+                ),
+                None,
+            )
+            if (
+                cell is None
+                or int(cell["value"]) != 0
+                or bool(cell.get("sunk"))
+            ):
+                return False
+            row, col = self._row_col_by_key[observation.cell]
+            if not self.hardware.unstick_cell(row, col):
+                return False
+            self._last_unstick_at = now
+            return True
+
     def complete_level(self) -> None:
         with self.lock:
             if self.state != GameState.PLAYING:
                 raise ValueError("A level is not currently running")
             level = self.current_level
-            if level.mode in ("survival_lava", "hex_fall", "target_hunt"):
+            if level.mode in ("survival_lava", "hex_fall", "target_hunt", "food_frenzy"):
                 raise ValueError("Dynamic mode chambers resolve automatically")
             remaining = max(0, math.floor(self._remaining_seconds()))
             elapsed_ms = self._finish_attempt_elapsed()
@@ -370,7 +408,7 @@ class GameEngine:
                 self._record_ball_ingest(observation, now)
                 if level.is_survival_lava and self._survival is not None:
                     self._tick_survival_lava(now, observation)
-                elif level.mode in ("hex_fall", "target_hunt") and self._mode_session is not None:
+                elif level.mode in ("hex_fall", "target_hunt", "food_frenzy") and self._mode_session is not None:
                     self._tick_dynamic_mode(now, observation)
                 else:
                     self._tick_reach_end(now, observation)
@@ -471,6 +509,10 @@ class GameEngine:
         if result.hardware_updates:
             self.hardware.apply_cell_updates(result.hardware_updates)
             self._apply_map_cell_updates(result.hardware_updates)
+        if result.effect == "flash_all":
+            self.hardware.flash_all_leds(
+                float((level.mode_params or {}).get("celebrationSeconds", 1.0))
+            )
         if result.lost:
             self._finish_attempt_elapsed()
             self.hardware.pause()
@@ -653,7 +695,7 @@ class GameEngine:
                     live_mode_score = self._survival_visited * int(
                         level.points_per_tile or 0
                     )
-                elif level.mode in ("hex_fall", "target_hunt"):
+                elif level.mode in ("hex_fall", "target_hunt", "food_frenzy"):
                     live_mode_score = self._mode_score
             payload: dict[str, Any] = {
                 "state": self.state.value,
@@ -753,6 +795,7 @@ class GameEngine:
         self._mode_state = None
         self._mode_score = 0
         self._end_cell_since = None
+        self._last_unstick_at = None
         self.state = GameState.RESTARTING if restarting else GameState.LEVEL_LOADING
         try:
             self.hardware.load_level(
@@ -837,3 +880,4 @@ class GameEngine:
         self._mode_state = None
         self._mode_score = 0
         self._end_cell_since = None
+        self._last_unstick_at = None

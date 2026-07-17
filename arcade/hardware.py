@@ -34,6 +34,18 @@ def load_module_start_delay_ms(
     return value
 
 
+def load_unstick_config(
+    config_path: Path = DEFAULT_ARCADE_CONFIG,
+) -> dict[str, float]:
+    with Path(config_path).open(encoding="utf-8") as config_file:
+        raw = json.load(config_file).get("unstick", {})
+    return {
+        "lift_fraction": float(raw.get("lift_fraction", 0.15)),
+        "lift_s": max(0.0, float(raw.get("lift_ms", 180)) / 1000.0),
+        "neutral_s": max(0.0, float(raw.get("neutral_ms", 100)) / 1000.0),
+    }
+
+
 class HardwareError(RuntimeError):
     pass
 
@@ -59,6 +71,12 @@ class BaseTableHardware:
     def apply_cell_updates(self, updates: list[dict[str, Any]]) -> None:
         raise NotImplementedError
 
+    def unstick_cell(self, row: int, col: int) -> bool:
+        raise NotImplementedError
+
+    def flash_all_leds(self, duration_s: float = 1.0) -> bool:
+        raise NotImplementedError
+
     def shutdown(self) -> None:
         raise NotImplementedError
 
@@ -73,6 +91,8 @@ class SimulatedTableHardware(BaseTableHardware):
         self.error = ""
         self.playing = False
         self.level = ""
+        self.unstick_calls: list[tuple[int, int]] = []
+        self.flash_calls = 0
 
     def initialize(self) -> None:
         self.ready = True
@@ -97,6 +117,15 @@ class SimulatedTableHardware(BaseTableHardware):
 
     def apply_cell_updates(self, updates: list[dict[str, Any]]) -> None:
         return
+
+    def unstick_cell(self, row: int, col: int) -> bool:
+        self.unstick_calls.append((row, col))
+        return self.playing
+
+    def flash_all_leds(self, duration_s: float = 1.0) -> bool:
+        del duration_s
+        self.flash_calls += 1
+        return self.playing
 
     def shutdown(self) -> None:
         self.ready = False
@@ -134,6 +163,7 @@ class ModuleGridHardware(BaseTableHardware):
         self.module_start_delay_s = (
             load_module_start_delay_ms(arcade_config_path) / 1000.0
         )
+        self.unstick_config = load_unstick_config(arcade_config_path)
         self.link: Link | None = None
         self.table: Table | None = None
         self.ready = False
@@ -150,6 +180,9 @@ class ModuleGridHardware(BaseTableHardware):
         self._blink_entries: list[dict[str, Any]] = []
         self._dynamic: list[dict[str, Any]] = []
         self._play_started_at: float | None = None
+        self._unstick_busy = False
+        self._effect_busy = False
+        self._load_phase = ""
 
     def initialize(self) -> None:
         with self._state_lock:
@@ -252,6 +285,7 @@ class ModuleGridHardware(BaseTableHardware):
             self.playing = False
             self.error = ""
             self.level = map_path.name
+            self._load_phase = "starting"
             self._generation += 1
             generation = self._generation
         threading.Thread(
@@ -287,17 +321,21 @@ class ModuleGridHardware(BaseTableHardware):
             ] + blink_entries
             if generation != self._generation:
                 return
+            self._load_phase = "applying"
             with self._io_lock:
                 self.table.apply_cells(initial)
+            self._load_phase = "applied"
             if generation != self._generation:
                 return
             self._blink_entries = blink_entries
             self._dynamic = dynamic
             self._play_started_at = None
             self._start_blink(generation)
+            self._load_phase = "ready"
         except Exception as exc:
             with self._state_lock:
                 self.error = str(exc)
+                self._load_phase = "error"
         finally:
             with self._state_lock:
                 if generation == self._generation:
@@ -413,6 +451,68 @@ class ModuleGridHardware(BaseTableHardware):
             if motion_updates:
                 self.table.apply_cells(motion_updates)
 
+    def unstick_cell(self, row: int, col: int) -> bool:
+        if not self.table:
+            return False
+        with self._state_lock:
+            if not self.playing or self._unstick_busy:
+                return False
+            self._unstick_busy = True
+
+        def worker() -> None:
+            try:
+                with self._io_lock:
+                    self.table.unstick_cell(
+                        row,
+                        col,
+                        **self.unstick_config,
+                    )
+            except Exception as exc:
+                self.error = str(exc)
+            finally:
+                with self._state_lock:
+                    self._unstick_busy = False
+
+        threading.Thread(
+            target=worker,
+            name="arcade-unstick",
+            daemon=True,
+        ).start()
+        return True
+
+    def flash_all_leds(self, duration_s: float = 1.0) -> bool:
+        if not self.table:
+            return False
+        with self._state_lock:
+            if not self.playing or self._effect_busy:
+                return False
+            self._effect_busy = True
+
+        def worker() -> None:
+            try:
+                with self._io_lock:
+                    floor_rgb = self.table.average_led_rgb("#567DBB")
+                    step_s = max(0.05, duration_s / 4.0)
+                    for index in range(4):
+                        self.table.fill_all_leds(
+                            (255, 255, 255) if index % 2 == 0 else (0, 0, 0)
+                        )
+                        if not self.dry_run:
+                            time.sleep(step_s)
+                    self.table.fill_all_leds(floor_rgb)
+            except Exception as exc:
+                self.error = str(exc)
+            finally:
+                with self._state_lock:
+                    self._effect_busy = False
+
+        threading.Thread(
+            target=worker,
+            name="arcade-led-celebration",
+            daemon=True,
+        ).start()
+        return True
+
     def _release_servos(self) -> None:
         if not self.link:
             return
@@ -451,7 +551,10 @@ class ModuleGridHardware(BaseTableHardware):
                 "ready": self.ready,
                 "busy": self.busy,
                 "playing": self.playing,
+                "unstickBusy": self._unstick_busy,
+                "effectBusy": self._effect_busy,
                 "error": self.error,
                 "level": self.level,
+                "loadPhase": self._load_phase,
                 "port": self.port,
             }

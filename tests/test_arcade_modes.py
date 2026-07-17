@@ -34,7 +34,7 @@ def blank_cells() -> dict[str, dict[str, object]]:
 
 
 class CatalogTests(unittest.TestCase):
-    def test_catalog_contains_only_the_three_arcade_modes(self) -> None:
+    def test_catalog_contains_the_four_arcade_modes(self) -> None:
         catalog = load_levels()
         self.assertEqual(
             [(level.id, level.mode) for level in catalog.levels],
@@ -42,6 +42,7 @@ class CatalogTests(unittest.TestCase):
                 ("lava-survival", "survival_lava"),
                 ("hex-a-fall", "hex_fall"),
                 ("snake", "target_hunt"),
+                ("food-frenzy", "food_frenzy"),
             ],
         )
         for level in catalog.levels:
