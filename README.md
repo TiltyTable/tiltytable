@@ -71,9 +71,9 @@ No active code imports anything under `archive/arduino/`.
   `calibration/` are bring-up, calibration, and diagnostic tools. Module tools
   require the arcade to be stopped; Stewart tools require the trackball motion
   client to be stopped but normally keep using the supervisor.
-- `stewart_exp_roller_ball.py` is an additional supervisor-based position
-  controller that consumes `stewart_game_tuning.json`. It is optional when one
-  of the two `stewart_platform_control_*.py` programs is used.
+- The experimental roller-ball controller is archived under
+  `archive/stewart_legacy/python/`; use one of the two active
+  `stewart_platform_control_*.py` programs instead.
 - `game_runner.py` and `calibration/tilt_table_cli.py` are standalone
   module-grid tools. The arcade imports reusable pieces from `game_runner.py`,
   but neither CLI should run beside the live arcade server.
@@ -293,18 +293,11 @@ Run the tuning session with the platform mechanically protected:
 ```
 
 If Arduino `STATUS` is not calibrated, the tool starts interactive per-crank
-vertical calibration. Afterward use `nudge`, `motorcal`, and `trim level` as
-needed to establish physical level, then `profile select` to save the game
-motion profile. Results live in `calibration/stewart_game_tuning.json`.
-
-That tuning file is consumed by `stewart_exp_roller_ball.py`. The two newer
-`stewart_platform_control_position.py` and
-`stewart_platform_control_velocity.py` programs deliberately use their CLI
-settings instead: they default to zero motor offsets and accept explicit
-`--step-offsets S0 S1 S2`, `--startup-heave`, and motion-profile arguments.
-If tuning establishes required differential `motor_trim_steps`, copy those
-three values into the chosen game controller's `--step-offsets`; the new
-controllers do not silently load the tuning JSON.
+vertical calibration. Runtime `nudge`, `profile`, `threshold`, and `agility`
+commands operate only for the current session and do not create tuning state.
+The active `stewart_platform_control_position.py` and
+`stewart_platform_control_velocity.py` programs use their CLI settings and
+firmware calibration directly.
 
 Every supported motion client gets the current absolute motor positions from
 the Arduino/supervisor during startup before constructing its initial IK pose.

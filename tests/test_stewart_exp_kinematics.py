@@ -16,16 +16,6 @@ from analysis.stewart_exp_kinematics import (
     unwrap_toward,
 )
 from stewart_exp_probe import parse_status
-from stewart_exp_roller_ball import (
-    EV_REL,
-    EV_SYN,
-    REL_X,
-    REL_Y,
-    SYN_REPORT,
-    TrackballVectorAccumulator,
-    clamp_vector,
-    step_toward,
-)
 
 
 class BranchAwareIkTests(unittest.TestCase):
@@ -149,32 +139,6 @@ class ExperimentalProtocolTests(unittest.TestCase):
     def test_reject_production_status(self) -> None:
         with self.assertRaises(ValueError):
             parse_status("OK calibrated 1 enabled 0")
-
-    def test_roller_target_is_radially_clamped(self) -> None:
-        roll, pitch = clamp_vector(10.0, 10.0, 10.0)
-        self.assertAlmostEqual(math.hypot(roll, pitch), 10.0)
-
-    def test_roller_position_advances_in_bounded_steps(self) -> None:
-        roll, pitch = step_toward(0.0, 0.0, 6.0, 8.0, 0.5)
-        self.assertAlmostEqual(math.hypot(roll, pitch), 0.5)
-
-    def test_trackball_xy_is_committed_as_one_syn_report_vector(self) -> None:
-        vectors = TrackballVectorAccumulator()
-        vectors.feed(EV_REL, REL_X, 7, 1.000)
-        vectors.feed(EV_REL, REL_Y, -4, 1.001)
-        self.assertIsNone(vectors.pop_ready(1.010, 0.008))
-        vectors.feed(EV_SYN, SYN_REPORT, 0, 1.011)
-        self.assertIsNone(vectors.pop_ready(1.015, 0.008))
-        self.assertEqual(vectors.pop_ready(1.020, 0.008), (7, -4))
-
-    def test_adjacent_syn_reports_share_short_vector_window(self) -> None:
-        vectors = TrackballVectorAccumulator()
-        vectors.feed(EV_REL, REL_X, 5, 1.000)
-        vectors.feed(EV_SYN, SYN_REPORT, 0, 1.001)
-        vectors.feed(EV_REL, REL_Y, 3, 1.003)
-        vectors.feed(EV_SYN, SYN_REPORT, 0, 1.004)
-        self.assertEqual(vectors.pop_ready(1.010, 0.008), (5, 3))
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -129,20 +129,11 @@ table is physically supported.
 
 ## Experimental roller ball
 
-After cardinal tests have validated the desired radius, use the dedicated
-free-heave roller controller:
+The former dedicated roller-ball controller is archived under
+`archive/stewart_legacy/python/`. Use an active `stewart_platform_control_*.py`
+controller for live trackball control.
 
-```bash
-.venv/bin/python3 stewart_exp_roller_ball.py --max-tilt 10
-```
-
-Type `START`, calibrate if requested, then roll the ball. Input commands
-absolute roll/pitch position while the host continuously chooses heave and
-crank branches. Maximum-agility defaults are 60 Hz, 1.5° maximum platform
-target change per update, 0.5 mm maximum heave change, and a 2 ms input-vector
-window. Targets are pipelined while motors move; Ctrl-C sends `ABORT` and holds.
-
-The host commits REL_X/REL_Y only at Linux `SYN_REPORT` boundaries, with an
+The active host commits REL_X/REL_Y only at Linux `SYN_REPORT` boundaries, with an
 8 ms aggregation window so diagonal ball motion remains one vector. IK heave
 selection includes a 50 lb static-load torque estimate plus a penalty inside
 15° of top/bottom crank dead center. Use `--vector-window-ms` to tune input
@@ -151,9 +142,7 @@ aggregation without changing the production roller tool.
 The agile IK objective prioritizes shortest continuous crank travel and minimum
 heave motion; torque/dead-center/closure metrics remain secondary constraints.
 The tuning CLI uses adaptive 0.5–1.5° waypoints and waits only at requested
-endpoints rather than after every waypoint. Physical level is different:
-free-heave/dual-branch IK makes model `(roll=0, pitch=0)` non-unique, so level
-return uses a saved absolute crank-step anchor instead of solving IK.
+endpoints rather than after every waypoint.
 
 ## Game tuning CLI
 
@@ -170,47 +159,22 @@ status
 level
 nudge roll 0.1
 nudge pitch -0.1
-trim level
-motorcal
 profile 60 200
-profile select
 threshold roll + 0.1
 threshold roll - 0.1
 threshold pitch + 0.1
 threshold pitch - 0.1
-mark roll + 0.5
 agility roll 6 3
 agility pitch 6 3
 hold
 quit
 ```
 
-Threshold tests return level and increment one direction until the operator
-presses `m` to mark reliable rolling. Results are saved to
-`calibration/stewart_game_tuning.json`; the recommended activation threshold
-is the largest directional result plus 0.1° (override with
-`--threshold-margin`). `mark` records an observed value directly, while
-`profile select` stores the active runtime profile as the game recommendation.
-
-If model level is not physically level, keep the motors enabled, use small
-`nudge roll/pitch` commands until a physical level is observed, then run
-`trim level`. This captures the current firmware `STATUS` steps plus model
-roll/pitch/heave metadata. Future `level`, threshold, agility, and experimental
-roller startup return to those exact steps in firmware-safe chunks (maximum
-12° crank change per `TARGET`) and wait only at the final endpoint.
-
-For per-motor adjustment with the other two motors actively holding, run
-`motorcal` (all axes) or `motorcal 0`/`1`/`2`. Arrow keys adjust 20 pulses fine
-or 100 pulses coarse; Enter accepts that motor. A completed motor calibration
-captures the exact resulting steps as the canonical physical-level anchor.
-The saved `motor_trim_steps` remain only as the model-to-physical differential
-offset for later IK targets; they are never added to an absolute level return.
-A fresh crank calibration clears both trims and the old anchor because their
-coordinate frame is no longer valid.
-
-Agility tests use the active runtime profile, time each ±position reversal,
-then record operator rating/notes. Change profiles without reflashing using
-`profile speed accel`. Errors and Ctrl-C hold; they never disable.
+Threshold tests return model level and increment one direction until the
+operator presses `m` to report reliable rolling. Agility tests use the active
+runtime profile and print each reversal time plus a summary. Results are not
+persisted. Change profiles without reflashing using `profile speed accel`.
+Errors and Ctrl-C hold; they never disable.
 
 ## Return to the live R4 firmware
 
