@@ -99,11 +99,9 @@ Eight palette ids: `trap`, `wall`, `start`, `end`, `yellow`, `floor`, `points`, 
 ## Examples
 
 - `blank-neutral.json` — all floor (`value` 0) + black/off LEDs; use to reset the table
-- `arcade-level-1.json` — tilt tutorial (gray floor, start/end, blue `blinkUntilPlay` tile)
-- `arcade-level-2.json` — wall maze + pits, bonuses, gates, `delayed_trap` tiles
-- `arcade-level-3.json` — recessed-pit practice course
-- `arcade-level-7.json` — **survival dwell lava** (all floor at start; engine sinks tiles during play)
-- Legacy static path lava (pre-2026-07-12 `arcade-level-7.json` with ochre ribbon) is **deprecated** — use survival mode in `levels.json` instead
+- `arcade-lava-survival.json` — touched floor warns, then sinks
+- `arcade-hex-a-fall.json` — open floor for random warned collapses
+- `arcade-snake.json` — open floor for flashing food plus spawned walls/pits
 - `tile-map-2026-07-12T04-05-46-868Z.json` — static wall/path maze (source layout for level 2)
 - `dynamic-tile-map-2026-07-12T04-08-34-750Z.json` — legacy pit layout reference
 

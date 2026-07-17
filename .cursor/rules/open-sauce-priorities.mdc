@@ -1,0 +1,24 @@
+---
+description: Prioritize a fun and responsive Open Sauce arcade prototype
+alwaysApply: true
+---
+
+# Open Sauce Priorities
+
+TiltyTable is an Open Sauce arcade project. Optimize for:
+
+1. Fun, immediately understandable play.
+2. Low input-to-motion and tracking-to-feedback latency.
+3. Reliable booth operation and fast iteration.
+4. Clear 854×480 cabinet presentation.
+
+Avoid production-software ceremony that does not improve the booth experience:
+
+- Do not add enterprise hardening, speculative abstractions, broad compatibility
+  layers, exhaustive smoke-test matrices, or redundant safety interlocks.
+- Prefer focused behavior tests and direct playtesting of changed mechanics.
+- Keep code paths short and remove unused tools instead of maintaining them.
+
+This priority does not override `.cursor/rules/hardware-safety.mdc`. Real motor
+motion still requires explicit approval, and module servos must always
+pulse-then-release rather than remain energized.

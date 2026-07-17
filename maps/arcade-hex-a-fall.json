@@ -1,7 +1,7 @@
 {
   "A1": {
     "value": 0,
-    "color": "#00FFFF"
+    "color": "#567DBB"
   },
   "B1": {
     "value": 0,
@@ -261,7 +261,7 @@
   },
   "F6": {
     "value": 0,
-    "color": "#567DBB"
+    "color": "#00FFFF"
   },
   "G6": {
     "value": 0,
@@ -573,6 +573,6 @@
   },
   "L12": {
     "value": 0,
-    "color": "#680056"
+    "color": "#567DBB"
   }
 }

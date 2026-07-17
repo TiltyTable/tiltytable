@@ -1,4 +1,4 @@
-"""Escalating target hunt ("Snake"): collect targets as walls/pits accumulate."""
+"""Snake: collect flashing food while one wall rises and one floor falls."""
 
 from __future__ import annotations
 
@@ -15,15 +15,13 @@ WALL_COLOR = "#4DFF00"
 
 @dataclass(frozen=True)
 class TargetHuntParams:
-    starting_seconds: float = 20.0
-    target_bonus_seconds: float = 5.0
     target_confirm_seconds: float = 0.3
-    points_per_target: int = 100
+    points_per_target: int = 1
     spawn_pit_count: int = 1
     spawn_wall_count: int = 1
-    max_time_seconds: float = 30.0
-    minimum_reachable_cells: int = 8
-    minimum_target_distance: int = 4
+    minimum_reachable_cells: int = 2
+    minimum_target_distance: int = 3
+    blink_seconds: float = 0.25
     seed: int = 1
 
 
@@ -34,10 +32,10 @@ class TargetHuntSession:
     row_col: dict[str, tuple[int, int]]
     rng: random.Random
     target_cell: str | None
-    remaining_seconds: float
-    last_tick_at: float
     hits: int = 0
     pending_target_since: float | None = None
+    target_blink_on: bool = True
+    last_blink_at: float = 0.0
     updates: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -45,7 +43,6 @@ class TargetHuntSession:
 class TargetHuntTickResult:
     hardware_updates: list[dict[str, Any]]
     target_cell: str | None
-    remaining_seconds: float
     targets_reached: int
     score: int
     lost: bool
@@ -98,20 +95,34 @@ def reachable_distances(
 
 
 def _entry(
-    key: str, row_col: dict[str, tuple[int, int]], value: int, color: str
+    key: str,
+    row_col: dict[str, tuple[int, int]],
+    value: int,
+    color: str,
+    *,
+    led_only: bool = False,
 ) -> dict[str, Any]:
     row, col = row_col[key]
-    return {"key": key, "row": row, "col": col, "value": value, "color": color, "rgb": (0, 0, 0)}
+    entry = {
+        "key": key, "row": row, "col": col, "value": value,
+        "color": color, "rgb": (0, 0, 0),
+    }
+    if led_only:
+        entry["leds_only"] = True
+    return entry
 
 
 def _choose_target(session: TargetHuntSession, ball_cell: str) -> str | None:
     distances = reachable_distances(ball_cell, session.cells, session.row_col)
-    candidates = sorted(
+    preferred = sorted(
         key
         for key, distance in distances.items()
         if distance >= session.params.minimum_target_distance
     )
-    if len(distances) < session.params.minimum_reachable_cells or not candidates:
+    candidates = preferred or sorted(
+        key for key, distance in distances.items() if distance > 0
+    )
+    if not candidates:
         return None
     return session.rng.choice(candidates)
 
@@ -162,12 +173,13 @@ def start_target_hunt(
         row_col=row_col,
         rng=random.Random(params.seed),
         target_cell=None,
-        remaining_seconds=min(params.starting_seconds, params.max_time_seconds),
-        last_tick_at=now,
+        last_blink_at=now,
     )
     session.target_cell = _choose_target(session, ball_cell)
     if session.target_cell:
-        session.updates.append(_entry(session.target_cell, row_col, 0, TARGET_COLOR))
+        session.updates.append(
+            _entry(session.target_cell, row_col, 0, TARGET_COLOR, led_only=True)
+        )
     return session
 
 
@@ -176,24 +188,40 @@ def tick_target_hunt(
     ball_cell: str | None,
     now: float,
 ) -> TargetHuntTickResult:
-    elapsed = max(0.0, now - session.last_tick_at)
-    session.last_tick_at = now
-    session.remaining_seconds = max(0.0, session.remaining_seconds - elapsed)
     updates = list(session.updates)
     session.updates.clear()
 
-    if ball_cell and ball_cell == session.target_cell:
+    lost = bool(
+        ball_cell
+        and ball_cell in session.cells
+        and int(session.cells[ball_cell].get("value", 0)) == -1
+    )
+    if (
+        session.target_cell
+        and now - session.last_blink_at >= session.params.blink_seconds
+    ):
+        session.target_blink_on = not session.target_blink_on
+        session.last_blink_at = now
+        updates.append(
+            _entry(
+                session.target_cell,
+                session.row_col,
+                0,
+                TARGET_COLOR if session.target_blink_on else "#000000",
+                led_only=True,
+            )
+        )
+
+    if not lost and ball_cell and ball_cell == session.target_cell:
         if session.pending_target_since is None:
             session.pending_target_since = now
         elif now - session.pending_target_since >= session.params.target_confirm_seconds:
             previous = session.target_cell
             session.hits += 1
-            session.remaining_seconds = min(
-                session.params.max_time_seconds,
-                session.remaining_seconds + session.params.target_bonus_seconds,
-            )
             if previous:
-                updates.append(_entry(previous, session.row_col, 0, FLOOR_COLOR))
+                updates.append(
+                    _entry(previous, session.row_col, 0, FLOOR_COLOR, led_only=True)
+                )
             updates.extend(
                 _place_obstacles(
                     session,
@@ -204,32 +232,38 @@ def tick_target_hunt(
             )
             session.target_cell = _choose_target(session, ball_cell)
             if session.target_cell:
-                updates.append(_entry(session.target_cell, session.row_col, 0, TARGET_COLOR))
+                updates.append(
+                    _entry(
+                        session.target_cell,
+                        session.row_col,
+                        0,
+                        TARGET_COLOR,
+                        led_only=True,
+                    )
+                )
+                session.target_blink_on = True
+                session.last_blink_at = now
             session.pending_target_since = None
     else:
         session.pending_target_since = None
 
-    lost = session.remaining_seconds <= 0 or session.target_cell is None
     return TargetHuntTickResult(
         hardware_updates=updates,
         target_cell=session.target_cell,
-        remaining_seconds=session.remaining_seconds,
         targets_reached=session.hits,
-        score=session.hits * session.params.points_per_target + int(session.remaining_seconds),
+        score=session.hits * session.params.points_per_target,
         lost=lost,
     )
 
 
 def params_from_dict(raw: dict[str, Any], seed: int = 1) -> TargetHuntParams:
     return TargetHuntParams(
-        starting_seconds=float(raw.get("startingSeconds", 20)),
-        target_bonus_seconds=float(raw.get("targetBonusSeconds", 5)),
         target_confirm_seconds=float(raw.get("targetConfirmSeconds", 0.3)),
-        points_per_target=int(raw.get("pointsPerTarget", 100)),
+        points_per_target=int(raw.get("pointsPerTarget", 1)),
         spawn_pit_count=int(raw.get("spawnPitCount", 1)),
         spawn_wall_count=int(raw.get("spawnWallCount", 1)),
-        max_time_seconds=float(raw.get("maxTimeSeconds", 30)),
-        minimum_reachable_cells=int(raw.get("minimumReachableCells", 8)),
-        minimum_target_distance=int(raw.get("minimumTargetDistance", 4)),
+        minimum_reachable_cells=int(raw.get("minimumReachableCells", 2)),
+        minimum_target_distance=int(raw.get("minimumTargetDistance", 3)),
+        blink_seconds=float(raw.get("blinkSeconds", 0.25)),
         seed=seed,
     )

@@ -21,32 +21,26 @@ HEX_COLOR = re.compile(r"^#[0-9A-Fa-f]{6}$")
 MODE_DEFAULTS: dict[str, dict[str, Any]] = {
     "reach_end": {},
     "survival_lava": {
-        "survivalSeconds": 40.0,
         "dwellSeconds": 1.5,
         "warnSeconds": 2.0,
         "pointsPerTile": 25,
         "pitConfirmSeconds": 0.5,
     },
     "hex_fall": {
-        "survivalSeconds": 45.0,
         "pitConfirmSeconds": 0.5,
         "collapseEverySeconds": 3.0,
         "collapseCount": 1,
         "collapseWarnSeconds": 1.0,
-        "pointValue": 100,
-        "survivalPointsPerSecond": 10,
-        "pointConfirmSeconds": 0.15,
+        "pointsPerTile": 1,
     },
     "target_hunt": {
-        "startingSeconds": 20.0,
-        "targetBonusSeconds": 5.0,
         "targetConfirmSeconds": 0.3,
-        "pointsPerTarget": 100,
+        "pointsPerTarget": 1,
         "spawnPitCount": 1,
         "spawnWallCount": 1,
-        "maxTimeSeconds": 30.0,
-        "minimumReachableCells": 8,
-        "minimumTargetDistance": 4,
+        "minimumReachableCells": 2,
+        "minimumTargetDistance": 3,
+        "blinkSeconds": 0.25,
     },
 }
 
@@ -67,26 +61,28 @@ def blank_cells() -> dict[str, dict[str, Any]]:
 def blank_package(mode: str = "reach_end") -> dict[str, Any]:
     if mode not in SUPPORTED_MODES:
         raise ValueError(f"unsupported mode: {mode}")
-    return {
+    package = {
         "version": PACKAGE_VERSION,
         "seed": 1,
         "meta": {
             "id": "new-level",
             "number": 1,
-            "title": "New Chamber",
-            "subtitle": "Describe this challenge",
-            "timeLimitSeconds": 60,
+            "title": "New Level",
+            "subtitle": "Choose a game mode",
             "startCell": "A1",
             "endCell": "L12",
-            "feature": "Describe what changes on the physical table.",
-            "rules": ["Guide the ball through the chamber."],
-            "kenLine": "I'll explain the rules when you're ready.",
-            "trollLine": "You built this trap yourself!",
+            "feature": "Build the board.",
+            "rules": ["Move the ball to score."],
+            "kenLine": "Follow the level rules.",
+            "trollLine": "Avoid the pits.",
         },
         "mode": mode,
         "modeParams": deepcopy(MODE_DEFAULTS[mode]),
         "cells": blank_cells(),
     }
+    if mode == "reach_end":
+        package["meta"]["timeLimitSeconds"] = 60
+    return package
 
 
 def _positive_number(
@@ -121,7 +117,7 @@ def validate_package(package: dict[str, Any], *, raise_on_error: bool = True) ->
             errors.append(f"meta.{key} must be non-empty text")
     if not isinstance(meta.get("number"), int) or meta.get("number", 0) <= 0:
         errors.append("meta.number must be a positive integer")
-    if (
+    if mode == "reach_end" and (
         not isinstance(meta.get("timeLimitSeconds"), (int, float))
         or meta.get("timeLimitSeconds", 0) <= 0
     ):
@@ -184,23 +180,21 @@ def validate_package(package: dict[str, Any], *, raise_on_error: bool = True) ->
         errors.append("modeParams must be an object")
         params = {}
     if mode == "survival_lava":
-        for key in ("survivalSeconds", "dwellSeconds", "warnSeconds"):
+        for key in ("dwellSeconds", "warnSeconds"):
             _positive_number(params, key, errors)
         _positive_number(params, "pointsPerTile", errors, allow_zero=True)
         _positive_number(params, "pitConfirmSeconds", errors)
     elif mode == "hex_fall":
         for key in (
-            "survivalSeconds", "pitConfirmSeconds", "collapseWarnSeconds",
-            "pointValue", "survivalPointsPerSecond", "pointConfirmSeconds",
+            "pitConfirmSeconds", "collapseWarnSeconds", "pointsPerTile",
         ):
             _positive_number(params, key, errors)
         for key in ("collapseEverySeconds", "collapseCount"):
             _positive_number(params, key, errors)
     elif mode == "target_hunt":
         for key in (
-            "startingSeconds", "targetBonusSeconds", "targetConfirmSeconds",
-            "pointsPerTarget", "maxTimeSeconds", "minimumReachableCells",
-            "minimumTargetDistance",
+            "targetConfirmSeconds", "pointsPerTarget", "minimumReachableCells",
+            "minimumTargetDistance", "blinkSeconds",
         ):
             _positive_number(params, key, errors)
         for key in ("spawnPitCount", "spawnWallCount"):
@@ -236,6 +230,7 @@ def package_from_manifest(level_id: str, path: Path = MANIFEST_PATH) -> dict[str
                 "id", "number", "title", "subtitle", "timeLimitSeconds",
                 "startCell", "endCell", "feature", "rules", "kenLine", "trollLine",
             )
+            if key in item
         },
         "mode": mode,
         "modeParams": params,

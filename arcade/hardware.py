@@ -42,7 +42,9 @@ class BaseTableHardware:
     def initialize(self) -> None:
         raise NotImplementedError
 
-    def load_level(self, map_path: Path, start_cell: str, end_cell: str) -> None:
+    def load_level(
+        self, map_path: Path, start_cell: str, end_cell: str | None
+    ) -> None:
         raise NotImplementedError
 
     def begin_play(self) -> None:
@@ -76,7 +78,9 @@ class SimulatedTableHardware(BaseTableHardware):
         self.ready = True
         self.error = ""
 
-    def load_level(self, map_path: Path, start_cell: str, end_cell: str) -> None:
+    def load_level(
+        self, map_path: Path, start_cell: str, end_cell: str | None
+    ) -> None:
         self.level = map_path.name
         self.busy = False
         self.playing = False
@@ -235,7 +239,9 @@ class ModuleGridHardware(BaseTableHardware):
         if problems:
             raise HardwareError("; ".join(problems))
 
-    def load_level(self, map_path: Path, start_cell: str, end_cell: str) -> None:
+    def load_level(
+        self, map_path: Path, start_cell: str, end_cell: str | None
+    ) -> None:
         if not self.ready or not self.table:
             raise HardwareError("module grid is not initialized")
         self._stop_animations()
@@ -256,14 +262,15 @@ class ModuleGridHardware(BaseTableHardware):
         ).start()
 
     def _load_worker(
-        self, map_path: Path, start_cell: str, end_cell: str, generation: int
+        self, map_path: Path, start_cell: str, end_cell: str | None, generation: int
     ) -> None:
         assert self.table is not None
         try:
             raw = json.loads(map_path.read_text(encoding="utf-8"))
             raw = copy.deepcopy(raw)
             raw[start_cell]["color"] = START_COLOR
-            raw[end_cell]["color"] = END_COLOR
+            if end_cell is not None:
+                raw[end_cell]["color"] = END_COLOR
             static, dynamic = parse_map(raw)
             blink_entries = [self._entry(start_cell, value=-1, color=START_COLOR)]
             for key, cell in raw.items():

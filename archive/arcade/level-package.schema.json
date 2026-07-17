@@ -15,7 +15,7 @@
     "meta": {
       "type": "object",
       "required": [
-        "id", "number", "title", "subtitle", "timeLimitSeconds",
+        "id", "number", "title", "subtitle",
         "startCell", "endCell", "feature", "rules", "kenLine", "trollLine"
       ],
       "properties": {

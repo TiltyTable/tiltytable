@@ -15,12 +15,12 @@ assert.strictEqual(shiftInitials("ZED", 0, 1), "AED");
 
 assert.strictEqual(backIntent("playing"), "open-overlay");
 assert.strictEqual(backIntent("placement"), "open-overlay");
-assert.strictEqual(backIntent("level_select"), "abandon");
+assert.strictEqual(backIntent("level_select"), null);
 assert.strictEqual(backIntent("initials"), "abandon");
 assert.strictEqual(backIntent("leaderboard"), "continue");
 assert.strictEqual(backIntent("attract"), null);
 assert.strictEqual(backIntent("playing", true), "close-overlay");
-assert.strictEqual(backIntent("rules", false, "practice"), "level-select");
+assert.strictEqual(backIntent("rules", false, "level_select"), "level-select");
 assert.strictEqual(backIntent("rules", false, "gauntlet"), "open-overlay");
 
 assert.strictEqual(cabinetButtonIntent(0, 0, 1, 0), "confirm");

@@ -430,7 +430,7 @@ Validate maps and Python behavior:
 Apply one map without the arcade server (exclusive module access required):
 
 ```bash
-.venv/bin/python3 game_runner.py maps/arcade-level-1.json --once
+.venv/bin/python3 game_runner.py maps/arcade-lava-survival.json --once
 ```
 
 ## Runtime ownership and shutdown

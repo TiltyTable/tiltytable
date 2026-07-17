@@ -16,7 +16,7 @@ class Level:
     title: str
     subtitle: str
     map_path: Path
-    time_limit_seconds: int
+    time_limit_seconds: int | None
     start_cell: str
     end_cell: str
     feature: str
@@ -36,13 +36,28 @@ class Level:
     def is_survival_lava(self) -> bool:
         return self.mode == "survival_lava"
 
+    @property
+    def is_timed(self) -> bool:
+        return self.mode != "target_hunt"
+
+    @property
+    def has_finish(self) -> bool:
+        return self.mode is None
+
+    @property
+    def countdown_seconds(self) -> float:
+        if self.mode == "survival_lava":
+            return float(self.survival_seconds or 0)
+        if self.mode == "hex_fall":
+            return float((self.mode_params or {}).get("survivalSeconds", 0))
+        return float(self.time_limit_seconds or 0)
+
     def public_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "id": self.id,
             "number": self.number,
             "title": self.title,
             "subtitle": self.subtitle,
-            "timeLimitSeconds": self.time_limit_seconds,
             "startCell": self.start_cell,
             "endCell": self.end_cell,
             "feature": self.feature,
@@ -50,6 +65,8 @@ class Level:
             "kenLine": self.ken_line,
             "trollLine": self.troll_line,
         }
+        if self.has_finish and self.time_limit_seconds is not None:
+            payload["timeLimitSeconds"] = self.time_limit_seconds
         if self.mode:
             payload["mode"] = self.mode
             payload["modeParams"] = dict(self.mode_params or {})
@@ -114,7 +131,11 @@ def load_levels(path: Path = MANIFEST_PATH) -> LevelCatalog:
             title=str(item["title"]),
             subtitle=str(item["subtitle"]),
             map_path=map_path,
-            time_limit_seconds=int(item["timeLimitSeconds"]),
+            time_limit_seconds=(
+                int(item["timeLimitSeconds"])
+                if item.get("timeLimitSeconds") is not None
+                else None
+            ),
             start_cell=str(item["startCell"]).upper(),
             end_cell=str(item["endCell"]).upper(),
             feature=str(item["feature"]),
@@ -155,8 +176,6 @@ def load_levels(path: Path = MANIFEST_PATH) -> LevelCatalog:
     if len(levels) < 3:
         raise ValueError(f"arcade requires at least 3 levels, found {len(levels)}")
     gauntlet_level_ids = tuple(str(level_id) for level_id in raw.get("gauntletLevelIds", []))
-    if len(gauntlet_level_ids) < 2:
-        raise ValueError("gauntletLevelIds must list at least 2 levels")
     level_ids = {level.id for level in levels}
     missing = [level_id for level_id in gauntlet_level_ids if level_id not in level_ids]
     if missing:
@@ -182,9 +201,11 @@ def validate_level(level: Level) -> None:
         )
     if level.start_cell not in raw or level.end_cell not in raw:
         raise ValueError(f"{level.id}: invalid start/end cell")
-    if level.start_cell == level.end_cell:
+    if level.mode is None and level.start_cell == level.end_cell:
         raise ValueError(f"{level.id}: start and end must differ")
-    if level.time_limit_seconds <= 0:
+    if level.has_finish and (
+        level.time_limit_seconds is None or level.time_limit_seconds <= 0
+    ):
         raise ValueError(f"{level.id}: time limit must be positive")
     if level.is_survival_lava:
         if level.survival_seconds is None or level.survival_seconds <= 0:
@@ -195,12 +216,10 @@ def validate_level(level: Level) -> None:
             raise ValueError(f"{level.id}: warnSeconds must be positive")
         if level.points_per_tile is None or level.points_per_tile < 0:
             raise ValueError(f"{level.id}: pointsPerTile must be >= 0")
-        if level.time_limit_seconds < int(level.survival_seconds):
-            raise ValueError(
-                f"{level.id}: timeLimitSeconds must be >= survivalSeconds"
-            )
     if level.mode in ("hex_fall", "target_hunt") and not level.mode_params:
         raise ValueError(f"{level.id}: {level.mode} requires modeParams")
+    if level.mode == "hex_fall" and level.countdown_seconds <= 0:
+        raise ValueError(f"{level.id}: survivalSeconds must be positive")
 
 
 def load_map(level: Level) -> dict[str, dict[str, Any]]:

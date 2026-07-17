@@ -12,87 +12,79 @@ const PALETTE = {
 
 const LORE = {
   setup: {
-    ken: "Systems check. When you're ready, we'll get Tilty moving toward Tiltelle.",
-    troll: "Nobody leaves my dungeon without my say-so.",
+    ken: "Start the table.",
+    troll: "Stand clear.",
   },
   fault: {
-    ken: "Something's wrong with the table. Call an attendant — I'll wait right here.",
-    troll: "Broken already? Pathetic.",
+    ken: "Call an attendant.",
+    troll: "The table is paused.",
   },
   attract: {
-    ken: "Don't worry, Tilty — I'll help you escape.",
-    troll: "You will never escape, Tilty!",
+    ken: "Choose a game.",
+    troll: "Avoid the pits.",
   },
   initials: {
-    ken: "Three letters for the board. Make Tiltelle proud.",
-    troll: "Carve your failure in neon, prisoner.",
+    ken: "Enter three letters.",
+    troll: "Choose carefully.",
   },
   levelSelect: {
-    ken: "Practice any chamber you've unlocked. Learn the routes.",
-    troll: "Train all you want. The gauntlet still waits.",
+    ken: "Choose any game.",
+    troll: "Avoid the pits.",
   },
   loading: {
-    ken: "Stand clear while the tiles reset.",
-    troll: "Don't trip on the way in.",
+    ken: "Stand clear while the table resets.",
+    troll: "Wait for the board.",
   },
   placement: {
-    ken: "Set the ball on cyan, clear your hands, then start the clock.",
-    troll: "Drop it in a pit for me, will you?",
+    ken: "Place the ball on cyan, then start.",
+    troll: "Clear your hands.",
   },
   placementTiltTutorial: {
-    ken: "Cyan is home base. When you start, the blue tile rises — tilt across gray stone to magenta.",
-    troll: "Can't find a path? That's the point, Tilty.",
+    ken: "Place the ball on cyan.",
+    troll: "Clear your hands.",
   },
   playing: {
-    ken: "Roll steady. Magenta is freedom.",
-    troll: "Tick tock, Tilty. Tiltelle's not getting younger.",
+    ken: "Keep the ball moving.",
+    troll: "Avoid red and green.",
   },
   survivalPlaying: {
-    ken: "Tiles you touch heat up and fall behind you — keep moving!",
-    troll: "Every step leaves a trap, Tilty. The floor eats your path!",
+    ken: "Touch new tiles and keep moving.",
+    troll: "Avoid fallen tiles.",
   },
   survivalFail: {
-    ken: "You rolled onto a sunk tile — stay ahead of the heat!",
-    troll: "Sizzle sizzle! That's one less tile for your feet!",
+    ken: "The ball fell into a pit.",
+    troll: "Try again.",
   },
   timeUp: {
-    ken: "Time expired — try again. You've got the route now.",
-    troll: "Too slow! The dungeon keeps you another night.",
+    ken: "Time expired.",
+    troll: "Try again.",
   },
   levelClear: {
-    ken: "Clean escape! Let's tally your score.",
-    troll: "Lucky roll. It won't happen twice.",
+    ken: "Game complete.",
+    troll: "Score recorded.",
   },
   levelScore: {
-    ken: "Every second left is bonus points. Restarts cost you.",
-    troll: "Points won't buy you love, Tilty.",
+    ken: "Game score.",
+    troll: "Choose another game.",
   },
   runSummary: {
-    ken: "Run logged. Tiltelle's door is closer than you think.",
-    troll: "You'll be back. They always come back.",
+    ken: "Game finished.",
+    troll: "Choose another game.",
   },
   abandoned: {
-    ken: "Run ended. Cleared levels still count on the board.",
-    troll: "Running away? Typical.",
+    ken: "Game ended.",
+    troll: "Choose another game.",
   },
   leaderboard: {
-    ken: "The finest escapes the dungeon has seen.",
-    troll: "None of them beat me. None.",
+    ken: "High scores.",
+    troll: "Play again.",
   },
   abandonOverlay: {
-    ken: "Ending now saves cleared levels on a gauntlet run.",
-    troll: "Giving up already? Tiltelle will be thrilled.",
+    ken: "End this game?",
+    troll: "Your current run will stop.",
   },
-  timerLow30: [
-    "Half a minute, Tilty! Half a lifetime in here!",
-    "The clock's hungry and you're the snack!",
-    "Tiltelle can wait — forever!",
-  ],
-  timerLow10: [
-    "TEN SECONDS! Say goodbye to Tiltelle!",
-    "This is your finale, prisoner!",
-    "Ken can't save you now!",
-  ],
+  timerLow30: ["Thirty seconds left."],
+  timerLow10: ["Ten seconds left."],
 };
 
 let game = null;
@@ -140,6 +132,13 @@ function isSurvivalLevel(level = game?.level) {
 
 function isTrackedMode(level = game?.level) {
   return ["survival_lava", "hex_fall", "target_hunt"].includes(level?.mode);
+}
+
+function levelTimerSeconds(level = game?.level) {
+  return level?.survivalSeconds
+    ?? level?.modeParams?.survivalSeconds
+    ?? level?.timeLimitSeconds
+    ?? null;
 }
 
 function cellKeyToRowCol(key) {
@@ -381,7 +380,7 @@ function renderSetup() {
   return shell(`
     <article class="setup-card">
       <h1>${fault ? "GAME PAUSED" : "TILTYTABLE"}</h1>
-      <p class="hero-sub">${fault ? "Dungeon systems need an attendant." : "Tilty's escape begins here."}</p>
+      <p class="hero-sub">${fault ? "Call an attendant." : "Choose a game and play."}</p>
     </article>`,
     confirmHint(fault ? "TRY AGAIN" : "START"),
     dialogue(lore.ken, lore.troll, true));
@@ -403,28 +402,7 @@ function leaderboardRows(limit = 8) {
 }
 
 function renderAttract() {
-  const choices = ["ESCAPE RUN", "PRACTICE"];
-  return shell(`
-    <div class="attract-layout">
-      <div class="attract-copy">
-        <h1 class="hero-title">TILTY<br>TABLE</h1>
-        <p class="hero-sub">Help Tilty reach Tiltelle</p>
-        <div class="menu">
-          ${choices.map((choice, index) => {
-            return `
-            <div class="menu-item ${attractChoice === index ? "selected" : ""}">
-              <strong>${choice}</strong>
-            </div>`;
-          }).join("")}
-        </div>
-      </div>
-      <aside class="leader-card">
-        <h2>Escape board</h2>
-        ${leaderboardRows(8)}
-      </aside>
-    </div>`,
-    joinHints(navigationHint(), confirmHint("SELECT")),
-    dialogue(LORE.attract.ken, LORE.attract.troll));
+  return renderLevelSelect();
 }
 
 function renderInitials() {
@@ -452,17 +430,17 @@ function renderInitials() {
 function renderLevelSelect() {
   return shell(`
     <div style="width:100%">
-      <h1 class="screen-title">PRACTICE</h1>
-      <p class="hero-sub">All ${game.levels.length} chambers — no score saved</p>
+      <h1 class="screen-title">SELECT GAME</h1>
+      <p class="hero-sub">${game.levels.length} game modes</p>
       <div class="menu level-select-menu">
         ${game.levels.map((level, index) => `
           <div class="menu-item ${levelChoice === index ? "selected" : ""}">
-            <strong>0${level.number} ${escapeHtml(level.title)}</strong>
+            <strong>${String(level.number).padStart(2, "0")} ${escapeHtml(level.title)}</strong>
             <span class="menu-sub">${escapeHtml(level.subtitle)}</span>
           </div>`).join("")}
       </div>
     </div>`,
-    joinHints(navigationHint(), confirmHint("SELECT"), backHint("TITLE")),
+    joinHints(navigationHint(), confirmHint("SELECT")),
     dialogue(LORE.levelSelect.ken, LORE.levelSelect.troll, true));
 }
 
@@ -470,7 +448,7 @@ function renderRules() {
   const level = game.level;
   return shell(`
     <div class="rules-layout">
-      <div class="level-stamp"><strong>${level.number}</strong><span>CHAMBER</span></div>
+      <div class="level-stamp"><strong>${level.number}</strong><span>GAME</span></div>
       <div class="rules-copy">
         <h1>${escapeHtml(level.title)}</h1>
         <p class="feature">${escapeHtml(level.feature)}</p>
@@ -481,7 +459,7 @@ function renderRules() {
     </div>`,
     joinHints(
       confirmHint("CONTINUE"),
-      backHint(game.mode === "practice" ? "LEVEL SELECT" : "END RUN"),
+      backHint("GAMES"),
     ),
     dialogue(level.kenLine || LORE.playing.ken, level.trollLine || LORE.playing.troll));
 }
@@ -490,7 +468,7 @@ function renderLoading() {
   const restarting = game.state === "restarting";
   return shell(`
     <div>
-      <p class="kicker">CHAMBER ${game.level.number}</p>
+      <p class="kicker">GAME ${game.level.number}</p>
       <h1 class="screen-title">${restarting ? "RESETTING" : "GET READY"}</h1>
       <div class="loading-bars"><i></i><i></i><i></i><i></i><i></i><i></i></div>
       <p class="decision-copy">${escapeHtml(game.level.title)}</p>
@@ -500,7 +478,7 @@ function renderLoading() {
 }
 
 function tileClass(cell) {
-  if (cell.key === game.level.startCell) return "start";
+  if (cell.key === game.level.startCell && game.state !== "playing") return "start";
   if (!isTrackedMode() && cell.key === game.level.endCell) return "finish";
   if (cell.sunk || (isTrackedMode() && cell.value === -1)) return "trap";
   const color = String(cell.color || "").toUpperCase();
@@ -559,11 +537,11 @@ function renderPlacement() {
     <div class="game-layout">
       ${boardMarkup(true)}
       <div class="hud">
-        <p class="hud-level">CHAMBER ${level.number} · ${escapeHtml(level.title)}</p>
+        <p class="hud-level">GAME ${level.number} · ${escapeHtml(level.title)}</p>
         <h1>PLACE<br>THE BALL</h1>
         <p class="hud-instruction">${instruction}</p>
         <div class="hud-stats">
-          <div class="hud-stat"><span>TIME LIMIT</span><strong>${level.timeLimitSeconds}s</strong></div>
+          ${level.mode === "target_hunt" ? "" : `<div class="hud-stat"><span>TIME LIMIT</span><strong>${levelTimerSeconds(level)}s</strong></div>`}
           <div class="hud-stat"><span>RESTARTS</span><strong>${game.restarts}</strong></div>
         </div>
         <p class="placement-signal ${ready ? "ready" : ""}">${ready ? "BALL READY" : "FIND CYAN"}</p>
@@ -585,32 +563,20 @@ function renderPlaying() {
   const modeState = game.modeState || {};
   const openTiles = (game.mapCells || []).filter(cell => Number(cell.value) === 0).length;
   const kenLine = hunt
-    ? (remaining <= 5
-      ? "Five seconds — reach that flashing blue tile!"
-      : `Target ${modeState.targetCell ? cellKeyToCoordinates(modeState.targetCell) : "lost"} — each hit buys time but builds the trap.`)
+    ? "Reach the flashing blue food."
     : hex
-      ? (remaining <= 10
-        ? "Ten seconds — flashing tiles are about to disappear!"
-        : `Collect blue ${modeState.pointCell ? cellKeyToCoordinates(modeState.pointCell) : "points"} while random floor tiles flash before falling.`)
+      ? "Touch new tiles. Move away from red flashes."
       : survival
-    ? (heating
-      ? "Red flash behind you — that tile is about to sink!"
-      : (remaining <= 10
-        ? "Ten seconds — don't stop rolling!"
-        : (remaining <= 20 ? "Tiles you touched are heating up — stay mobile!" : (level.kenLine || LORE.survivalPlaying.ken))))
+    ? (heating ? "A touched tile is about to fall." : LORE.survivalPlaying.ken)
     : (remaining <= 30
-      ? (remaining <= 10 ? "Ten seconds — magenta or bust!" : "Under thirty seconds. Stay calm, stay on path.")
+      ? (remaining <= 10 ? "Ten seconds left." : "Thirty seconds left.")
       : (level.kenLine || LORE.playing.ken));
-  const trollLine = tracked
-    ? (heating
-      ? "Feel that heat, Tilty? Your feet are cooking!"
-      : (remaining <= 10 ? "BURN, TILTY, BURN!" : (level.trollLine || LORE.survivalPlaying.troll)))
-    : timerTrollLine(remaining);
-  const timerLabel = hunt ? "TARGET HUNT" : tracked ? (heating ? "HEATING" : "SURVIVE") : null;
+  const trollLine = tracked ? "Avoid the pits." : timerTrollLine(remaining);
+  const modeLabel = hunt ? "SNAKE" : hex ? "HEX-A-FALL" : survival ? "LAVA SURVIVAL" : null;
   const instruction = hunt
-    ? `Reach blue <strong>${cellKeyToCoordinates(modeState.targetCell)}</strong> · targets ${modeState.targetsReached || 0}`
+    ? `Food <strong>${cellKeyToCoordinates(modeState.targetCell)}</strong> · points ${modeState.targetsReached || 0}`
     : hex
-      ? `Reach blue <strong>${cellKeyToCoordinates(modeState.pointCell)}</strong> · points ${modeState.pointsCollected || 0} · floor ${openTiles}`
+      ? `Tiles touched <strong>${modeState.tilesTouched || 0}</strong> · floor ${openTiles}`
       : survival
         ? `Tiles touched <strong>${visited}</strong> · +${level.pointsPerTile || 0} each`
         : `Reach magenta <strong>${cellKeyToCoordinates(level.endCell)}</strong>`;
@@ -619,13 +585,13 @@ function renderPlaying() {
     <div class="game-layout">
       ${boardMarkup(false)}
       <div class="hud">
-        <p class="hud-level">CHAMBER ${level.number} · ${escapeHtml(level.title)}</p>
-        ${timerLabel ? `<p class="hud-kicker ${heating ? "danger" : ""}">${timerLabel}</p>` : ""}
-        <div class="timer ${remaining <= 10 ? "danger" : remaining <= 20 ? "warn" : ""}">${String(remaining).padStart(2, "0")}</div>
+        <p class="hud-level">GAME ${level.number} · ${escapeHtml(level.title)}</p>
+        ${modeLabel ? `<p class="hud-kicker ${heating ? "danger" : ""}">${modeLabel}</p>` : ""}
+        ${hunt ? "" : `<div class="timer ${remaining <= 10 ? "danger" : remaining <= 20 ? "warn" : ""}">${String(remaining).padStart(2, "0")}</div>`}
         <div class="hud-stats">
           <div class="hud-stat"><span>RUN SCORE</span><strong>${Number(game.score).toLocaleString()}</strong></div>
           <div class="hud-stat"><span>RESTARTS</span><strong>${game.restarts}</strong></div>
-          ${tracked ? `<div class="hud-stat"><span>${hunt ? "TARGETS" : hex ? "POINTS" : "TILES"}</span><strong>${hunt ? (modeState.targetsReached || 0) : hex ? (modeState.pointsCollected || 0) : visited}</strong></div>` : ""}
+          ${tracked ? `<div class="hud-stat"><span>${hunt ? "FOOD" : "TILES"}</span><strong>${hunt ? (modeState.targetsReached || 0) : hex ? (modeState.tilesTouched || 0) : visited}</strong></div>` : ""}
         </div>
         <p class="hud-instruction">${instruction}</p>
       </div>
@@ -635,20 +601,12 @@ function renderPlaying() {
 }
 
 function renderSurvivalFail() {
-  const hunt = game.level?.mode === "target_hunt";
-  const hex = game.level?.mode === "hex_fall";
-  const title = hunt ? "TIME'S UP!" : "SUNK!";
-  const copy = hunt
-    ? "The target timer expired. Keep the next chain alive."
-    : hex
-      ? "The shrinking floor caught the ball."
-      : "You rolled onto a sunk tile — the heat caught up.";
   return shell(`
     <article class="message-card">
-      <p class="kicker">Chamber ${game.level.number}</p>
-      <h1 style="color:var(--red)">${title}</h1>
-      <p class="decision-copy">${copy}</p>
-      <p class="result-number">−100</p>
+      <p class="kicker">Game ${game.level.number}</p>
+      <h1 style="color:var(--red)">PIT!</h1>
+      <p class="decision-copy">The ball fell through the floor.</p>
+      <p class="result-number">${Number(game.score).toLocaleString()} PTS</p>
     </article>`,
     joinHints(confirmHint("TRY AGAIN"), backHint("END RUN")),
     dialogue(LORE.survivalFail.ken, game.level?.trollLine || LORE.survivalFail.troll, true));
@@ -668,11 +626,11 @@ function renderTimeUp() {
 function renderLevelClear() {
   const survival = ["survival_lava", "hex_fall"].includes(game.level?.mode);
   const sub = survival
-    ? "You outlasted the lava — Tiltelle grows nearer"
-    : `${game.lastLevelResult.remainingSeconds}s left — Tiltelle grows nearer`;
+    ? "Timer cleared"
+    : `${game.lastLevelResult.remainingSeconds}s left`;
   return shell(`
     <article class="message-card">
-      <p class="kicker">CHAMBER ${game.level.number}</p>
+      <p class="kicker">GAME ${game.level.number}</p>
       <h1>${survival ? "SURVIVED!" : "CLEAR!"}</h1>
       <p class="result-number">+${Number(game.lastLevelResult.score).toLocaleString()}</p>
       <p class="decision-copy">${sub}</p>
@@ -685,16 +643,25 @@ function renderLevelScore() {
   const result = game.lastLevelResult;
   const total = gauntletTotal();
   const isLastGauntlet = game.mode === "gauntlet" && result.levelNumber >= total;
-  const nextLabel = game.mode === "practice"
-    ? "FINISH PRACTICE"
+  const nextLabel = game.mode !== "gauntlet"
+    ? "GAME SELECT"
     : (isLastGauntlet ? "FINAL SCORE" : "NEXT CHAMBER");
   const resultLevel = game.levels.find(l => l.id === result.levelId);
   const survival = ["survival_lava", "hex_fall"].includes(resultLevel?.mode);
+  const touchedTiles = resultLevel?.mode === "hex_fall"
+    ? (game.modeState?.tilesTouched ?? "—")
+    : (game.survival?.tilesVisited ?? "—");
+  const pointsPerTile = resultLevel?.mode === "hex_fall"
+    ? (resultLevel?.modeParams?.pointsPerTile || 0)
+    : (resultLevel?.pointsPerTile || 0);
+  const survivalThirdStat = resultLevel?.mode === "hex_fall"
+    ? "<div><span>Timer</span><strong>CLEARED</strong></div>"
+    : `<div><span>Restart penalty</span><strong>−${result.restarts * 100}</strong></div>`;
   const breakdown = survival
     ? `<div class="result-grid">
-        <div><span>Tiles touched</span><strong>${game.survival?.tilesVisited ?? "—"}</strong></div>
-        <div><span>Points / tile</span><strong>${resultLevel?.pointsPerTile || 0}</strong></div>
-        <div><span>Restart penalty</span><strong>−${result.restarts * 100}</strong></div>
+        <div><span>Tiles touched</span><strong>${touchedTiles}</strong></div>
+        <div><span>Points / tile</span><strong>${pointsPerTile}</strong></div>
+        ${survivalThirdStat}
       </div>`
     : `<div class="result-grid">
         <div><span>Clear</span><strong>1,000</strong></div>
@@ -703,7 +670,7 @@ function renderLevelScore() {
       </div>`;
   return shell(`
     <article class="message-card">
-      <p class="kicker">Chamber ${result.levelNumber} score</p>
+      <p class="kicker">Game ${result.levelNumber} score</p>
       <h1>${Number(result.score).toLocaleString()} PTS</h1>
       ${breakdown}
       <p class="next-action-label">${escapeHtml(nextLabel)}</p>
@@ -713,17 +680,18 @@ function renderLevelScore() {
 }
 
 function renderSummary() {
+  const directSelect = game.mode !== "gauntlet";
   const total = gauntletTotal();
-  const headline = game.mode === "practice"
+  const headline = directSelect
     ? game.level.title
-    : `${game.levelsCleared}/${total} CHAMBERS`;
-  const next = game.mode === "practice" ? "LEVEL SELECT" : "LEADERBOARD";
+    : `${game.levelsCleared}/${total} GAMES`;
+  const next = directSelect ? "GAME SELECT" : "LEADERBOARD";
   return shell(`
     <article class="message-card">
-      <p class="kicker">${game.mode === "practice" ? "PRACTICE COMPLETE" : (game.endedEarly ? "RUN CUT SHORT" : "ESCAPE COMPLETE")}</p>
+      <p class="kicker">${directSelect ? "GAME COMPLETE" : (game.endedEarly ? "RUN ENDED" : "RUN COMPLETE")}</p>
       <h1>${headline}</h1>
-      <p class="result-number">${game.mode === "practice" ? "—" : Number(game.score).toLocaleString()}</p>
-      <p class="decision-copy">${game.mode === "practice" ? "Tilty knows the route now." : "Tiltelle's light flickers ahead."}</p>
+      <p class="result-number">${Number(game.score).toLocaleString()}</p>
+      <p class="decision-copy">Choose another game or replay.</p>
       <p class="next-action-label">${escapeHtml(next)}</p>
     </article>`,
     confirmHint("CONTINUE"),
@@ -731,13 +699,10 @@ function renderSummary() {
 }
 
 function renderAbandoned() {
-  const saved = game.mode === "gauntlet" && game.levelsCleared > 0;
-  const total = gauntletTotal();
   return shell(`
     <article class="message-card">
-      <h1>RUN ENDED</h1>
-      <p class="result-number">${saved ? `${game.levelsCleared}/${total}` : "—"}</p>
-      ${saved ? `<p class="decision-copy">${Number(game.score).toLocaleString()} PTS SAVED</p>` : ""}
+      <h1>GAME ENDED</h1>
+      <p class="decision-copy">Choose another game.</p>
     </article>`,
     confirmHint("CONTINUE"),
     dialogue(LORE.abandoned.ken, LORE.abandoned.troll, true));
@@ -905,7 +870,7 @@ function handleStateAudio() {
     lastTimerBand = null;
   }
   audio.setMusic(["attract", "initials", "rules", "leaderboard"].includes(game.state));
-  if (game.state === "playing") {
+  if (game.state === "playing" && game.timer.running) {
     const second = game.timer.remainingSeconds;
     if (second !== lastTimerSecond && second <= 10) audio.warning();
     if (second !== lastTimerSecond) {
@@ -981,13 +946,7 @@ document.addEventListener("keydown", event => {
       if (key === "Enter") postAction("setup");
       break;
     case "attract":
-      if (key === "ArrowUp" || key === "ArrowDown") {
-        attractChoice = attractChoice ? 0 : 1;
-        audio.click();
-        render();
-      } else if (key === "Enter") {
-        postAction(attractChoice === 0 ? "start-gauntlet" : "show-level-select");
-      }
+      if (key === "Enter") postAction("show-level-select");
       break;
     case "initials":
       if (key === "ArrowUp" || key === "ArrowDown") {

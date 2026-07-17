@@ -69,8 +69,7 @@ def tick_mode(
             hardware_updates=result.hardware_updates,
             public_state={
                 "remainingSeconds": result.remaining_seconds,
-                "pointsCollected": result.points_collected,
-                "pointCell": result.point_cell,
+                "tilesTouched": result.tiles_touched,
                 "heating": result.ball_cell_heating,
             },
             won=result.survived,
@@ -83,7 +82,6 @@ def tick_mode(
         return ModeTick(
             hardware_updates=result.hardware_updates,
             public_state={
-                "remainingSeconds": result.remaining_seconds,
                 "targetCell": result.target_cell,
                 "targetsReached": result.targets_reached,
             },

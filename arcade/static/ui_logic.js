@@ -12,8 +12,9 @@
 
   function backIntent(state, overlayOpen = false, mode = null) {
     if (overlayOpen) return "close-overlay";
-    if (state === "initials" || state === "level_select") return "abandon";
-    if (state === "rules" && mode === "practice") return "level-select";
+    if (state === "initials") return "abandon";
+    if (state === "level_select") return null;
+    if (state === "rules" && mode !== "gauntlet") return "level-select";
     if (state === "leaderboard") return "continue";
     if (["setup", "hardware_fault", "attract"].includes(state)) return null;
     return "open-overlay";

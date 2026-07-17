@@ -18,7 +18,6 @@ from .stewart_tilt import StewartTiltService
 from .storage import ScoreStore
 
 STATIC_DIR = Path(__file__).with_name("static")
-EDITOR_DIR = Path(__file__).with_name("editor")
 DEFAULT_ARCADE_CONFIG = Path(__file__).with_name("config.json")
 
 
@@ -120,15 +119,6 @@ def create_app(
     def pixel_font():
         return send_from_directory(STATIC_DIR, "PressStart2P-Regular.ttf")
 
-    @app.get("/editor")
-    @app.get("/editor/")
-    def editor_index():
-        return send_from_directory(EDITOR_DIR, "index.html")
-
-    @app.get("/editor/<path:filename>")
-    def editor_asset(filename: str):
-        return send_from_directory(EDITOR_DIR, filename)
-
     @app.get("/api/state")
     def state():
         return jsonify({"ok": True, "game": engine.public_state()})
@@ -151,10 +141,6 @@ def create_app(
         try:
             if name == "setup":
                 engine.setup()
-            elif name == "start-gauntlet":
-                engine.start_gauntlet()
-            elif name == "set-initials":
-                engine.set_initials(str(body.get("initials", "")))
             elif name == "show-level-select":
                 engine.show_level_select()
             elif name == "select-level":

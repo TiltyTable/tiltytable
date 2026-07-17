@@ -135,7 +135,9 @@ class GameEngine:
                 self.state = GameState.HARDWARE_FAULT
             return
         with self.lock:
-            self.state = GameState.ATTRACT
+            self._reset_run()
+            self.mode = "level_select"
+            self.state = GameState.LEVEL_SELECT
 
     def start_gauntlet(self) -> None:
         with self.lock:
@@ -157,7 +159,7 @@ class GameEngine:
     def show_level_select(self) -> None:
         with self.lock:
             self._reset_run()
-            self.mode = "practice"
+            self.mode = "level_select"
             self.state = GameState.LEVEL_SELECT
 
     def select_practice_level(self, level_id: str) -> None:
@@ -184,7 +186,7 @@ class GameEngine:
             elif state == GameState.LEVEL_CLEAR:
                 self.state = GameState.LEVEL_SCORE
             elif state == GameState.LEVEL_SCORE:
-                if self.mode == "practice":
+                if self.mode != "gauntlet":
                     self.state = GameState.RUN_SUMMARY
                 elif self._advance_gauntlet():
                     self.current_restarts = 0
@@ -194,19 +196,19 @@ class GameEngine:
                     self.state = GameState.RUN_SUMMARY
             elif state == GameState.RUN_SUMMARY:
                 self.state = (
-                    GameState.LEVEL_SELECT
-                    if self.mode == "practice"
-                    else GameState.LEADERBOARD
+                    GameState.LEADERBOARD
+                    if self.mode == "gauntlet"
+                    else GameState.LEVEL_SELECT
                 )
             elif state == GameState.ABANDONED:
                 if self.mode == "gauntlet" and self.results:
                     self.state = GameState.RUN_SUMMARY
-                elif self.mode == "practice":
+                elif self.mode != "gauntlet":
                     self.state = GameState.LEVEL_SELECT
                 else:
-                    self.state = GameState.ATTRACT
+                    self.state = GameState.LEVEL_SELECT
             elif state == GameState.LEADERBOARD:
-                self.state = GameState.ATTRACT
+                self.show_level_select()
 
     def confirm_placement(self) -> None:
         with self.lock:
@@ -256,6 +258,7 @@ class GameEngine:
                 )
                 self._mode_state = {}
                 self._mode_score = 0
+                self._neutralize_survival_start_cell()
             else:
                 self._survival = None
                 self._mode_session = None
@@ -342,8 +345,6 @@ class GameEngine:
     def abandon(self) -> None:
         with self.lock:
             if self.state == GameState.LEVEL_SELECT:
-                self.mode = None
-                self.state = GameState.ATTRACT
                 return
             if self.state in (GameState.LEVEL_LOADING, GameState.RESTARTING):
                 self.hardware.cancel_load()
@@ -588,6 +589,7 @@ class GameEngine:
             "value": 0,
             "color": FLOOR_COLOR,
             "rgb": (0, 0, 0),
+            "leds_only": True,
         }
         self.hardware.apply_cell_updates([update])
         self._apply_map_cell_updates([update])
@@ -609,7 +611,7 @@ class GameEngine:
             remaining = (
                 max(0, math.ceil(self._remaining_seconds()))
                 if self.state == GameState.PLAYING
-                else (level.time_limit_seconds if level else 0)
+                else (math.ceil(level.countdown_seconds) if level else 0)
             )
             if (
                 self.state == GameState.PLAYING
@@ -654,7 +656,7 @@ class GameEngine:
             )
             gauntlet_cleared = len(self.results) if self.mode == "gauntlet" else 0
             live_mode_score = 0
-            if self.state == GameState.PLAYING and level:
+            if level and self.state in (GameState.PLAYING, GameState.SURVIVAL_FAIL):
                 if level.is_survival_lava:
                     live_mode_score = self._survival_visited * int(
                         level.points_per_tile or 0
@@ -672,7 +674,11 @@ class GameEngine:
                 "gauntletLevelsCleared": gauntlet_cleared,
                 "timer": {
                     "remainingSeconds": remaining,
-                    "running": self.state == GameState.PLAYING,
+                    "running": (
+                        self.state == GameState.PLAYING
+                        and level is not None
+                        and level.is_timed
+                    ),
                 },
                 "survival": survival_payload,
                 "modeState": self._mode_state,
@@ -746,10 +752,11 @@ class GameEngine:
                     "blinkUntilPlay": bool(cell.get("blinkUntilPlay")),
                 }
             )
+        has_finish = level.has_finish
         for cell in self.map_cells:
             if cell["key"] == level.start_cell:
                 cell["color"] = "#00FFFF"
-            elif cell["key"] == level.end_cell:
+            elif has_finish and cell["key"] == level.end_cell:
                 cell["color"] = "#680056"
         self._mode_session = None
         self._mode_state = None
@@ -757,20 +764,22 @@ class GameEngine:
         self._end_cell_since = None
         self.state = GameState.RESTARTING if restarting else GameState.LEVEL_LOADING
         try:
-            self.hardware.load_level(level.map_path, level.start_cell, level.end_cell)
+            self.hardware.load_level(
+                level.map_path,
+                level.start_cell,
+                level.end_cell if has_finish else None,
+            )
         except Exception as exc:
             self._fault(exc)
 
     def _remaining_seconds(self) -> float:
+        if not self.current_level.is_timed:
+            return 0.0
         if self.attempt_started_at is None:
-            limit = self.current_level.time_limit_seconds
-            if self.current_level.is_survival_lava:
-                return float(self.current_level.survival_seconds or limit)
+            limit = self.current_level.countdown_seconds
             return float(limit)
         elapsed = self.clock() - self.attempt_started_at
-        if self.current_level.is_survival_lava:
-            return float(self.current_level.survival_seconds or 0) - elapsed
-        return self.current_level.time_limit_seconds - elapsed
+        return self.current_level.countdown_seconds - elapsed
 
     def _finish_attempt_elapsed(self) -> int:
         if self.attempt_started_at is None:

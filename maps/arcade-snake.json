@@ -1,7 +1,7 @@
 {
   "A1": {
-    "value": -1,
-    "color": "#00FFFF"
+    "value": 0,
+    "color": "#567DBB"
   },
   "B1": {
     "value": 0,
@@ -260,9 +260,8 @@
     "color": "#567DBB"
   },
   "F6": {
-    "value": -1,
-    "color": "#001FFF",
-    "blinkUntilPlay": true
+    "value": 0,
+    "color": "#00FFFF"
   },
   "G6": {
     "value": 0,
@@ -574,6 +573,6 @@
   },
   "L12": {
     "value": 0,
-    "color": "#680056"
+    "color": "#567DBB"
   }
 }

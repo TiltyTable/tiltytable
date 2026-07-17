@@ -14,7 +14,7 @@ from arcade.level_packages import (
     package_from_manifest,
     validate_package,
 )
-from arcade.levels import MANIFEST_PATH, load_levels
+from arcade.levels import MANIFEST_PATH, load_levels, load_map
 from arcade.server import create_app
 from arcade.survival_lava import survival_score
 from arcade.target_hunt import (
@@ -34,6 +34,20 @@ def row_col() -> dict[str, tuple[int, int]]:
 
 
 class LevelPackageTests(unittest.TestCase):
+    def test_shipped_dynamic_modes_have_no_magenta_finish_or_timer_params(self) -> None:
+        catalog = load_levels()
+        dynamic = {level.id: level for level in catalog.levels if level.number >= 7}
+        self.assertEqual(
+            {level.mode for level in dynamic.values()},
+            {"survival_lava", "hex_fall", "target_hunt"},
+        )
+        for level in dynamic.values():
+            colors = {str(cell["color"]).upper() for cell in load_map(level).values()}
+            self.assertNotIn("#680056", colors)
+            self.assertNotIn("#FF00AA", colors)
+            self.assertNotIn("survivalSeconds", level.mode_params or {})
+            self.assertNotIn("startingSeconds", level.mode_params or {})
+
     def test_blank_package_is_valid_and_round_trips_compile(self) -> None:
         package = blank_package("target_hunt")
         self.assertEqual(validate_package(package), [])
@@ -50,10 +64,10 @@ class LevelPackageTests(unittest.TestCase):
     def test_schema_reports_missing_cells_and_mode_params(self) -> None:
         package = blank_package("hex_fall")
         package["cells"].pop("A1")
-        package["modeParams"].pop("survivalSeconds")
+        package["modeParams"].pop("pointsPerTile")
         errors = validate_package(package, raise_on_error=False)
         self.assertTrue(any("A1" in error for error in errors))
-        self.assertTrue(any("survivalSeconds" in error for error in errors))
+        self.assertTrue(any("pointsPerTile" in error for error in errors))
         with self.assertRaises(PackageValidationError):
             validate_package(package)
 
@@ -83,8 +97,8 @@ class LevelPackageTests(unittest.TestCase):
             install_package(package, manifest_path=manifest, maps_dir=root / "maps")
             catalog = load_levels(manifest)
             loaded = next(level for level in catalog.levels if level.id == "lava-package-test")
-            self.assertEqual(loaded.survival_seconds, 40.0)
-            self.assertEqual(loaded.mode_params["survivalSeconds"], 40.0)
+            self.assertIsNone(loaded.survival_seconds)
+            self.assertEqual(loaded.mode_params["dwellSeconds"], 1.5)
 
 
 class TargetHuntTests(unittest.TestCase):
@@ -113,66 +127,69 @@ class TargetHuntTests(unittest.TestCase):
             sum(1 for cell in session.cells.values() if cell["value"] != 0), 2
         )
 
-    def test_target_timer_loss(self) -> None:
-        params = TargetHuntParams(starting_seconds=1, seed=2)
+    def test_snake_loses_only_on_pit(self) -> None:
+        params = TargetHuntParams(seed=2)
         session = start_target_hunt(params, self.cells, self.row_col, "A1", 0.0)
-        result = tick_target_hunt(session, None, 1.1)
+        self.assertFalse(tick_target_hunt(session, None, 100.0).lost)
+        session.cells["A1"]["value"] = -1
+        result = tick_target_hunt(session, "A1", 100.1)
         self.assertTrue(result.lost)
 
-    def test_target_bonus_is_capped(self) -> None:
+    def test_target_scores_one_point_without_time_bonus(self) -> None:
         params = TargetHuntParams(
-            starting_seconds=29,
-            max_time_seconds=30,
-            target_bonus_seconds=5,
             target_confirm_seconds=0.1,
+            points_per_target=1,
             seed=4,
         )
         session = start_target_hunt(params, self.cells, self.row_col, "A1", 0.0)
         target = session.target_cell
         tick_target_hunt(session, target, 0.0)
         result = tick_target_hunt(session, target, 0.2)
-        self.assertEqual(result.remaining_seconds, 30)
+        self.assertEqual(result.score, 1)
 
-    def test_tiny_island_has_no_farmable_target(self) -> None:
+    def test_tiny_island_uses_the_remaining_reachable_food(self) -> None:
         for key in self.cells:
             self.cells[key]["value"] = 1
         self.cells["A1"]["value"] = 0
         self.cells["A2"]["value"] = 0
         session = start_target_hunt(
-            TargetHuntParams(minimum_reachable_cells=8),
+            TargetHuntParams(minimum_reachable_cells=2),
             self.cells,
             self.row_col,
             "A1",
             0.0,
         )
-        self.assertIsNone(session.target_cell)
-        self.assertTrue(tick_target_hunt(session, "A1", 0.1).lost)
+        self.assertEqual(session.target_cell, "A2")
+        self.assertFalse(tick_target_hunt(session, "A1", 0.1).lost)
 
 
 class HexFallTests(unittest.TestCase):
-    def test_touch_does_not_sink_trail(self) -> None:
+    def test_each_new_tile_scores_once_and_changes_color(self) -> None:
         mapping = row_col()
         params = HexFallParams(
-            survival_seconds=20,
             collapse_every_seconds=5,
             collapse_count=1,
+            points_per_tile=1,
         )
         session = start_hex_fall(params, 0.0)
         tick_hex_fall(session, params, "A1", 0.0, mapping)
         result = tick_hex_fall(session, params, "B1", 1.0, mapping)
-        self.assertEqual(result.hardware_updates, [])
+        self.assertEqual(result.tiles_touched, 2)
+        self.assertEqual(result.score, 2)
+        self.assertTrue(any(update["key"] == "B1" for update in result.hardware_updates))
         self.assertFalse(result.ball_cell_heating)
 
     def test_periodic_collapse_is_seeded(self) -> None:
         mapping = row_col()
         params = HexFallParams(
-            survival_seconds=20,
             collapse_every_seconds=1,
             collapse_count=2,
             seed=11,
         )
         first = start_hex_fall(params, 0.0)
         second = start_hex_fall(params, 0.0)
+        tick_hex_fall(first, params, "A1", 0.0, mapping)
+        tick_hex_fall(second, params, "A1", 0.0, mapping)
         a = tick_hex_fall(first, params, "A1", 1.1, mapping).hardware_updates
         b = tick_hex_fall(second, params, "A1", 1.1, mapping).hardware_updates
         self.assertEqual([u["key"] for u in a], [u["key"] for u in b])
@@ -190,26 +207,22 @@ class HexFallTests(unittest.TestCase):
 
         self.assertEqual(_connected_from("A1", active, mapping), active)
 
-    def test_points_reward_movement_and_time_scores(self) -> None:
+    def test_score_only_rewards_unique_tiles(self) -> None:
         mapping = row_col()
         params = HexFallParams(
-            survival_seconds=20,
             collapse_every_seconds=5,
             collapse_count=1,
-            point_confirm_seconds=0.1,
-            point_value=100,
-            survival_points_per_second=10,
+            points_per_tile=1,
             seed=3,
         )
         session = start_hex_fall(params, 0.0)
         first = tick_hex_fall(session, params, "A1", 0.0, mapping)
-        self.assertIsNotNone(first.point_cell)
-        tick_hex_fall(session, params, first.point_cell, 0.1, mapping)
-        collected = tick_hex_fall(session, params, first.point_cell, 0.25, mapping)
-        self.assertEqual(collected.points_collected, 1)
-        self.assertGreaterEqual(collected.score, 100)
+        self.assertEqual(first.score, 1)
+        collected = tick_hex_fall(session, params, "B1", 0.25, mapping)
+        self.assertEqual(collected.tiles_touched, 2)
+        self.assertEqual(collected.score, 2)
         later = tick_hex_fall(session, params, "A1", 2.1, mapping)
-        self.assertGreaterEqual(later.score, 120)
+        self.assertEqual(later.score, 2)
 
 
 class LavaScoreTests(unittest.TestCase):

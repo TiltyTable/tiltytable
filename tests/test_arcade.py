@@ -117,9 +117,9 @@ class ArcadeSurvivalTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def begin_level_seven(self) -> None:
+    def begin_lava_survival(self) -> None:
         self.engine.show_level_select()
-        self.engine.select_practice_level("level-7")
+        self.engine.select_practice_level("lava-survival")
         self.engine.continue_action()
         self.engine.tick()
         self.engine.confirm_placement()
@@ -127,7 +127,7 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.assertEqual(self.engine.state, GameState.PLAYING)
 
     def test_survival_win_after_countdown(self) -> None:
-        self.begin_level_seven()
+        self.begin_lava_survival()
         self.ball.set_cell(None)
         for _ in range(40):
             self.clock.advance(1.0)
@@ -138,7 +138,7 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.assertEqual(result.score, 0)
 
     def test_survival_lava_fail_restarts(self) -> None:
-        self.begin_level_seven()
+        self.begin_lava_survival()
         for _ in range(60):
             self.clock.advance(0.12)
             self.engine.tick()
@@ -149,8 +149,53 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.engine.tick()
         self.assertEqual(self.engine.state, GameState.PLACEMENT)
 
+    def begin_dynamic_level(self, level_id: str) -> None:
+        self.engine.show_level_select()
+        self.engine.select_practice_level(level_id)
+        self.engine.continue_action()
+        self.engine.tick()
+        self.ball.set_cell("F6")
+        self.engine.confirm_placement()
+        self.assertEqual(self.engine.state, GameState.PLAYING)
+
+    def test_hex_scores_touched_tiles_and_keeps_timer(self) -> None:
+        self.begin_dynamic_level("hex-a-fall")
+        self.clock.advance(0.11)
+        self.engine.tick()
+        state = self.engine.public_state()
+        self.assertTrue(state["timer"]["running"])
+        self.assertEqual(state["timer"]["remainingSeconds"], 45)
+        self.assertEqual(state["modeState"]["tilesTouched"], 1)
+        self.assertEqual(state["score"], 1)
+        self.assertNotIn("#680056", {cell["color"] for cell in state["mapCells"]})
+
+    def test_hex_survives_when_timer_expires(self) -> None:
+        self.begin_dynamic_level("hex-a-fall")
+        self.ball.set_cell(None)
+        self.clock.advance(45.0)
+        self.engine.tick()
+        self.assertEqual(self.engine.state, GameState.LEVEL_CLEAR)
+        self.assertEqual(self.engine.last_level_result.score, 0)
+
+    def test_snake_scores_food_and_has_no_timer(self) -> None:
+        self.begin_dynamic_level("snake")
+        self.clock.advance(0.11)
+        self.engine.tick()
+        target = self.engine.public_state()["modeState"]["targetCell"]
+        self.assertIsNotNone(target)
+        self.ball.set_cell(target)
+        self.clock.advance(0.11)
+        self.engine.tick()
+        self.clock.advance(0.21)
+        self.engine.tick()
+        state = self.engine.public_state()
+        self.assertFalse(state["timer"]["running"])
+        self.assertEqual(state["score"], 1)
+        self.assertEqual(sum(cell["value"] == 1 for cell in state["mapCells"]), 1)
+        self.assertEqual(sum(cell["value"] == -1 for cell in state["mapCells"]), 1)
+
     def test_new_lava_cell_is_selected_on_next_tracking_frame(self) -> None:
-        self.begin_level_seven()
+        self.begin_lava_survival()
         self.engine.tick()
         self.hardware.updates.clear()
 
@@ -175,21 +220,15 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.assertEqual(state["ball"]["confidence"], 1.0)
         self.assertFalse(state["integrations"]["tracking"]["enabled"])
 
-    def test_gauntlet_ball_tracking_does_not_emit_survival_red(self) -> None:
-        self.engine.start_gauntlet()
-        self.engine.set_initials("AAA")
-        self.engine.continue_action()
-        self.engine.tick()
-        self.engine.confirm_placement()
-        self.ball.set_cell("F6")
-        for _ in range(40):
-            self.clock.advance(0.15)
-            self.engine.tick()
-        red_updates = [
-            u for u in self.hardware.updates if u.get("color") == "#FF0000"
-        ]
-        self.assertEqual(red_updates, [])
-        self.assertEqual(self.engine.state, GameState.PLAYING)
+    def test_catalog_contains_only_three_dynamic_modes(self) -> None:
+        self.assertEqual(
+            [level.id for level in self.catalog.levels],
+            ["lava-survival", "hex-a-fall", "snake"],
+        )
+        self.assertEqual(
+            {level.mode for level in self.catalog.levels},
+            {"survival_lava", "hex_fall", "target_hunt"},
+        )
 
 
 class IntegratedTrackingTests(unittest.TestCase):
@@ -211,43 +250,23 @@ class IntegratedTrackingTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def begin_level_one_placement(self) -> None:
-        self.engine.start_gauntlet()
-        self.engine.set_initials("AAA")
+    def begin_lava_placement(self) -> None:
+        self.engine.show_level_select()
+        self.engine.select_practice_level("lava-survival")
         self.engine.continue_action()
         self.engine.tick()
         self.assertEqual(self.engine.state, GameState.PLACEMENT)
 
     def test_placement_reports_tracked_ball_on_start(self) -> None:
-        self.begin_level_one_placement()
+        self.begin_lava_placement()
         self.ball.set_cell(self.engine.current_level.start_cell)
         state = self.engine.public_state()
         self.assertTrue(state["placementReady"])
         self.assertTrue(state["integrations"]["tracking"]["enabled"])
 
-    def test_reach_end_completes_after_short_stable_dwell(self) -> None:
-        self.begin_level_one_placement()
-        self.engine.confirm_placement()
-        self.ball.set_cell(self.engine.current_level.end_cell)
-        self.engine.tick()
-        self.assertEqual(self.engine.state, GameState.PLAYING)
-        self.clock.advance(0.26)
-        self.engine.tick()
-        self.assertEqual(self.engine.state, GameState.LEVEL_CLEAR)
-        finish = self.engine.current_level.end_cell
-        finish_updates = [
-            update for update in self.hardware.updates if update["key"] == finish
-        ]
-        self.assertEqual(finish_updates[-1]["value"], -1)
-        self.assertEqual(finish_updates[-1]["color"], "#FF00AA")
-        finish_state = next(
-            cell for cell in self.engine.map_cells if cell["key"] == finish
-        )
-        self.assertTrue(finish_state["sunk"])
-
     def test_public_state_does_not_advance_game_state(self) -> None:
-        self.engine.start_gauntlet()
-        self.engine.set_initials("AAA")
+        self.engine.show_level_select()
+        self.engine.select_practice_level("lava-survival")
         self.engine.continue_action()
         self.assertEqual(self.engine.state, GameState.LEVEL_LOADING)
         self.engine.public_state()
@@ -268,7 +287,7 @@ class IntegratedTrackingTests(unittest.TestCase):
                 )
 
         self.engine.ball_adapter = TimedBallAdapter()
-        self.begin_level_one_placement()
+        self.begin_lava_placement()
         self.engine.confirm_placement()
         self.engine.tick()
         latency = self.engine.public_state()["ball"]["latency"]
@@ -346,97 +365,29 @@ class ArcadeEngineTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def begin_level_one(self) -> None:
-        self.engine.start_gauntlet()
-        self.engine.set_initials("AAA")
+    def begin_lava(self) -> None:
+        self.engine.show_level_select()
+        self.engine.select_practice_level("lava-survival")
         self.engine.continue_action()
         self.engine.tick()
         self.assertEqual(self.engine.state, GameState.PLACEMENT)
         self.engine.confirm_placement()
         self.assertEqual(self.engine.state, GameState.PLAYING)
 
-    def test_level_score_uses_time_and_restart_formula(self) -> None:
-        self.begin_level_one()
-        self.clock.advance(10)
-        self.engine.complete_level()
-        result = self.engine.last_level_result
-        self.assertIsNotNone(result)
-        self.assertEqual(result.remaining_seconds, 35)
-        self.assertEqual(result.score, 1350)
+    def test_setup_opens_level_selector(self) -> None:
+        self.assertEqual(self.engine.state, GameState.LEVEL_SELECT)
 
-    def test_timeout_allows_unlimited_retry_with_penalty(self) -> None:
-        self.begin_level_one()
-        self.clock.advance(46)
-        self.engine.tick()
-        self.assertEqual(self.engine.state, GameState.TIME_UP)
-        self.assertEqual(self.engine.current_restarts, 1)
-        self.engine.continue_action()
-        self.engine.tick()
-        self.engine.confirm_placement()
-        self.clock.advance(10)
-        self.engine.complete_level()
-        self.assertEqual(self.engine.last_level_result.score, 1250)
-
-    def test_partial_gauntlet_creates_ranked_entry(self) -> None:
-        self.begin_level_one()
-        self.clock.advance(20)
-        self.engine.complete_level()
-        self.engine.continue_action()  # clear -> score
-        self.engine.continue_action()  # score -> level 2 rules
-        self.engine.abandon()
-        self.assertEqual(self.engine.state, GameState.ABANDONED)
-        self.engine.continue_action()
-        self.assertEqual(self.engine.state, GameState.RUN_SUMMARY)
-        rows = self.store.all()
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["initials"], "AAA")
-        self.assertEqual(rows[0]["levelsCleared"], 1)
-        self.assertFalse(rows[0]["complete"])
-
-    def test_full_two_level_gauntlet_saves_complete_score(self) -> None:
-        self.engine.start_gauntlet()
-        self.engine.set_initials("WIN")
-        for level_number in (1, 2):
-            self.engine.continue_action()  # rules -> loading
-            self.engine.tick()
-            self.engine.confirm_placement()
-            self.clock.advance(5)
-            self.engine.complete_level()
-            self.engine.continue_action()  # clear -> score
-            self.engine.continue_action()  # next rules or summary
-            if level_number < 2:
-                self.assertEqual(self.engine.state, GameState.RULES)
-        self.assertEqual(self.engine.state, GameState.RUN_SUMMARY)
-        rows = self.store.all()
-        self.assertEqual(len(rows), 1)
-        self.assertEqual(rows[0]["levelsCleared"], 2)
-        self.assertTrue(rows[0]["complete"])
-        self.assertEqual(rows[0]["gauntletLevelCount"], 2)
-
-    def test_practice_never_writes_score(self) -> None:
-        self.engine.show_level_select()
-        self.engine.select_practice_level("level-2")
-        self.engine.continue_action()
-        self.engine.tick()
-        self.engine.confirm_placement()
-        self.clock.advance(5)
-        self.engine.complete_level()
-        self.engine.continue_action()
-        self.engine.continue_action()
-        self.assertEqual(self.engine.state, GameState.RUN_SUMMARY)
-        self.assertEqual(self.store.all(), [])
-
-    def test_abandon_level_select_returns_to_title(self) -> None:
+    def test_abandon_level_select_stays_on_selector(self) -> None:
         self.engine.show_level_select()
         self.engine.abandon()
-        self.assertEqual(self.engine.state, GameState.ATTRACT)
+        self.assertEqual(self.engine.state, GameState.LEVEL_SELECT)
 
     def test_abandon_during_level_loading_clears_hardware_busy(self) -> None:
         hardware = LoadingHardware()
         engine = GameEngine(self.catalog, hardware, self.store, self.clock)
         engine.setup()
-        engine.start_gauntlet()
-        engine.set_initials("AAA")
+        engine.show_level_select()
+        engine.select_practice_level("lava-survival")
         engine.continue_action()
         self.assertEqual(engine.state, GameState.LEVEL_LOADING)
         self.assertTrue(hardware.snapshot()["busy"])
@@ -445,14 +396,14 @@ class ArcadeEngineTests(unittest.TestCase):
         self.assertFalse(hardware.snapshot()["busy"])
 
     def test_manual_restart_exposes_restarting_state(self) -> None:
-        self.begin_level_one()
+        self.begin_lava()
         self.engine.restart()
         self.assertEqual(self.engine.state, GameState.RESTARTING)
         self.engine.tick()
         self.assertEqual(self.engine.state, GameState.PLACEMENT)
 
     def test_public_state_survives_repeated_refreshes(self) -> None:
-        self.begin_level_one()
+        self.begin_lava()
         first = self.engine.public_state()
         second = self.engine.public_state()
         self.assertEqual(first["state"], "playing")
@@ -638,8 +589,8 @@ class ArcadeApiTests(unittest.TestCase):
             )
             engine = app.config["GAME_ENGINE"]
             engine.setup()
-            engine.start_gauntlet()
-            engine.set_initials("AAA")
+            engine.show_level_select()
+            engine.select_practice_level("lava-survival")
             engine.continue_action()
             engine.tick()
             self.assertTrue(engine.tilt_requested())
@@ -655,12 +606,12 @@ class ArcadeApiTests(unittest.TestCase):
             self.assertEqual(state["integrations"]["tilt"]["navigationDown"], 4)
             client.post("/api/action", json={"action": "confirm-placement"})
             self.assertTrue(tilt.active)
-            client.post("/api/action", json={"action": "complete"})
+            client.post("/api/action", json={"action": "abandon"})
             self.assertFalse(tilt.active)
             app.config["ARCADE_SHUTDOWN"]()
             self.assertFalse(tilt.started)
 
-    def test_full_setup_and_initials_api(self) -> None:
+    def test_setup_opens_game_selector(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             app = create_app(
                 hardware=SimulatedTableHardware(),
@@ -670,15 +621,16 @@ class ArcadeApiTests(unittest.TestCase):
             client = app.test_client()
             response = client.post("/api/action", json={"action": "setup"})
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get_json()["game"]["state"], "attract")
-            client.post("/api/action", json={"action": "start-gauntlet"})
+            self.assertEqual(response.get_json()["game"]["state"], "level_select")
             response = client.post(
-                "/api/action", json={"action": "set-initials", "initials": "abc"}
+                "/api/action",
+                json={"action": "select-level", "levelId": "hex-a-fall"},
             )
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get_json()["game"]["initials"], "ABC")
+            self.assertEqual(response.get_json()["game"]["level"]["id"], "hex-a-fall")
+            self.assertEqual(response.get_json()["game"]["state"], "rules")
 
-    def test_invalid_initials_are_rejected(self) -> None:
+    def test_campaign_actions_are_removed(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             app = create_app(
                 hardware=SimulatedTableHardware(),
@@ -686,10 +638,8 @@ class ArcadeApiTests(unittest.TestCase):
                 start_ticker=False,
             )
             client = app.test_client()
-            client.post("/api/action", json={"action": "setup"})
-            client.post("/api/action", json={"action": "start-gauntlet"})
             response = client.post(
-                "/api/action", json={"action": "set-initials", "initials": "AB1"}
+                "/api/action", json={"action": "start-gauntlet"}
             )
             self.assertEqual(response.status_code, 400)
 

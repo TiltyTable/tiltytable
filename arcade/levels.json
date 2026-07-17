@@ -1,147 +1,86 @@
 {
-  "gauntletLevelIds": ["level-1", "level-2"],
-  "lore": {
-    "protagonist": "Tilty",
-    "goal": "Escape the dungeon and reunite with Tiltelle",
-    "ken": "Ken Jennings — dungeon advisor; explains mechanics in a calm game-show host voice",
-    "troll": "The Troll — antagonist on the right; taunts Tilty, especially when time runs low"
-  },
+  "gauntletLevelIds": [],
+  "lore": {},
   "levels": [
     {
-      "id": "level-1",
+      "id": "lava-survival",
       "number": 1,
-      "title": "First Tilt",
-      "subtitle": "Learn to move the table",
-      "map": "maps/arcade-level-1.json",
-      "timeLimitSeconds": 45,
-      "startCell": "A1",
-      "endCell": "L12",
-      "feature": "No painted path — just gray stone, cyan start, magenta freedom, and one blue tile that rises when you play.",
-      "rules": [
-        "Roll the ball onto cyan — that's your cell door.",
-        "Tilt the table to reach magenta across the open floor.",
-        "When play starts, the blinking blue tile rises so you can roll over it."
-      ],
-      "kenLine": "Category: TABLE CONTROL. Gray is open floor — the ball rolls anywhere flat. Tilt to magenta.",
-      "trollLine": "Can't even tilt a table? Tiltelle's not impressed."
-    },
-    {
-      "id": "level-2",
-      "number": 2,
-      "title": "Dungeon Digest",
-      "subtitle": "Everything the Troll hid in the walls",
-      "map": "maps/arcade-level-2.json",
-      "timeLimitSeconds": 90,
-      "startCell": "A1",
-      "endCell": "L12",
-      "feature": "Serpentine ochre path through green walls — plus pits, blue bonuses, rising gates, and traps that blink red before they drop.",
-      "rules": [
-        "Stay on the ochre path — green tiles are raised walls.",
-        "Red pits are recessed — avoid them or your run restarts.",
-        "Blue tiles are bonus markers; green gates cycle up and down.",
-        "Blinking red path tiles will recess — roll past before they drop.",
-        "Clear both gauntlet chambers to earn your name on the board."
-      ],
-      "kenLine": "Final exam: ochre lane only. Green blocks, red drops. No shortcuts off-path.",
-      "trollLine": "I packed every trick into one chamber. Enjoy the pit choir!"
-    },
-    {
-      "id": "level-3",
-      "number": 3,
-      "title": "Pit of Regret",
-      "subtitle": "One wrong tilt and you fall",
-      "map": "maps/arcade-level-3.json",
-      "timeLimitSeconds": 90,
-      "startCell": "A1",
-      "endCell": "L12",
-      "feature": "Red pits yawn open beneath the path. Practice your pit avoidance without the moving parts.",
-      "rules": [
-        "Red pits are recessed — the ball drops and your run restarts.",
-        "Feather the table; don't rush past a pit lip.",
-        "Practice mode only — sharpen your reflexes here."
-      ],
-      "kenLine": "Red means recessed hazard — sunk below the ball. Stay on ochre; the lava rim is real.",
-      "trollLine": "Tiltelle can't hear you down there, Tilty. Neither can Ken!"
-    },
-    {
-      "id": "level-4",
-      "number": 4,
-      "title": "Trapdoor Tango",
-      "subtitle": "The floor won't stay still",
-      "map": "maps/arcade-level-4.json",
-      "timeLimitSeconds": 80,
-      "startCell": "A1",
-      "endCell": "L12",
-      "feature": "Green bridge tiles slam down on a timer. Cross while they're flush or wait for the next beat.",
-      "rules": [
-        "Watch green gates — they alternate between wall and open path.",
-        "Time your roll through the opening; hesitation invites the Troll's laughter.",
-        "Dynamic tiles keep moving until you reach magenta."
-      ],
-      "kenLine": "Timing puzzle! Green gates cycle every few seconds — roll on the ochre beat.",
-      "trollLine": "Dance, little prisoner! The floor drops when I say so."
-    },
-    {
-      "id": "level-5",
-      "number": 5,
-      "title": "Ken's Bonus Round",
-      "subtitle": "Daily Double on the table",
-      "map": "maps/arcade-level-5.json",
-      "timeLimitSeconds": 70,
-      "startCell": "A1",
-      "endCell": "L12",
-      "feature": "Crystal spurs branch off the ochre spine — peel away for bonus tiles, then rejoin the escape route.",
-      "rules": [
-        "Follow the ochre column; when a spur opens, that's your optional detour.",
-        "Blue tiles are bonus markers — roll through them, then back to ochre.",
-        "You still must reach magenta; crystals won't save a tardy escape.",
-        "Practice mode only beyond the gauntlet — show off here."
-      ],
-      "kenLine": "See that blue spur off the ochre path? Optional detour for points — spine first, sparkle second.",
-      "trollLine": "Detour all you want, Tilty. Every second on a crystal is a second Tiltelle waits."
-    },
-    {
-      "id": "level-6",
-      "number": 6,
-      "title": "Tiltelle's Threshold",
-      "subtitle": "One last door home",
-      "map": "maps/arcade-level-6.json",
-      "timeLimitSeconds": 100,
-      "startCell": "A1",
-      "endCell": "L12",
-      "feature": "Walls, pits, and blue hope collide at the final gate. Tiltelle waits just past magenta.",
-      "rules": [
-        "Everything you learned returns: walls, pits, bonus tiles.",
-        "The serpentine climb is long — conserve your nerves.",
-        "Reach magenta and the dungeon loses its grip on Tilty forever."
-      ],
-      "kenLine": "Final exam: walls, pits, and blue bonuses. Gray shortcuts don't exist — stay on ochre.",
-      "trollLine": "This is where your story ends, Tilty. I'll take good care of Tiltelle."
-    },
-    {
-      "id": "level-7",
-      "number": 7,
-      "title": "Floor is Lava",
-      "subtitle": "Outrun the spreading heat",
+      "title": "Lava Survival",
+      "subtitle": "Keep moving",
       "mode": "survival_lava",
-      "map": "maps/arcade-level-7.json",
-      "timeLimitSeconds": 60,
-      "survivalSeconds": 40,
-      "dwellSeconds": 1.5,
-      "warnSeconds": 2.0,
-      "pitConfirmSeconds": 0.5,
-      "pointsPerTile": 25,
+      "map": "maps/arcade-lava-survival.json",
       "startCell": "A1",
       "endCell": "L12",
-      "feature": "Every tile starts flat gray stone. Tiles you touch heat up ochre, blink red, then sink into lava behind you — keep rolling until the survival clock hits zero.",
+      "feature": "Touched tiles blink red, then fall away.",
       "rules": [
-        "All tiles begin as open floor — roll anywhere.",
-        "Tiles you touch turn ochre, then blink red, then sink — even after you leave.",
-        "Survive until the countdown reaches zero — no magenta finish line.",
-        "Each new tile you touch adds bonus points; more movement means more risk."
+        "Touch new tiles for points.",
+        "Move before a blinking tile falls.",
+        "The run ends when the ball falls into a pit."
       ],
-      "kenLine": "Tiles you touch heat up and fall behind you — keep moving!",
-      "trollLine": "Every step leaves a trap, Tilty. The floor eats your path!"
+      "kenLine": "Keep moving and touch new tiles.",
+      "trollLine": "Avoid the pits.",
+      "modeParams": {
+        "survivalSeconds": 40,
+        "dwellSeconds": 1.5,
+        "warnSeconds": 2.0,
+        "pitConfirmSeconds": 0.5,
+        "pointsPerTile": 25
+      }
+    },
+    {
+      "id": "hex-a-fall",
+      "number": 2,
+      "title": "Hex-A-Fall",
+      "subtitle": "Claim the floor before it disappears",
+      "mode": "hex_fall",
+      "map": "maps/arcade-hex-a-fall.json",
+      "startCell": "F6",
+      "endCell": "L12",
+      "feature": "Random tiles blink red, then fall away.",
+      "rules": [
+        "Touch each floor tile once for a point.",
+        "Move away from blinking red tiles.",
+        "The run ends when the ball falls into a pit."
+      ],
+      "kenLine": "Touch as many new tiles as possible.",
+      "trollLine": "Avoid the pits.",
+      "modeParams": {
+        "survivalSeconds": 45,
+        "pitConfirmSeconds": 0.5,
+        "collapseEverySeconds": 2.5,
+        "collapseCount": 1,
+        "collapseWarnSeconds": 1.2,
+        "pointsPerTile": 1
+      },
+      "seed": 8
+    },
+    {
+      "id": "snake",
+      "number": 3,
+      "title": "Snake",
+      "subtitle": "Chase the flashing food",
+      "mode": "target_hunt",
+      "map": "maps/arcade-snake.json",
+      "startCell": "F6",
+      "endCell": "L12",
+      "feature": "Each food pickup raises a wall and drops a floor tile.",
+      "rules": [
+        "Reach the flashing blue food for one point.",
+        "Each point adds one wall and one pit.",
+        "The run ends when the ball falls into a pit."
+      ],
+      "kenLine": "Chase the flashing blue food.",
+      "trollLine": "Avoid the pits.",
+      "modeParams": {
+        "targetConfirmSeconds": 0.2,
+        "pointsPerTarget": 1,
+        "spawnPitCount": 1,
+        "spawnWallCount": 1,
+        "minimumReachableCells": 2,
+        "minimumTargetDistance": 3,
+        "blinkSeconds": 0.25
+      },
+      "seed": 9
     }
   ]
 }

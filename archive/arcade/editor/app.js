@@ -14,23 +14,23 @@
     survival_lava: {
       label: "Lava Survival",
       short: "Keep moving while every touched tile heats, warns, then sinks.",
-      steps: ["Touching starts a tile timer.", "Red flashing means leave now.", "Survive until time reaches zero."],
-      defaults: { survivalSeconds: 40, dwellSeconds: 1.2, warnSeconds: 1.4, pointsPerTile: 25, pitConfirmSeconds: 0.5 },
-      fields: [["survivalSeconds", "Survive for"], ["dwellSeconds", "Safe after touch"], ["warnSeconds", "Red warning"], ["pointsPerTile", "Points per new tile"]],
+      steps: ["Touching starts a tile timer.", "Red flashing means leave now.", "The run ends when the ball falls into a pit."],
+      defaults: { dwellSeconds: 1.2, warnSeconds: 1.4, pointsPerTile: 1, pitConfirmSeconds: 0.5 },
+      fields: [["dwellSeconds", "Safe after touch"], ["warnSeconds", "Red warning"], ["pointsPerTile", "Points per new tile"]],
     },
     hex_fall: {
       label: "Hex-A-Fall",
-      short: "Random floor tiles disappear while flashing points reward movement.",
-      steps: ["Collect flashing blue points.", "Random tiles flash, then collapse.", "Score from survival time and points."],
-      defaults: { survivalSeconds: 45, pitConfirmSeconds: 0.5, collapseEverySeconds: 3, collapseCount: 1, collapseWarnSeconds: 1, pointValue: 100, survivalPointsPerSecond: 10, pointConfirmSeconds: 0.15 },
-      fields: [["survivalSeconds", "Survive for"], ["collapseEverySeconds", "Collapse every"], ["collapseCount", "Tiles per collapse"], ["collapseWarnSeconds", "Flash before falling"], ["pointValue", "Points per pickup"], ["survivalPointsPerSecond", "Points per second"]],
+      short: "Touch new floor tiles for points while random cells blink and fall.",
+      steps: ["Each new floor tile scores once.", "Random tiles flash, then collapse.", "The run ends when the ball falls into a pit."],
+      defaults: { pitConfirmSeconds: 0.5, collapseEverySeconds: 3, collapseCount: 1, collapseWarnSeconds: 1, pointsPerTile: 1 },
+      fields: [["collapseEverySeconds", "Collapse every"], ["collapseCount", "Tiles per collapse"], ["collapseWarnSeconds", "Flash before falling"], ["pointsPerTile", "Points per new tile"]],
     },
     target_hunt: {
       label: "Snake",
-      short: "Reach flashing targets for time; every success adds a permanent wall and pit.",
-      steps: ["Chase a distant flashing blue target.", "Time rewards are capped.", "The run ends when no meaningful route remains."],
-      defaults: { startingSeconds: 20, targetBonusSeconds: 5, targetConfirmSeconds: 0.2, pointsPerTarget: 100, spawnPitCount: 1, spawnWallCount: 1, maxTimeSeconds: 30, minimumReachableCells: 8, minimumTargetDistance: 4 },
-      fields: [["startingSeconds", "Starting time"], ["targetBonusSeconds", "Time per target"], ["maxTimeSeconds", "Maximum time"], ["pointsPerTarget", "Points per target"], ["spawnPitCount", "New pits"], ["spawnWallCount", "New walls"], ["minimumReachableCells", "Minimum floor area"], ["minimumTargetDistance", "Minimum target distance"]],
+      short: "Reach flashing food; every point raises one wall and drops one floor.",
+      steps: ["Chase the flashing blue food.", "Each pickup adds one wall and one pit.", "The run ends when the ball falls into a pit."],
+      defaults: { targetConfirmSeconds: 0.2, pointsPerTarget: 1, spawnPitCount: 1, spawnWallCount: 1, minimumReachableCells: 2, minimumTargetDistance: 3, blinkSeconds: 0.25 },
+      fields: [["pointsPerTarget", "Points per food"], ["spawnPitCount", "New pits"], ["spawnWallCount", "New walls"], ["minimumReachableCells", "Minimum floor area"], ["minimumTargetDistance", "Minimum food distance"], ["blinkSeconds", "Food blink speed"]],
     },
   };
 
@@ -40,7 +40,7 @@
       version: 1, seed: 1,
       meta: {
         id: "new-level", number: 1, title: "New Chamber", subtitle: "A physical table challenge",
-        timeLimitSeconds: 60, startCell: "A1", endCell: "L12",
+        startCell: "A1", endCell: "L12",
         feature: "Describe what changes on the table.", rules: ["Guide the ball through the chamber."],
         kenLine: "Watch the table and keep the ball moving.", trollLine: "Let's see how long you last.",
       },
@@ -183,12 +183,11 @@
     if (ticker) clearInterval(ticker); ticker = null;
     sim = {
       playing: false, ended: false, won: false, time: 0, score: 0,
-      remaining: Number(level.modeParams.survivalSeconds || level.modeParams.startingSeconds || 40),
+      remaining: null,
       cells: clone(level.cells), ball: level.meta.startCell, target: null, touched: {}, pendingCollapse: {},
       rng: seededRandom(level.seed), nextCollapse: Number(level.modeParams.collapseEverySeconds || 0),
     };
     if (level.mode === "target_hunt") chooseTarget();
-    if (level.mode === "hex_fall") chooseHexPoint();
     $("#playBtn").textContent = "Start test"; $("#gameMessage").textContent = "Press Start test, then use the arrow keys.";
     updateHud(); renderBoard();
   }
@@ -203,11 +202,6 @@
       sim.target = null;
       return;
     }
-    sim.target = options.length ? options[Math.floor(sim.rng() * options.length)] : null;
-  }
-  function chooseHexPoint() {
-    const options = [...reachable(sim.ball, sim.cells)]
-      .filter((key) => key !== sim.ball && sim.cells[key].value === 0);
     sim.target = options.length ? options[Math.floor(sim.rng() * options.length)] : null;
   }
   function placeObstacle(value, color) {
@@ -238,16 +232,13 @@
     return null;
   }
   function hitTarget() {
-    sim.score += Number(level.modeParams.pointsPerTarget || 100);
-    sim.remaining = Math.min(
-      Number(level.modeParams.maxTimeSeconds || 30),
-      sim.remaining + Number(level.modeParams.targetBonusSeconds || 5),
-    );
+    sim.score += Number(level.modeParams.pointsPerTarget || 1);
     for (let i = 0; i < Number(level.modeParams.spawnPitCount || 1); i++) placeObstacle(-1, "#FF0000");
     for (let i = 0; i < Number(level.modeParams.spawnWallCount || 1); i++) placeObstacle(1, "#4DFF00");
     chooseTarget();
-    if (!sim.target) endTest(false, "No distant reachable target remains. The snake is trapped.");
-    else $("#gameMessage").textContent = `Target reached. ${sim.remaining.toFixed(1)} seconds left.`;
+    $("#gameMessage").textContent = sim.target
+      ? "Food collected. One wall rose and one floor fell."
+      : "Food collected. No reachable food remains.";
   }
   function endTest(won, message) {
     sim.playing = false; sim.ended = true; sim.won = won;
@@ -261,21 +252,16 @@
     sim.ball = move.key;
     if (sim.cells[sim.ball].value === -1) { renderBoard(); endTest(false, "The ball fell into a pit."); return; }
     if (level.mode === "target_hunt" && sim.ball === sim.target) hitTarget();
-    if (level.mode === "hex_fall" && sim.ball === sim.target) {
-      sim.hits += 1;
-      chooseHexPoint();
-      $("#gameMessage").textContent = "Point collected. Keep moving.";
-    }
-    if (level.mode === "survival_lava" && !sim.touched[sim.ball]) {
+    if (["survival_lava", "hex_fall"].includes(level.mode) && !sim.touched[sim.ball]) {
       sim.touched[sim.ball] = sim.time;
       sim.cells[sim.ball].color = "#F49400";
-      sim.score += Number(level.modeParams.pointsPerTile || 25);
+      sim.score += Number(level.modeParams.pointsPerTile || 1);
     }
     renderBoard(); updateHud();
   }
   function tick() {
     if (!sim.playing) return;
-    sim.time += .1; sim.remaining = Math.max(0, sim.remaining - .1);
+    sim.time += .1;
     if (level.mode === "survival_lava") {
       const grace = Number(level.modeParams.dwellSeconds ?? 1);
       const warning = Number(level.modeParams.warnSeconds || 1);
@@ -304,10 +290,7 @@
         sim.nextCollapse += Number(level.modeParams.collapseEverySeconds || 3);
       }
       if (sim.cells[sim.ball].value === -1) { renderBoard(); endTest(false, "The floor disappeared under the ball."); return; }
-      sim.score = Math.floor(sim.time) * Number(level.modeParams.survivalPointsPerSecond || 10)
-        + sim.hits * Number(level.modeParams.pointValue || 100);
     }
-    if (sim.remaining <= 0) endTest(level.mode !== "target_hunt", level.mode === "target_hunt" ? "Time ran out." : "You survived.");
     renderBoard(); updateHud();
   }
   function startTest() {
@@ -320,7 +303,7 @@
   }
   function updateHud() {
     $("#hudMode").textContent = MODES[level.mode].label.toUpperCase();
-    $("#hudTime").textContent = sim ? sim.remaining.toFixed(1) : "—";
+    $("#hudTime").textContent = sim?.playing ? "ACTIVE" : "READY";
     $("#hudScore").textContent = sim?.score || 0; $("#hudTarget").textContent = sim?.target || "—";
   }
   function switchView(next) {
