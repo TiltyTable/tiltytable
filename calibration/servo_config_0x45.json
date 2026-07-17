@@ -33,9 +33,9 @@
       "recessed": 1110
     },
     "6": {
-      "extended": 2200,
-      "neutral": 1500,
-      "recessed": 1100
+      "extended": 2050,
+      "neutral": 1390,
+      "recessed": 990
     },
     "7": {
       "extended": 2200,
@@ -73,9 +73,9 @@
       "recessed": 1200
     },
     "14": {
-      "extended": 2250,
-      "neutral": 1600,
-      "recessed": 1200
+      "extended": 2000,
+      "neutral": 1380,
+      "recessed": 980
     },
     "15": {
       "extended": 2150,
