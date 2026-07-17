@@ -157,7 +157,7 @@ class _EKF:
     @property
     def position(self) -> tuple[float, float, float]:
         with self._lock:
-            return (float(self.x[0]), float(self.x[1]), float(self.x[2]))
+            return (float(self.x[0, 0]), float(self.x[1, 0]), float(self.x[2, 0]))
 
 
 # ---------------------------------------------------------------------------
@@ -191,6 +191,8 @@ class BallDetector:
         ppy: float,
         ball_radius_min_mm: float = 20.0,
         ball_radius_max_mm: float = 40.0,
+        ball_radius_min_px: float = 6.0,
+        ball_radius_max_px: float = 80.0,
         ball_ir_threshold: int = _BALL_IR_THRESHOLD_DEFAULT,
         debug: bool = True,
     ):
@@ -200,6 +202,8 @@ class BallDetector:
         self.ppy = ppy
         self.ball_radius_min_mm = ball_radius_min_mm
         self.ball_radius_max_mm = ball_radius_max_mm
+        self.ball_radius_min_px = ball_radius_min_px
+        self.ball_radius_max_px = ball_radius_max_px
         self.ball_ir_threshold = ball_ir_threshold
         self.debug = debug
         self._debug_frame: Optional[np.ndarray] = None
@@ -233,7 +237,7 @@ class BallDetector:
     def detect(
         self,
         ir_uint16: np.ndarray,
-        depth_mm: np.ndarray,
+        depth_mm: Optional[np.ndarray],
     ) -> Optional[BallDetection]:
         """
         Run the detection pipeline on one camera frame.
@@ -245,13 +249,15 @@ class BallDetector:
         counts = {"shape": 0, "fill": 0, "depth": 0, "size": 0, "accepted": 0}
         self.last_reject_counts = counts
 
-        valid = ir_uint16 > 0
-        if not valid.any():
-            self._debug_frame = None
-            return None
-
-        ir_blurred = cv2.GaussianBlur(ir_uint16.astype(np.float32), (3, 3), 0).astype(np.uint16)
-        mask = np.where((ir_blurred >= self.ball_ir_threshold) & valid, np.uint8(255), np.uint8(0))
+        # OpenCV preserves uint16 through this blur and produces the binary
+        # uint8 mask directly. This avoids three full-frame NumPy allocations
+        # and conversions on every 30 Hz camera frame.
+        ir_blurred = cv2.GaussianBlur(ir_uint16, (3, 3), 0)
+        mask = cv2.compare(
+            ir_blurred,
+            max(1, int(self.ball_ir_threshold)),
+            cv2.CMP_GE,
+        )
 
         dbg = None
         if self.debug:
@@ -307,31 +313,43 @@ class BallDetector:
             cy = M["m01"] / M["m00"]
             icx, icy, ir_ = int(round(cx)), int(round(cy)), int(round(radius_px))
 
-            z_mm = self._sample_depth(depth_mm, cx, cy, radius_px)
-            if z_mm is None:
-                z_mm = self._sample_depth_ring(depth_mm, cx, cy, radius_px, 1.0, 1.6)
-            if z_mm is None:
-                counts["depth"] += 1
-                if dbg is not None:
-                    cv2.circle(dbg, (icx, icy), ir_, _CLR_DEPTH, 1)
-                continue
+            if depth_mm is None:
+                # The arcade only needs image-space cx/cy. Estimate distance
+                # from the known ball size solely to keep the EKF coordinate
+                # system consistent without materializing a depth frame.
+                if not self.ball_radius_min_px <= radius_px <= self.ball_radius_max_px:
+                    counts["size"] += 1
+                    continue
+                radius_mm = radius_mid
+                z_mm = radius_mm * self.fx / max(radius_px, 1e-6)
+            else:
+                z_mm = self._sample_depth(depth_mm, cx, cy, radius_px)
+                if z_mm is None:
+                    z_mm = self._sample_depth_ring(depth_mm, cx, cy, radius_px, 1.0, 1.6)
+                if z_mm is None:
+                    counts["depth"] += 1
+                    if dbg is not None:
+                        cv2.circle(dbg, (icx, icy), ir_, _CLR_DEPTH, 1)
+                    continue
+                radius_mm = radius_px * z_mm / self.fx
+                if not (self.ball_radius_min_mm <= radius_mm <= self.ball_radius_max_mm):
+                    counts["size"] += 1
+                    if dbg is not None:
+                        cv2.circle(dbg, (icx, icy), ir_, _CLR_SIZE, 1)
+                    continue
 
             x_mm, y_mm, _ = camera_geometry.unproject_pixel(
                 cx, cy, z_mm, self.fx, self.fy, self.ppx, self.ppy,
             )
 
-            radius_mm = radius_px * z_mm / self.fx
-            if not (self.ball_radius_min_mm <= radius_mm <= self.ball_radius_max_mm):
-                counts["size"] += 1
-                if dbg is not None:
-                    cv2.circle(dbg, (icx, icy), ir_, _CLR_SIZE, 1)
-                continue
-
             counts["accepted"] += 1
             if dbg is not None:
                 cv2.circle(dbg, (icx, icy), ir_, _CLR_CAND, 1)
 
-            score = abs(radius_mm - radius_mid)
+            # With no depth, the retroreflective ball should be the largest
+            # plausible circular blob; table fiducials are deliberately much
+            # smaller. With depth available, preserve the physical-size score.
+            score = -radius_px if depth_mm is None else abs(radius_mm - radius_mid)
             if score < best_score:
                 best_score = score
                 best = BallDetection(

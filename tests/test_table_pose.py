@@ -209,7 +209,8 @@ class ConfiguredMarkerGeometryTests(unittest.TestCase):
 
 
 class ImageCellTrackerTests(unittest.TestCase):
-    def test_matches_projected_six_fiducial_layout_and_maps_cells(self):
+    @staticmethod
+    def _tracker_and_projection():
         tracker = tp.ImageCellTracker(marker_world_points={
             "corner_origin": [0, 0, 46.0375],
             "corner_x": [831.85, 0, 46.0375],
@@ -218,9 +219,22 @@ class ImageCellTrackerTests(unittest.TestCase):
             "edge_x": [277.283, 0, 46.0375],
             "edge_y": [0, 499.11, 46.0375],
         })
-        table_points = np.array([tracker.table_points[name] for name in tracker.point_names], dtype=np.float32)
-        H = np.array([[900.0, 110.0, 150.0], [45.0, 760.0, 90.0], [0.12, 0.08, 1.0]])
-        pixels = cv2.perspectiveTransform(table_points.reshape(-1, 1, 2), H).reshape(-1, 2)
+        table_points = np.array(
+            [tracker.table_points[name] for name in tracker.point_names],
+            dtype=np.float32,
+        )
+        H = np.array([
+            [0.48, 0.04, 105.0],
+            [0.02, 0.42, 70.0],
+            [0.00012, 0.00008, 1.0],
+        ])
+        pixels = cv2.perspectiveTransform(
+            table_points.reshape(-1, 1, 2), H
+        ).reshape(-1, 2)
+        return tracker, H, pixels
+
+    def test_matches_projected_six_fiducial_layout_and_maps_cells(self):
+        tracker, H, pixels = self._tracker_and_projection()
         blobs = [tp.MarkerBlob(float(x), float(y), 5.0, 0.0, 0.0, 0.0) for x, y in pixels]
         random.Random(4).shuffle(blobs)
 
@@ -230,6 +244,46 @@ class ImageCellTrackerTests(unittest.TestCase):
         center_px = cv2.perspectiveTransform(np.array([[[831.85 * 0.49, 831.85 * 0.49]]], dtype=np.float32), H)[0, 0]
         self.assertEqual(tracker.cell_from_pixel(*center_px), (6, 6))
         self.assertEqual(set(matched), set(tracker.point_names))
+
+    def test_selects_best_six_markers_when_ball_is_an_extra_blob(self):
+        tracker, _H, pixels = self._tracker_and_projection()
+        expected_pixels = {tuple(float(value) for value in pixel) for pixel in pixels}
+        blobs = [
+            tp.MarkerBlob(float(x), float(y), 5.0, 0.0, 0.0, 0.0)
+            for x, y in pixels
+        ]
+        ball_blob = tp.MarkerBlob(319.0, 251.0, 12.0, 0.0, 0.0, 0.0)
+        blobs.append(ball_blob)
+        random.Random(7).shuffle(blobs)
+
+        matched, fit = tracker._match_and_fit(blobs)
+
+        selected_pixels = {(blob.cx, blob.cy) for blob in matched.values()}
+        self.assertEqual(selected_pixels, expected_pixels)
+        self.assertNotIn((ball_blob.cx, ball_blob.cy), selected_pixels)
+        self.assertLess(fit.max_residual_px, 1e-3)
+
+    def test_active_brightness_pose_ignores_ball_blob_end_to_end(self):
+        tracker, _H, pixels = self._tracker_and_projection()
+        ir = np.full((576, 640), 200, dtype=np.uint16)
+        for x, y in pixels:
+            cv2.circle(ir, (round(float(x)), round(float(y))), 5, 50000, -1)
+        cv2.circle(ir, (319, 251), 11, 50000, -1)
+
+        attempt = tracker.update(
+            ir,
+            None,
+            500.0,
+            500.0,
+            320.0,
+            288.0,
+            marker_ir_threshold=30000,
+            debug=False,
+        )
+
+        self.assertTrue(attempt.ok, attempt.error)
+        self.assertTrue(tracker.is_tracking)
+        self.assertEqual(len(attempt.matched_points), 6)
 
 
 class DetectMarkersBallRejectionTests(unittest.TestCase):
@@ -279,6 +333,25 @@ class DetectMarkersBallRejectionTests(unittest.TestCase):
             self.assertLess(blob.radius_px, ball_radius_px)
             dist_to_ball = ((blob.cx - 300) ** 2 + (blob.cy - 300) ** 2) ** 0.5
             self.assertGreater(dist_to_ball, ball_radius_px)
+
+    def test_active_brightness_only_rejects_ball_by_pixel_radius(self):
+        marker_centers = [(60, 60), (140, 60), (220, 60), (60, 140), (60, 220), (140, 140)]
+        blobs_px = [(cx, cy, 5.0) for cx, cy in marker_centers]
+        blobs_px.append((300, 300, 30.0))
+        ir, _depth = self._synthetic_frame(blobs_px)
+
+        found, debug_frame = tp.detect_markers(
+            ir,
+            None,
+            500.0,
+            500.0,
+            200.0,
+            200.0,
+            debug=False,
+        )
+
+        self.assertEqual(len(found), len(marker_centers))
+        self.assertIsNone(debug_frame)
 
 
 class SelectInlierMarkersTests(unittest.TestCase):
@@ -626,6 +699,47 @@ class BallTrackerRegressionTests(unittest.TestCase):
             self.assertAlmostEqual(det.cy, cy, delta=2.0)
         finally:
             tracker.close()
+
+    def test_ball_detection_accepts_active_brightness_without_depth(self):
+        from ball_tracker import BallDetector
+
+        ir = np.full((200, 200), 200, dtype=np.uint16)
+        cv2.circle(ir, (100, 100), 20, 4000, -1)
+        detector = BallDetector(
+            fx=500.0,
+            fy=500.0,
+            ppx=100.0,
+            ppy=100.0,
+            debug=False,
+        )
+
+        detection = detector.detect(ir, None)
+
+        self.assertIsNotNone(detection)
+        self.assertAlmostEqual(detection.cx, 100.0, delta=2.0)
+        self.assertAlmostEqual(detection.cy, 100.0, delta=2.0)
+        self.assertIsNone(detector.debug_frame)
+
+    def test_active_brightness_ball_wins_over_smaller_fiducials(self):
+        from ball_tracker import BallDetector
+
+        ir = np.full((300, 300), 200, dtype=np.uint16)
+        for center in [(40, 40), (120, 40), (220, 40), (40, 240), (220, 240), (140, 250)]:
+            cv2.circle(ir, center, 7, 5000, -1)
+        cv2.circle(ir, (155, 145), 18, 5000, -1)
+        detector = BallDetector(
+            fx=500.0,
+            fy=500.0,
+            ppx=150.0,
+            ppy=150.0,
+            debug=False,
+        )
+
+        detection = detector.detect(ir, None)
+
+        self.assertIsNotNone(detection)
+        self.assertAlmostEqual(detection.cx, 155.0, delta=2.0)
+        self.assertAlmostEqual(detection.cy, 145.0, delta=2.0)
 
 
 if __name__ == "__main__":

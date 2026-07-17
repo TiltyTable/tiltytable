@@ -10,9 +10,10 @@
     return letters.join("");
   }
 
-  function backIntent(state, overlayOpen = false) {
+  function backIntent(state, overlayOpen = false, mode = null) {
     if (overlayOpen) return "close-overlay";
     if (state === "initials" || state === "level_select") return "abandon";
+    if (state === "rules" && mode === "practice") return "level-select";
     if (state === "leaderboard") return "continue";
     if (["setup", "hardware_fault", "attract"].includes(state)) return null;
     return "open-overlay";
@@ -50,6 +51,10 @@
     return Boolean(debugEnabled || state === "placement" || state === "playing");
   }
 
+  function initialsConfirmIntent(cursor) {
+    return Number(cursor) < 2 ? "next" : "submit";
+  }
+
   return {
     shiftInitials,
     backIntent,
@@ -57,5 +62,6 @@
     cabinetNavigationKeys,
     cellKeyToCoordinates,
     ballOverlayVisible,
+    initialsConfirmIntent,
   };
 });

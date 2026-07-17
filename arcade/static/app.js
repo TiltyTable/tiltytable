@@ -106,6 +106,7 @@ let lastTimerSecond = null;
 let lastTimerBand = null;
 let requestInFlight = false;
 let devBallCell = null;
+let refreshInFlight = false;
 let cabinetConfirmPresses = null;
 let cabinetBackPresses = null;
 let cabinetNavigationUp = null;
@@ -118,27 +119,18 @@ const {
   cabinetNavigationKeys,
   cellKeyToCoordinates,
   ballOverlayVisible,
+  initialsConfirmIntent,
 } = window.ArcadeUiLogic;
-
-function uiButton(label, action, options = {}) {
-  const classes = ["arcade-button", options.primary ? "primary" : "", options.compact ? "compact" : ""]
-    .filter(Boolean)
-    .join(" ");
-  const attributes = Object.entries(options.data || {})
-    .map(([key, value]) => `data-${key}="${escapeHtml(value)}"`)
-    .join(" ");
-  return `<button type="button" class="${classes}" data-ui-action="${action}" ${attributes}>${escapeHtml(label)}</button>`;
-}
 
 function cabinetHint(kind, label) {
   const button = kind === "confirm" ? "RIGHT" : "LEFT";
-  return `<span class="cabinet-hint"><i class="pixel-button ${kind}" aria-hidden="true"></i><span>${button} · ${escapeHtml(label)}</span></span>`;
+  return `<span class="cabinet-hint ${kind}"><i class="pixel-button ${kind}" aria-hidden="true"></i><span>${button} · ${escapeHtml(label)}</span></span>`;
 }
 
 function confirmHint(label) { return cabinetHint("confirm", label); }
 function backHint(label = "BACK") { return cabinetHint("back", label); }
 function joinHints(...hints) { return hints.filter(Boolean).join('<i class="hint-divider">·</i>'); }
-function navigationHint(label = "CHOOSE") { return `<span>ROLL ↑↓ · ${escapeHtml(label)}</span>`; }
+function navigationHint(label = "CHOOSE") { return `<span class="navigation-hint">ROLL ↑↓ · ${escapeHtml(label)}</span>`; }
 
 function isSurvivalLevel(level = game?.level) {
   return level?.mode === "survival_lava";
@@ -297,12 +289,19 @@ function ballTrackOverlay() {
   const conf = Number(ball.confidence ?? 0);
   const dimmed = !kinectActive;
   const confClass = conf >= 0.75 ? "ok" : conf >= 0.4 ? "warn" : "low";
+  const latency = ball.latency?.captureToGameMs;
+  const averageLatency = ball.latency?.averageCaptureToGameMs;
+  const p95Latency = ball.latency?.p95CaptureToGameMs;
+  const latencyText = Number.isFinite(latency)
+    ? `${latency.toFixed(0)}ms avg ${averageLatency?.toFixed(0) ?? "—"} p95 ${p95Latency?.toFixed(0) ?? "—"}`
+    : "—";
 
   return `
     <aside class="ball-track-overlay ${dimmed ? "dimmed" : ""}" aria-hidden="true">
       <span class="ball-track-label">BALL (X,Y)</span>
       <span class="ball-track-cell">${escapeHtml(coordinates)}</span>
       <span class="ball-track-conf ${confClass}">${conf.toFixed(1)}</span>
+      <span class="ball-track-latency">${latencyText}</span>
     </aside>`;
 }
 
@@ -327,8 +326,7 @@ function shell(content, controls = "", dialogueHtml = "") {
       <div class="scene-center">${content}</div>
       ${dialogueHtml}
       <footer class="footer">
-        <span>${controls}</span>
-        ${uiButton(audio.muted ? "SOUND ON" : "MUTE", "mute", { compact: true })}
+        <div class="control-strip">${controls}</div>
       </footer>
     </section>
     ${abandonOpen ? abandonOverlay() : ""}
@@ -341,11 +339,12 @@ function abandonOverlay() {
     <div class="overlay">
       <article class="message-card">
         <h1>END RUN?</h1>
-        ${dialogue(LORE.abandonOverlay.ken, LORE.abandonOverlay.troll, true)}
-        <div class="action-row">
-          ${uiButton("KEEP PLAYING", "cancel-abandon")}
-          ${uiButton("END RUN", "abandon", { primary: true })}
+        <p class="decision-copy">Choose with the cabinet buttons</p>
+        <div class="cabinet-decision">
+          <div class="cabinet-choice confirm">${confirmHint("END RUN")}</div>
+          <div class="cabinet-choice back">${backHint("KEEP PLAYING")}</div>
         </div>
+        ${dialogue(LORE.abandonOverlay.ken, LORE.abandonOverlay.troll, true)}
       </article>
     </div>`;
 }
@@ -357,7 +356,6 @@ function renderSetup() {
     <article class="setup-card">
       <h1>${fault ? "GAME PAUSED" : "TILTYTABLE"}</h1>
       <p class="hero-sub">${fault ? "Dungeon systems need an attendant." : "Tilty's escape begins here."}</p>
-      <div class="action-row">${uiButton(fault ? "TRY AGAIN" : "START", "setup", { primary: true })}</div>
     </article>`,
     confirmHint(fault ? "TRY AGAIN" : "START"),
     dialogue(lore.ken, lore.troll, true));
@@ -387,12 +385,10 @@ function renderAttract() {
         <p class="hero-sub">Help Tilty reach Tiltelle</p>
         <div class="menu">
           ${choices.map((choice, index) => {
-            const action = index === 0 ? "start-gauntlet" : "show-level-select";
             return `
-            <button type="button" class="menu-item ${attractChoice === index ? "selected" : ""}"
-              data-ui-action="${action}" data-choice="${index}">
+            <div class="menu-item ${attractChoice === index ? "selected" : ""}">
               <strong>${choice}</strong>
-            </button>`;
+            </div>`;
           }).join("")}
         </div>
       </div>
@@ -411,19 +407,19 @@ function renderInitials() {
     <div>
       <h1>YOUR MARK</h1>
       <p class="hero-sub">Three letters for the escape board</p>
+      <p class="initial-progress">LETTER ${initialsCursor + 1} OF 3</p>
       <div class="initials-picker">
         ${chars.map((char, index) => `
           <div class="initial-wheel">
-            <button type="button" class="initial-step" data-ui-action="initial-shift"
-              data-index="${index}" data-delta="1" aria-label="Next letter ${index + 1}">▲</button>
             <div class="initial-box ${index === initialsCursor ? "active" : ""}">${escapeHtml(char)}</div>
-            <button type="button" class="initial-step" data-ui-action="initial-shift"
-              data-index="${index}" data-delta="-1" aria-label="Previous letter ${index + 1}">▼</button>
           </div>`).join("")}
       </div>
-      <div class="action-row">${uiButton("LOCK IT IN", "set-initials", { primary: true })}</div>
     </div>`,
-    joinHints(navigationHint("CHANGE LETTER"), confirmHint("LOCK IN"), backHint()),
+    joinHints(
+      navigationHint("CHANGE LETTER"),
+      confirmHint(initialsCursor < 2 ? "NEXT LETTER" : "LOCK IN"),
+      backHint(),
+    ),
     dialogue(LORE.initials.ken, LORE.initials.troll, true));
 }
 
@@ -434,11 +430,10 @@ function renderLevelSelect() {
       <p class="hero-sub">All ${game.levels.length} chambers — no score saved</p>
       <div class="menu level-select-menu">
         ${game.levels.map((level, index) => `
-          <button type="button" class="menu-item ${levelChoice === index ? "selected" : ""}"
-            data-ui-action="select-level" data-level-id="${escapeHtml(level.id)}" data-choice="${index}">
+          <div class="menu-item ${levelChoice === index ? "selected" : ""}">
             <strong>0${level.number} ${escapeHtml(level.title)}</strong>
             <span class="menu-sub">${escapeHtml(level.subtitle)}</span>
-          </button>`).join("")}
+          </div>`).join("")}
       </div>
     </div>`,
     joinHints(navigationHint(), confirmHint("SELECT"), backHint("TITLE")),
@@ -456,10 +451,12 @@ function renderRules() {
         ${level.rules.map((rule, index) =>
           `<div class="rule"><b>0${index + 1}</b><span>${escapeHtml(rule)}</span></div>`
         ).join("")}
-        <div class="action-row action-row-left">${uiButton("BUILD CHAMBER", "continue", { primary: true })}</div>
       </div>
     </div>`,
-    joinHints(confirmHint("CONTINUE"), backHint("END RUN")),
+    joinHints(
+      confirmHint("CONTINUE"),
+      backHint(game.mode === "practice" ? "LEVEL SELECT" : "END RUN"),
+    ),
     dialogue(level.kenLine || LORE.playing.ken, level.trollLine || LORE.playing.troll));
 }
 
@@ -544,7 +541,6 @@ function renderPlacement() {
           <div class="hud-stat"><span>RESTARTS</span><strong>${game.restarts}</strong></div>
         </div>
         <p class="placement-signal ${ready ? "ready" : ""}">${ready ? "BALL READY" : "FIND CYAN"}</p>
-        <div class="action-row action-row-left">${uiButton("START ESCAPE", "confirm-placement", { primary: true })}</div>
       </div>
     </div>`,
     joinHints(`<span>ROLLER BALL TILTS</span>`, confirmHint("START"), backHint("END RUN")),
@@ -627,7 +623,6 @@ function renderSurvivalFail() {
       <h1 style="color:var(--red)">${title}</h1>
       <p class="decision-copy">${copy}</p>
       <p class="result-number">−100</p>
-      <div class="action-row">${uiButton("TRY AGAIN", "continue", { primary: true })}</div>
     </article>`,
     joinHints(confirmHint("TRY AGAIN"), backHint("END RUN")),
     dialogue(LORE.survivalFail.ken, game.level?.trollLine || LORE.survivalFail.troll, true));
@@ -639,7 +634,6 @@ function renderTimeUp() {
       <p class="kicker">Chamber ${game.level.number}</p>
       <h1 style="color:var(--red)">TIME UP</h1>
       <p class="result-number">−100</p>
-      <div class="action-row">${uiButton("TRY AGAIN", "continue", { primary: true })}</div>
     </article>`,
     joinHints(confirmHint("TRY AGAIN"), backHint("END RUN")),
     dialogue(LORE.timeUp.ken, game.level?.trollLine || LORE.timeUp.troll, true));
@@ -656,7 +650,6 @@ function renderLevelClear() {
       <h1>${survival ? "SURVIVED!" : "CLEAR!"}</h1>
       <p class="result-number">+${Number(game.lastLevelResult.score).toLocaleString()}</p>
       <p class="decision-copy">${sub}</p>
-      <div class="action-row">${uiButton("SEE SCORE", "continue", { primary: true })}</div>
     </article>`,
     confirmHint("CONTINUE"),
     dialogue(LORE.levelClear.ken, LORE.levelClear.troll, true));
@@ -687,7 +680,7 @@ function renderLevelScore() {
       <p class="kicker">Chamber ${result.levelNumber} score</p>
       <h1>${Number(result.score).toLocaleString()} PTS</h1>
       ${breakdown}
-      <div class="action-row">${uiButton(nextLabel, "continue", { primary: true })}</div>
+      <p class="next-action-label">${escapeHtml(nextLabel)}</p>
     </article>`,
     confirmHint("CONTINUE"),
     dialogue(LORE.levelScore.ken, LORE.levelScore.troll, true));
@@ -705,7 +698,7 @@ function renderSummary() {
       <h1>${headline}</h1>
       <p class="result-number">${game.mode === "practice" ? "—" : Number(game.score).toLocaleString()}</p>
       <p class="decision-copy">${game.mode === "practice" ? "Tilty knows the route now." : "Tiltelle's light flickers ahead."}</p>
-      <div class="action-row">${uiButton(next, "continue", { primary: true })}</div>
+      <p class="next-action-label">${escapeHtml(next)}</p>
     </article>`,
     confirmHint("CONTINUE"),
     dialogue(LORE.runSummary.ken, LORE.runSummary.troll, true));
@@ -719,7 +712,6 @@ function renderAbandoned() {
       <h1>RUN ENDED</h1>
       <p class="result-number">${saved ? `${game.levelsCleared}/${total}` : "—"}</p>
       ${saved ? `<p class="decision-copy">${Number(game.score).toLocaleString()} PTS SAVED</p>` : ""}
-      <div class="action-row">${uiButton("CONTINUE", "continue", { primary: true })}</div>
     </article>`,
     confirmHint("CONTINUE"),
     dialogue(LORE.abandoned.ken, LORE.abandoned.troll, true));
@@ -730,7 +722,6 @@ function renderLeaderboard() {
     <div style="width:min(670px,90vw)">
       <h1 class="screen-title">ESCAPE BOARD</h1>
       <aside class="leader-card" style="margin-top:16px">${leaderboardRows(10)}</aside>
-      <div class="action-row">${uiButton("TITLE SCREEN", "continue", { primary: true })}</div>
     </div>`,
     confirmHint("TITLE"),
     dialogue(LORE.leaderboard.ken, LORE.leaderboard.troll, true));
@@ -783,7 +774,8 @@ async function postAction(action, extra = {}) {
 }
 
 async function refresh() {
-  if (requestInFlight) return;
+  if (requestInFlight || refreshInFlight) return;
+  refreshInFlight = true;
   try {
     const response = await fetch("/api/state", { cache: "no-store" });
     const payload = await response.json();
@@ -793,6 +785,8 @@ async function refresh() {
     handleCabinetButtons();
   } catch (error) {
     console.error("State refresh failed", error);
+  } finally {
+    refreshInFlight = false;
   }
 }
 
@@ -889,7 +883,7 @@ function handleStateAudio() {
 
 function handleBack() {
   if (!game) return;
-  const intent = backIntent(game.state, abandonOpen);
+  const intent = backIntent(game.state, abandonOpen, game.mode);
   if (intent === "close-overlay") {
     abandonOpen = false;
     audio.click();
@@ -898,6 +892,8 @@ function handleBack() {
     postAction("abandon");
   } else if (intent === "continue") {
     postAction("continue");
+  } else if (intent === "level-select") {
+    postAction("show-level-select");
   } else if (intent === "open-overlay") {
     abandonOpen = true;
     audio.click();
@@ -905,47 +901,8 @@ function handleBack() {
   }
 }
 
-app.addEventListener("click", event => {
-  if (game?.integrations?.tilt?.enabled && event.detail > 0) {
-    event.preventDefault();
-    return;
-  }
-  const control = event.target.closest("[data-ui-action]");
-  if (!control || requestInFlight) return;
-  audio.enable();
-  const action = control.dataset.uiAction;
-
-  if (action === "mute") {
-    audio.toggleMute();
-    render();
-  } else if (action === "cancel-abandon") {
-    abandonOpen = false;
-    audio.click();
-    render();
-  } else if (action === "initial-shift") {
-    const index = Number(control.dataset.index);
-    initialsCursor = index;
-    initialsDraft = shiftInitials(initialsDraft, index, Number(control.dataset.delta));
-    audio.click();
-    render();
-  } else if (action === "set-initials") {
-    postAction("set-initials", { initials: initialsDraft });
-  } else if (action === "select-level") {
-    levelChoice = Number(control.dataset.choice);
-    postAction("select-level", { levelId: control.dataset.levelId });
-  } else if (action === "start-gauntlet" || action === "show-level-select") {
-    attractChoice = Number(control.dataset.choice || 0);
-    postAction(action);
-  } else {
-    postAction(action);
-  }
-});
-
 app.addEventListener("contextmenu", event => {
   event.preventDefault();
-  if (game?.integrations?.tilt?.enabled) return;
-  audio.enable();
-  handleBack();
 });
 
 document.addEventListener("keydown", event => {
@@ -1020,7 +977,13 @@ document.addEventListener("keydown", event => {
         audio.click();
         render();
       } else if (key === "Enter") {
-        postAction("set-initials", { initials: initialsDraft });
+        if (initialsConfirmIntent(initialsCursor) === "next") {
+          initialsCursor += 1;
+          audio.confirm();
+          render();
+        } else {
+          postAction("set-initials", { initials: initialsDraft });
+        }
       }
       break;
     case "level_select":
@@ -1075,4 +1038,4 @@ document.addEventListener("keydown", event => {
 });
 
 refresh();
-setInterval(refresh, 250);
+setInterval(refresh, 16);

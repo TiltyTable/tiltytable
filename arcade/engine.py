@@ -3,11 +3,12 @@ from __future__ import annotations
 import math
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable
 
-from .hardware import BaseTableHardware, HardwareError
+from .hardware import BaseTableHardware, END_COLOR, HardwareError
 from .integrations import BallObservation, BallTrackingAdapter, TiltControlAdapter
 from .game_modes import start_mode, tick_mode
 from .levels import Level, LevelCatalog, load_map
@@ -108,6 +109,10 @@ class GameEngine:
         self._mode_state: dict[str, Any] | None = None
         self._mode_score = 0
         self._end_cell_since: float | None = None
+        self._last_ingested_ball_frame: int | None = None
+        self._last_ball_ingest_at: float | None = None
+        self._tracking_latency: dict[str, Any] | None = None
+        self._tracking_latency_samples: deque[float] = deque(maxlen=120)
 
     @property
     def current_level(self) -> Level:
@@ -368,16 +373,17 @@ class GameEngine:
                 self.state = GameState.PLACEMENT
             if self.state == GameState.PLAYING:
                 level = self.current_level
+                now = self.clock()
+                observation = self._ball_observation()
+                self._record_ball_ingest(observation, now)
                 if level.is_survival_lava and self._survival is not None:
-                    self._tick_survival_lava()
+                    self._tick_survival_lava(now, observation)
                 elif level.mode in ("hex_fall", "target_hunt") and self._mode_session is not None:
-                    self._tick_dynamic_mode()
+                    self._tick_dynamic_mode(now, observation)
                 else:
-                    self._tick_reach_end()
+                    self._tick_reach_end(now, observation)
 
-    def _tick_reach_end(self) -> None:
-        now = self.clock()
-        observation = self._ball_observation()
+    def _tick_reach_end(self, now: float, observation: BallObservation) -> None:
         if (
             observation.cell == self.current_level.end_cell
             and observation.confidence >= TRACKING_CONFIDENCE_MIN
@@ -385,6 +391,7 @@ class GameEngine:
             if self._end_cell_since is None:
                 self._end_cell_since = now
             elif now - self._end_cell_since >= END_CELL_DWELL_SECONDS:
+                self._recess_finish_cell()
                 self.complete_level()
                 return
         else:
@@ -396,16 +403,32 @@ class GameEngine:
             self.hardware.pause()
             self.state = GameState.TIME_UP
 
-    def _tick_survival_lava(self) -> None:
+    def _recess_finish_cell(self) -> None:
+        key = self.current_level.end_cell
+        row, col = self._row_col_by_key[key]
+        update = {
+            "key": key,
+            "row": row,
+            "col": col,
+            "value": -1,
+            "color": END_COLOR,
+            "rgb": (0, 0, 0),
+        }
+        self.hardware.apply_cell_updates([update])
+        self._apply_map_cell_updates([update])
+
+    def _tick_survival_lava(
+        self,
+        now: float,
+        observation: BallObservation,
+    ) -> None:
         level = self.current_level
-        now = self.clock()
         if now - self._last_survival_tick < 0.12:
             return
         self._last_survival_tick = now
         if self._survival is None:
             return
 
-        observation = self._ball_observation()
         ball_cell = observation.cell
         result = tick_survival_lava(
             self._survival,
@@ -433,13 +456,15 @@ class GameEngine:
         if result.survived:
             self._complete_survival_win()
 
-    def _tick_dynamic_mode(self) -> None:
-        now = self.clock()
+    def _tick_dynamic_mode(
+        self,
+        now: float,
+        observation: BallObservation,
+    ) -> None:
         if now - self._last_survival_tick < 0.1 or self._mode_session is None:
             return
         self._last_survival_tick = now
         level = self.current_level
-        observation = self._ball_observation()
         result = tick_mode(
             str(level.mode),
             self._mode_session,
@@ -472,6 +497,49 @@ class GameEngine:
             return BallObservation()
         return self.ball_adapter.observation()
 
+    def _record_ball_ingest(
+        self,
+        observation: BallObservation,
+        now: float,
+    ) -> None:
+        frame_seq = observation.frame_seq
+        if frame_seq is None or frame_seq == self._last_ingested_ball_frame:
+            return
+        ingest_interval_ms = (
+            max(0.0, (now - self._last_ball_ingest_at) * 1000.0)
+            if self._last_ball_ingest_at is not None
+            else None
+        )
+        total_ms = observation.capture_to_observation_ms
+        processing_ms = observation.processing_ms
+        if total_ms is not None:
+            self._tracking_latency_samples.append(total_ms)
+        samples = sorted(self._tracking_latency_samples)
+        p95_index = max(0, math.ceil(len(samples) * 0.95) - 1)
+        self._tracking_latency = {
+            "frameSeq": frame_seq,
+            "sensorToTrackerMs": processing_ms,
+            "trackerToGameMs": (
+                round(max(0.0, total_ms - processing_ms), 1)
+                if total_ms is not None and processing_ms is not None
+                else None
+            ),
+            "captureToGameMs": total_ms,
+            "averageCaptureToGameMs": (
+                round(sum(samples) / len(samples), 1) if samples else None
+            ),
+            "p95CaptureToGameMs": (
+                round(samples[p95_index], 1) if samples else None
+            ),
+            "gameIngestIntervalMs": (
+                round(ingest_interval_ms, 1)
+                if ingest_interval_ms is not None
+                else None
+            ),
+        }
+        self._last_ingested_ball_frame = frame_seq
+        self._last_ball_ingest_at = now
+
     def _ball_public_state(self) -> dict[str, Any] | None:
         if self.ball_adapter is None:
             return None
@@ -493,6 +561,7 @@ class GameEngine:
             "col": col,
             "ageSeconds": observation.age_s,
             "poseFresh": observation.pose_fresh,
+            "latency": self._tracking_latency,
         }
 
     def _neutralize_survival_start_cell(self) -> None:

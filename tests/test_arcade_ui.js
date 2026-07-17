@@ -6,6 +6,7 @@ const {
   cabinetNavigationKeys,
   cellKeyToCoordinates,
   ballOverlayVisible,
+  initialsConfirmIntent,
 } = require("../arcade/static/ui_logic.js");
 
 assert.strictEqual(shiftInitials("AAA", 0, 1), "BAA");
@@ -19,6 +20,8 @@ assert.strictEqual(backIntent("initials"), "abandon");
 assert.strictEqual(backIntent("leaderboard"), "continue");
 assert.strictEqual(backIntent("attract"), null);
 assert.strictEqual(backIntent("playing", true), "close-overlay");
+assert.strictEqual(backIntent("rules", false, "practice"), "level-select");
+assert.strictEqual(backIntent("rules", false, "gauntlet"), "open-overlay");
 
 assert.strictEqual(cabinetButtonIntent(0, 0, 1, 0), "confirm");
 assert.strictEqual(cabinetButtonIntent(2, 4, 2, 5), "back");
@@ -36,5 +39,8 @@ assert.strictEqual(ballOverlayVisible(false, "playing"), true);
 assert.strictEqual(ballOverlayVisible(false, "placement"), true);
 assert.strictEqual(ballOverlayVisible(false, "attract"), false);
 assert.strictEqual(ballOverlayVisible(true, "attract"), true);
+assert.strictEqual(initialsConfirmIntent(0), "next");
+assert.strictEqual(initialsConfirmIntent(1), "next");
+assert.strictEqual(initialsConfirmIntent(2), "submit");
 
 console.log("arcade UI logic tests passed");

@@ -38,6 +38,8 @@ from stewart_platform_control_position import (
 from stewart_platform_control_velocity import apply_velocity_counts
 from arcade.stewart_tilt import (
     StewartTiltService,
+    debounce_button_presses,
+    load_button_debounce_ms,
     load_navigation_counts_per_step,
     navigation_steps,
 )
@@ -198,10 +200,28 @@ class SharedStewartControlTests(unittest.TestCase):
 
     def test_vertical_trackball_motion_becomes_menu_navigation(self) -> None:
         counts = load_navigation_counts_per_step()
-        self.assertEqual(counts, 36)
-        self.assertEqual(navigation_steps(15, 0, counts), (0, 0, 15))
-        self.assertEqual(navigation_steps(24, 15, counts), (0, 1, 3))
-        self.assertEqual(navigation_steps(-73, 0, counts), (2, 0, -1))
+        self.assertEqual(navigation_steps(counts - 1, 0, counts), (0, 0, counts - 1))
+        self.assertEqual(navigation_steps(2, counts - 1, counts), (0, 1, 1))
+        self.assertEqual(
+            navigation_steps(-(counts * 2 + 1), 0, counts),
+            (2, 0, -1),
+        )
+
+    def test_trackball_button_debounce_uses_configured_window(self) -> None:
+        delay_s = load_button_debounce_ms() / 1000.0
+        accepted, last = debounce_button_presses(1, 10.0, None, delay_s)
+        self.assertEqual(accepted, 1)
+        self.assertEqual(last, 10.0)
+        accepted, last = debounce_button_presses(1, 10.1, last, delay_s)
+        self.assertEqual(accepted, 0)
+        self.assertEqual(last, 10.0)
+        accepted, last = debounce_button_presses(1, 10.21, last, delay_s)
+        self.assertEqual(accepted, 1)
+        self.assertEqual(last, 10.21)
+
+        # Left and right keep independent timestamps in StewartTiltService.
+        accepted, _ = debounce_button_presses(1, 10.1, None, delay_s)
+        self.assertEqual(accepted, 1)
 
     def test_symmetric_calibration_transition_uses_one_branch(self) -> None:
         final = plan_heave_transition(calibrated_solution(), 0.0)[-1]
@@ -333,7 +353,7 @@ class ArcadeStewartTiltTests(unittest.TestCase):
         time.sleep(0.03)
         self.assertEqual(controller.commands, [])
 
-        trackball.push(0, 72)
+        trackball.push(0, service.navigation_counts_per_step + 4)
         self.wait_until(lambda: service.status().navigation_down == 1)
 
         service.set_active(True)

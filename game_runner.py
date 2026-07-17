@@ -308,13 +308,23 @@ class Link:
 
 
 class Table:
-    def __init__(self, link, led_cfg, servo_grid_cfg, servo_configs, palette=None, led_cal=None):
+    def __init__(
+        self,
+        link,
+        led_cfg,
+        servo_grid_cfg,
+        servo_configs,
+        palette=None,
+        led_cal=None,
+        module_start_delay_s=0.0,
+    ):
         self.link = link
         self.led_cfg = led_cfg
         self.servo_grid_cfg = servo_grid_cfg
         self.servo_configs = servo_configs
         self.palette = palette if palette is not None else load_palette()
         self.led_cal = led_cal if led_cal is not None else load_cal()
+        self.module_start_delay_s = max(0.0, float(module_start_delay_s))
         self._strip_led_counts = {
             int(s): int(v.get("led_count", 50))
             for s, v in led_cfg.get("strips", {}).items()
@@ -428,11 +438,19 @@ class Table:
             addr, ch = loc
             by_board.setdefault(addr, []).append(cell)
 
+        module_started = False
         for addr in BOARD_ORDER:
             group = by_board.get(addr)
             if not group:
                 continue
+            if (
+                module_started
+                and self.module_start_delay_s > 0.0
+                and not self.link.dry_run
+            ):
+                time.sleep(self.module_start_delay_s)
             self.link.select_board(addr)
+            module_started = True
             for cell in group:
                 loc = self.servo_at(cell["row"], cell["col"])
                 _, ch = loc

@@ -33,9 +33,6 @@ from live_capture_viewer import (
     DEPTH_MODES,
     FPS_VALUES,
     brightness_to_display,
-    color_to_bgr,
-    depth_to_display,
-    get_depth,
     set_display,
 )
 ROOT_DIR = Path(__file__).resolve().parent
@@ -86,6 +83,10 @@ class KinectFrameHub:
         self.lock = threading.Condition()
         self.stop_event = threading.Event()
         self.thread = None
+        self._pose_thread = None
+        self._pose_condition = threading.Condition()
+        self._pending_pose = None
+        self._pose_lock = threading.RLock()
         self.k4a = None
         self.seq = 0
         self.color_jpeg = None
@@ -97,12 +98,11 @@ class KinectFrameHub:
         self.fps = 0.0
         self._frame_count = 0
         self._fps_started_at = time.monotonic()
-        self.placeholder_color = (
-            None if headless else make_placeholder_jpeg(960, 540, "Waiting for Kinect color")
-        )
-        self.placeholder_depth = (
-            None if headless else make_placeholder_jpeg(640, 576, "Waiting for Kinect depth")
-        )
+        self._ball_frame_seq = 0
+        self._ball_frame_captured_at = None
+        self._ball_processing_ms = None
+        self.placeholder_color = None
+        self.placeholder_depth = None
 
         self.detector = None
         self.tracker = None
@@ -135,6 +135,12 @@ class KinectFrameHub:
 
 
     def start(self):
+        self._pose_thread = threading.Thread(
+            target=self._pose_loop,
+            name="kinect-table-pose",
+            daemon=True,
+        )
+        self._pose_thread.start()
         self.thread = threading.Thread(target=self._run, name="kinect-capture", daemon=True)
         self.thread.start()
 
@@ -142,8 +148,12 @@ class KinectFrameHub:
         self.stop_event.set()
         with self.lock:
             self.lock.notify_all()
+        with self._pose_condition:
+            self._pose_condition.notify_all()
         if self.thread is not None:
             self.thread.join(timeout=2.0)
+        if self._pose_thread is not None:
+            self._pose_thread.join(timeout=2.0)
         if self.k4a is not None and self.k4a.is_running:
             self.k4a.stop()
         if self.tracker is not None:
@@ -172,16 +182,16 @@ class KinectFrameHub:
                 )
                 return
 
-            color_resolution = "off" if self.headless else args.color_resolution
+            # The application consumes only the depth sensor's illuminated IR
+            # (Active Brightness) image. Keep the RGB camera disabled in every
+            # mode and never materialize depth images in user space.
+            color_resolution = "off"
             config = Config(
                 color_resolution=WEB_COLOR_RESOLUTIONS[color_resolution],
                 color_format=ImageFormat.COLOR_BGRA32,
                 depth_mode=DEPTH_MODES[args.depth_mode],
                 camera_fps=FPS_VALUES[args.fps],
-                synchronized_images_only=(
-                    not self.headless
-                    and (color_resolution != "off" or args.aligned_depth)
-                ),
+                synchronized_images_only=False,
             )
             self.k4a = PyK4A(config=config, device_id=args.device_id)
             self.k4a.start()
@@ -201,6 +211,8 @@ class KinectFrameHub:
                         self.k4a.calibration,
                         ball_radius_min_mm=args.ball_radius_min,
                         ball_radius_max_mm=args.ball_radius_max,
+                        ball_radius_min_px=args.ball_radius_min_px,
+                        ball_radius_max_px=args.ball_radius_max_px,
                         ball_ir_threshold=self.ball_ir_threshold,
                         debug=not self.headless,
                     )
@@ -219,33 +231,26 @@ class KinectFrameHub:
                     self._set_status("timeout", "Timed out waiting for a Kinect frame.")
                     continue
 
-                depth_mm = (
-                    capture.depth
-                    if self.headless
-                    else get_depth(capture, args.aligned_depth)
-                )
-                if depth_mm is None:
-                    continue
+                depth_mm = None
 
                 ir_frame = capture.ir
-                depth_for_tracker = capture.depth
+                if ir_frame is None:
+                    continue
+                # Arcade tracking is image-space only. In headless mode do
+                # not materialize the SDK's paired depth image at all.
+                depth_for_tracker = None
+                frame_timestamp_ns = (
+                    getattr(capture, "ir_system_timestamp_nsec", 0)
+                )
+                frame_captured_at = (
+                    frame_timestamp_ns / 1_000_000_000.0
+                    if frame_timestamp_ns
+                    else time.perf_counter()
+                )
 
                 ir_bgr = None
                 if ir_frame is not None and not self.headless:
                     ir_bgr = brightness_to_display(ir_frame)
-
-                color_jpeg = None if self.headless else self.placeholder_color
-                if not self.headless and capture.color is not None:
-                    bgr = color_to_bgr(capture.color)
-                    if bgr is not None:
-                        color_jpeg = encode_jpeg(bgr, args.jpeg_quality)
-
-                depth_jpeg = None
-                if not self.headless:
-                    depth_jpeg = encode_jpeg(
-                        depth_to_display(depth_mm, args.max_depth),
-                        args.jpeg_quality,
-                    )
 
                 now = time.monotonic()
                 self._frame_count += 1
@@ -263,13 +268,31 @@ class KinectFrameHub:
                 if (
                     detector is not None
                     and ir_frame is not None
-                    and depth_for_tracker is not None
                 ):
                     detection = detector.detect(ir_frame, depth_for_tracker)
                     dbg = detector.debug_frame
                     if dbg is not None and not self.headless:
                         tracker_jpeg = encode_jpeg(dbg, args.jpeg_quality)
                     pos, smoothed = tracker.update(detection) if tracker is not None else (None, None)
+
+                # Publish the newest ball result immediately. The periodic
+                # table-pose fit below can be slower and must not hold this
+                # frame back from the arcade game loop.
+                ball_published_at = time.perf_counter()
+                with self.lock:
+                    self.ball_position = pos
+                    if smoothed is not None:
+                        self.ball_detection = smoothed
+                        self._last_ball_r_px = smoothed.radius_px
+                    elif pos is None:
+                        self.ball_detection = None
+                    self._ball_frame_seq += 1
+                    self._ball_frame_captured_at = frame_captured_at
+                    self._ball_processing_ms = max(
+                        0.0,
+                        (ball_published_at - frame_captured_at) * 1000.0,
+                    )
+                    self.lock.notify_all()
 
                 # Draw ball circle directly onto the IR image so it updates at
                 # camera frame rate via the MJPEG stream (not the 350 ms state poll).
@@ -284,10 +307,10 @@ class KinectFrameHub:
                         else self.placeholder_ir
                     )
 
-                # Refresh the table's pose every few frames rather than every
-                # single one — the fit is cheap but there's no need to redo it
-                # at full camera frame rate.
-                pose_jpeg = None
+                # Hand the periodic table-pose fit to a latest-frame worker so
+                # it can never delay capture of the next ball frame. Holding a
+                # reference to capture keeps its image buffers valid; if the
+                # worker falls behind, the pending (stale) job is replaced.
                 self._pose_frame_counter += 1
                 if (
                     ir_frame is not None
@@ -295,36 +318,22 @@ class KinectFrameHub:
                     and self._pose_frame_counter >= args.pose_update_every_n_frames
                 ):
                     self._pose_frame_counter = 0
-                    fx, fy, ppx, ppy = self._intrinsics
-                    pose_attempt = self.table_pose.update(
-                        ir_frame, depth_for_tracker, fx, fy, ppx, ppy,
-                        marker_ir_threshold=self.marker_ir_threshold,
-                    )
-                    if pose_attempt.debug_frame is not None and not self.headless:
-                        pose_jpeg = encode_jpeg(pose_attempt.debug_frame, args.jpeg_quality)
-                    with self.lock:
-                        self._last_pose_attempt = pose_attempt
-
-                with self.lock:
-                    self.ball_position = pos
-                    if smoothed is not None:
-                        self.ball_detection = smoothed
-                        self._last_ball_r_px = smoothed.radius_px
-                    elif pos is None:
-                        self.ball_detection = None
+                    with self._pose_condition:
+                        self._pending_pose = (
+                            capture,
+                            ir_frame,
+                            depth_for_tracker,
+                            self._intrinsics,
+                            self.marker_ir_threshold,
+                        )
+                        self._pose_condition.notify()
 
                 with self.lock:
                     self.seq += 1
                     if not self.headless:
-                        self.color_jpeg = color_jpeg
-                        self.depth_jpeg = depth_jpeg
                         self.ir_jpeg = ir_jpeg
                         if tracker_jpeg is not None:
                             self.tracker_jpeg = tracker_jpeg
-                        if pose_jpeg is not None:
-                            self._pose_debug_jpeg = pose_jpeg
-                        self.depth_mm = depth_mm.copy()
-                        self.depth_shape = depth_mm.shape[:2]
                         self._last_ir_frame = ir_frame
                         self._last_depth_for_tracker = depth_for_tracker
                     self.status = "running"
@@ -336,6 +345,50 @@ class KinectFrameHub:
         finally:
             if self.k4a is not None and self.k4a.is_running:
                 self.k4a.stop()
+
+    def _pose_loop(self):
+        """Fit only the newest queued table frame without blocking capture."""
+        while not self.stop_event.is_set():
+            with self._pose_condition:
+                self._pose_condition.wait_for(
+                    lambda: self._pending_pose is not None or self.stop_event.is_set(),
+                    timeout=0.5,
+                )
+                if self.stop_event.is_set():
+                    return
+                task = self._pending_pose
+                self._pending_pose = None
+            if task is None:
+                continue
+
+            capture_ref, ir_frame, depth_frame, intrinsics, threshold = task
+            fx, fy, ppx, ppy = intrinsics
+            try:
+                with self._pose_lock:
+                    pose_attempt = self.table_pose.update(
+                        ir_frame,
+                        depth_frame,
+                        fx,
+                        fy,
+                        ppx,
+                        ppy,
+                        marker_ir_threshold=threshold,
+                        debug=not self.headless,
+                    )
+                del capture_ref, ir_frame, depth_frame, task
+                pose_jpeg = None
+                if pose_attempt.debug_frame is not None and not self.headless:
+                    pose_jpeg = encode_jpeg(
+                        pose_attempt.debug_frame,
+                        self.args.jpeg_quality,
+                    )
+                with self.lock:
+                    self._last_pose_attempt = pose_attempt
+                    if pose_jpeg is not None:
+                        self._pose_debug_jpeg = pose_jpeg
+                    self.lock.notify_all()
+            except (RuntimeError, ValueError, cv2.error) as exc:
+                self._set_status("pose-error", str(exc))
 
     def _draw_ball_overlay(self, ir_bgr, smoothed, pos):
         """Draw ball circle onto IR image in-place."""
@@ -377,6 +430,15 @@ class KinectFrameHub:
             }.get(kind, self.depth_jpeg or self.placeholder_depth)
         return seq, jpeg
 
+    def wait_for_ball_frame(self, last_seq, timeout=0.01):
+        """Wake a game consumer as soon as a newer tracked frame publishes."""
+        with self.lock:
+            self.lock.wait_for(
+                lambda: self._ball_frame_seq != last_seq or self.stop_event.is_set(),
+                timeout=timeout,
+            )
+            return self._ball_frame_seq
+
     def get_depth_snapshot(self):
         with self.lock:
             return None if self.depth_mm is None else self.depth_mm.copy()
@@ -402,39 +464,58 @@ class KinectFrameHub:
 
     def get_ball_state(self):
         with self.lock:
+            frame_seq = self._ball_frame_seq
+            frame_captured_at = self._ball_frame_captured_at
+            processing_ms = self._ball_processing_ms
             if self.detector is None:
-                return {"enabled": False}
+                return {"enabled": False, "frame_seq": frame_seq}
             pos = self.ball_position
             det = self.ball_detection
             ball_ir_threshold = self.ball_ir_threshold
             reject_counts = dict(self.detector.last_reject_counts)
 
+        frame_age_ms = (
+            max(0.0, (time.perf_counter() - frame_captured_at) * 1000.0)
+            if frame_captured_at is not None
+            else None
+        )
+        latency = {
+            "frame_seq": frame_seq,
+            "processing_ms": round(processing_ms, 1) if processing_ms is not None else None,
+            "capture_to_observation_ms": round(frame_age_ms, 1) if frame_age_ms is not None else None,
+        }
+
         if pos is None:
+            with self._pose_lock:
+                table_tracking = self.table_pose.is_tracking
             return {
                 "enabled": True, "detected": False, "position": None, "position_world": None,
-                "table_tracking": self.table_pose.is_tracking, "pose_stale": None, "pose_age_s": None,
+                "table_tracking": table_tracking, "pose_stale": None, "pose_age_s": None,
                 "cell": None,
                 "pixel": None, "radius_mm": None,
                 "ball_ir_threshold": ball_ir_threshold,
                 "reject_counts": reject_counts,
+                **latency,
             }
 
-        age_s = self.table_pose.age_seconds()
-        stale = self.table_pose.last_error is not None
         position_world = None
         cell = None
-        if det is not None:
-            mapped_cell = self.table_pose.cell_from_pixel(det.cx, det.cy)
-            if mapped_cell is not None:
-                row, col = mapped_cell
-                cell = {"row": row, "col": col}
+        with self._pose_lock:
+            age_s = self.table_pose.age_seconds()
+            stale = self.table_pose.last_error is not None
+            table_tracking = self.table_pose.is_tracking
+            if det is not None:
+                mapped_cell = self.table_pose.cell_from_pixel(det.cx, det.cy)
+                if mapped_cell is not None:
+                    row, col = mapped_cell
+                    cell = {"row": row, "col": col}
 
         return {
             "enabled": True,
             "detected": True,
             "position": {"x": round(pos[0], 1), "y": round(pos[1], 1), "z": round(pos[2], 1)},
             "position_world": position_world,
-            "table_tracking": self.table_pose.is_tracking,
+            "table_tracking": table_tracking,
             "pose_stale": stale,
             "pose_age_s": round(age_s, 1) if age_s is not None else None,
             "cell": cell,
@@ -442,6 +523,7 @@ class KinectFrameHub:
             "radius_mm": round(det.radius_mm, 1) if det else None,
             "ball_ir_threshold": ball_ir_threshold,
             "reject_counts": reject_counts,
+            **latency,
         }
 
     # ------------------------------------------------------------------
@@ -450,23 +532,24 @@ class KinectFrameHub:
 
     def pose_state_json(self):
         with self.lock:
-            tracker = self.table_pose
             marker_ir_threshold = self.marker_ir_threshold
             last_attempt = self._last_pose_attempt
-        age_s = tracker.age_seconds()
-        stale = tracker.last_error is not None
-        result = {
-            "tracking": tracker.is_tracking,
-            "stale": stale if tracker.is_tracking else None,
-            "age_s": round(age_s, 1) if age_s is not None else None,
-            "rms_residual_px": tracker.last_fit.rms_residual_px if tracker.last_fit else None,
-            "max_residual_px": tracker.last_fit.max_residual_px if tracker.last_fit else None,
-            "last_error": tracker.last_error,
-            "marker_ir_threshold": marker_ir_threshold,
-            "tilt_deg": None,
-            "roll_deg": None,
-            "pitch_deg": None,
-        }
+        with self._pose_lock:
+            tracker = self.table_pose
+            age_s = tracker.age_seconds()
+            stale = tracker.last_error is not None
+            result = {
+                "tracking": tracker.is_tracking,
+                "stale": stale if tracker.is_tracking else None,
+                "age_s": round(age_s, 1) if age_s is not None else None,
+                "rms_residual_px": tracker.last_fit.rms_residual_px if tracker.last_fit else None,
+                "max_residual_px": tracker.last_fit.max_residual_px if tracker.last_fit else None,
+                "last_error": tracker.last_error,
+                "marker_ir_threshold": marker_ir_threshold,
+                "tilt_deg": None,
+                "roll_deg": None,
+                "pitch_deg": None,
+            }
         if last_attempt is not None and last_attempt.ok and last_attempt.matched_points is not None:
             result["matched_points"] = {
                 name: {"residual_px": info["residual_px"]}
@@ -500,8 +583,6 @@ class KinectWebHandler(BaseHTTPRequestHandler):
             return self._serve_static(static[path])
 
         streams = {
-            "/stream/color.mjpg": "color",
-            "/stream/depth.mjpg": "depth",
             "/stream/ir.mjpg": "ir",
             "/stream/tracker.mjpg": "tracker",
             "/stream/pose.mjpg": "pose",
@@ -656,6 +737,8 @@ def parse_args(argv=None):
     ball.add_argument("--ball-tracking", action="store_true", default=False)
     ball.add_argument("--ball-radius-min", type=float, default=20.0, metavar="MM")
     ball.add_argument("--ball-radius-max", type=float, default=40.0, metavar="MM")
+    ball.add_argument("--ball-radius-min-px", type=float, default=6.0, metavar="PX")
+    ball.add_argument("--ball-radius-max-px", type=float, default=80.0, metavar="PX")
     ball.add_argument("--ball-ir-threshold", type=int, default=3000, metavar="DN")
 
 
@@ -673,8 +756,10 @@ def parse_args(argv=None):
 
     args = parser.parse_args(argv)
 
-    if args.aligned_depth and args.color_resolution == "off":
-        parser.error("--aligned-depth requires --color-resolution to be enabled")
+    if args.color_resolution != "off":
+        parser.error("only Active Brightness tracking is supported; color_resolution must be off")
+    if args.aligned_depth:
+        parser.error("aligned depth is disabled in the Active Brightness-only pipeline")
     if not 1 <= args.jpeg_quality <= 100:
         parser.error("--jpeg-quality must be 1-100")
     if args.max_depth <= 0:
@@ -691,6 +776,8 @@ def parse_args(argv=None):
         parser.error(str(exc))
     if args.max_marker_radius_mm <= 0:
         parser.error("--max-marker-radius-mm must be greater than 0")
+    if not 0 < args.ball_radius_min_px < args.ball_radius_max_px:
+        parser.error("ball pixel radius range must be positive and increasing")
     return args
 
 

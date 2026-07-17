@@ -20,6 +20,18 @@ from game_runner import (
 
 START_COLOR = "#00E5FF"
 END_COLOR = "#FF00AA"
+DEFAULT_ARCADE_CONFIG = Path(__file__).with_name("config.json")
+
+
+def load_module_start_delay_ms(
+    config_path: Path = DEFAULT_ARCADE_CONFIG,
+) -> int:
+    with Path(config_path).open(encoding="utf-8") as config_file:
+        config = json.load(config_file)
+    value = config.get("modules", {}).get("start_delay_ms")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("arcade modules.start_delay_ms must be a non-negative integer")
+    return value
 
 
 class HardwareError(RuntimeError):
@@ -110,10 +122,14 @@ class ModuleGridHardware(BaseTableHardware):
         port: str = "/dev/arduino-modules",
         baud: int = 115200,
         dry_run: bool = False,
+        arcade_config_path: Path = DEFAULT_ARCADE_CONFIG,
     ) -> None:
         self.port = port
         self.baud = baud
         self.dry_run = dry_run
+        self.module_start_delay_s = (
+            load_module_start_delay_ms(arcade_config_path) / 1000.0
+        )
         self.link: Link | None = None
         self.table: Table | None = None
         self.ready = False
@@ -156,7 +172,13 @@ class ModuleGridHardware(BaseTableHardware):
 
             link = Link(self.port, self.baud, dry_run=self.dry_run)
             link.open_wait()
-            table = Table(link, led_cfg, servo_grid_cfg, servo_configs)
+            table = Table(
+                link,
+                led_cfg,
+                servo_grid_cfg,
+                servo_configs,
+                module_start_delay_s=self.module_start_delay_s,
+            )
             with self._io_lock:
                 table.apply_led_counts()
                 table.all_off()
@@ -418,4 +440,3 @@ class ModuleGridHardware(BaseTableHardware):
                 "level": self.level,
                 "port": self.port,
             }
-

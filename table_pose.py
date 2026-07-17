@@ -363,6 +363,7 @@ class ImageCellTracker:
         self.table_points = {name: point[:2] for name, point in self.world_points.items()}
         self.point_names = list(self.table_points)
         self.H_table_to_image: Optional[np.ndarray] = None
+        self.H_image_to_table: Optional[np.ndarray] = None
         self.last_fit: Optional[ImageHomographyFitResult] = None
         self.last_error: Optional[str] = None
         self.last_success_monotonic: Optional[float] = None
@@ -378,24 +379,48 @@ class ImageCellTracker:
         return (time.monotonic() if now is None else now) - self.last_success_monotonic
 
     def _match_and_fit(self, blobs: list[MarkerBlob]) -> tuple[dict[str, MarkerBlob], ImageHomographyFitResult]:
-        if len(blobs) != len(self.point_names):
-            raise MatchingError(f"expected {len(self.point_names)} markers to match, got {len(blobs)}")
+        required_count = len(self.point_names)
+        if len(blobs) < required_count:
+            raise MatchingError(
+                f"expected at least {required_count} markers to match, got {len(blobs)}"
+            )
         table_pts = np.asarray([self.table_points[name] for name in self.point_names], dtype=np.float32)
         pixels = np.asarray([[blob.cx, blob.cy] for blob in blobs], dtype=np.float32)
         best = second = None
         # The first four named points are the corners. Solve their exact
         # perspective transform with OpenCV's inexpensive four-point routine,
-        # then score the two remaining edge points. This avoids running a
-        # general homography solve for all 6! assignments every frame.
+        # then score every ordered pair of remaining blobs against the two
+        # edge fiducials. When the ball or another reflection produces extra
+        # candidates, this naturally chooses the six-blob arrangement that
+        # best matches the configured geometry and discards the extras.
         corner_pts = table_pts[:4]
-        for corner_indices in itertools.permutations(range(len(blobs)), 4):
+        # Projective transforms preserve the table boundary's convexity: the
+        # four real corner fiducials must lie on the candidate cloud's convex
+        # hull, while the ball and the two edge fiducials lie inside/on its
+        # boundary. Restricting corner hypotheses to the hull avoids a large
+        # combinatorial cost when extra bright blobs are present.
+        hull_indices = cv2.convexHull(
+            pixels.reshape(-1, 1, 2),
+            returnPoints=False,
+        ).reshape(-1)
+        corner_candidates = tuple(int(index) for index in hull_indices)
+        if len(corner_candidates) < 4:
+            corner_candidates = tuple(range(len(blobs)))
+        for corner_indices in itertools.permutations(corner_candidates, 4):
             H = cv2.getPerspectiveTransform(corner_pts, pixels[list(corner_indices)])
+            projected = cv2.perspectiveTransform(
+                table_pts.reshape(-1, 1, 2), H
+            ).reshape(-1, 2)
             remaining = [index for index in range(len(blobs)) if index not in corner_indices]
-            for edge_indices in itertools.permutations(remaining):
+            for edge_indices in itertools.permutations(remaining, 2):
                 perm = corner_indices + edge_indices
-                observed = pixels[list(perm)]
-                projected = cv2.perspectiveTransform(table_pts.reshape(-1, 1, 2), H).reshape(-1, 2)
-                residuals = np.linalg.norm(projected - observed, axis=1)
+                edge_residuals = np.linalg.norm(
+                    projected[4:] - pixels[list(edge_indices)],
+                    axis=1,
+                )
+                residuals = np.concatenate(
+                    (np.zeros(4, dtype=np.float32), edge_residuals)
+                )
                 candidate = (float(np.max(residuals)), perm, H, residuals)
                 if best is None or candidate[0] < best[0]:
                     second, best = best, candidate
@@ -423,13 +448,21 @@ class ImageCellTracker:
         return matched, fit
 
     def update(
-        self, ir_uint16: np.ndarray, depth_mm: np.ndarray, fx: float, fy: float,
+        self, ir_uint16: np.ndarray, depth_mm: Optional[np.ndarray], fx: float, fy: float,
         ppx: float, ppy: float, marker_ir_threshold: Optional[float] = None,
         now: Optional[float] = None,
+        debug: bool = True,
     ) -> "PoseFitAttempt":
         try:
             blobs, debug_frame = detect_markers(
-                ir_uint16, depth_mm, fx, fy, ppx, ppy, ir_min_counts=marker_ir_threshold,
+                ir_uint16,
+                depth_mm,
+                fx,
+                fy,
+                ppx,
+                ppy,
+                ir_min_counts=marker_ir_threshold,
+                debug=debug,
             )
             matched, fit = self._match_and_fit(blobs)
         except DetectionError as exc:
@@ -443,6 +476,7 @@ class ImageCellTracker:
                                 for i, (name, blob) in enumerate(matched.items())},
             )
             self.H_table_to_image = fit.H_table_to_image
+            self.H_image_to_table = np.linalg.inv(fit.H_table_to_image)
             self.last_fit = fit
             self.last_success_monotonic = time.monotonic() if now is None else now
             self.last_error = None
@@ -452,10 +486,14 @@ class ImageCellTracker:
         return attempt
 
     def cell_from_pixel(self, cx: float, cy: float) -> Optional[tuple[int, int]]:
-        if self.H_table_to_image is None:
+        if self.H_image_to_table is None and self.H_table_to_image is not None:
+            self.H_image_to_table = np.linalg.inv(self.H_table_to_image)
+        if self.H_image_to_table is None:
             return None
-        H_image_to_table = np.linalg.inv(self.H_table_to_image)
-        xy = cv2.perspectiveTransform(np.array([[[cx, cy]]], dtype=np.float32), H_image_to_table)[0, 0]
+        xy = cv2.perspectiveTransform(
+            np.array([[[cx, cy]]], dtype=np.float32),
+            self.H_image_to_table,
+        )[0, 0]
         origin = np.asarray(self.table_points["corner_origin"])
         x_corner = np.asarray(self.table_points["corner_x"])
         y_corner = np.asarray(self.table_points["corner_y"])
@@ -506,6 +544,7 @@ class MarkerDetector:
     MIN_CIRCULARITY = 0.6
     DEPTH_SAMPLE_FRACTION = 0.6
     MIN_VALID_DEPTH_FRACTION = 0.10
+    MAX_MARKER_RADIUS_PX = 10.0
 
     def __init__(self, ir_threshold: float = 3800.0, max_marker_radius_mm: float = 15.0):
         # ir_threshold: module default; overridden live via the UI slider in practice.
@@ -524,13 +563,14 @@ class MarkerDetector:
     def detect(
         self,
         ir_uint16: np.ndarray,
-        depth_mm: np.ndarray,
+        depth_mm: Optional[np.ndarray],
         fx: float,
         fy: float,
         ppx: float,
         ppy: float,
         expected_marker_count: int,
         ir_min_counts: Optional[float] = None,
+        debug: bool = True,
     ) -> tuple[list[MarkerBlob], np.ndarray]:
         """
         Run the detection pipeline on one camera frame.
@@ -545,12 +585,14 @@ class MarkerDetector:
         """
         threshold = self.ir_threshold if ir_min_counts is None else ir_min_counts
 
-        bright = (ir_uint16 >= threshold).astype(np.uint8) * 255
+        bright = cv2.compare(ir_uint16, max(1, int(threshold)), cv2.CMP_GE)
 
-        ir_max = float(ir_uint16.max()) if ir_uint16.size else 0.0
-        ir_max_disp = max(1.0, ir_max)
-        ir_disp = np.clip(ir_uint16.astype(np.float32) / ir_max_disp * 255.0, 0, 255).astype(np.uint8)
-        dbg = cv2.cvtColor(ir_disp, cv2.COLOR_GRAY2BGR)
+        dbg = None
+        if debug:
+            ir_max = float(ir_uint16.max()) if ir_uint16.size else 0.0
+            ir_max_disp = max(1.0, ir_max)
+            ir_disp = np.clip(ir_uint16.astype(np.float32) / ir_max_disp * 255.0, 0, 255).astype(np.uint8)
+            dbg = cv2.cvtColor(ir_disp, cv2.COLOR_GRAY2BGR)
 
         _CLR_AREA = (0, 80, 200)     # red — failed area filter
         _CLR_SHAPE = (255, 80, 0)    # blue — failed circularity
@@ -563,7 +605,8 @@ class MarkerDetector:
         for c in contours:
             area = float(cv2.contourArea(c))
             if area < self.MIN_AREA_PX or area > self.MAX_AREA_PX:
-                cv2.drawContours(dbg, [c], -1, _CLR_AREA, 1)
+                if dbg is not None:
+                    cv2.drawContours(dbg, [c], -1, _CLR_AREA, 1)
                 continue
 
             perimeter = float(cv2.arcLength(c, closed=True))
@@ -572,7 +615,8 @@ class MarkerDetector:
 
             circularity = 4.0 * np.pi * area / (perimeter * perimeter)
             if circularity < self.MIN_CIRCULARITY:
-                cv2.drawContours(dbg, [c], -1, _CLR_SHAPE, 1)
+                if dbg is not None:
+                    cv2.drawContours(dbg, [c], -1, _CLR_SHAPE, 1)
                 continue
 
             M = cv2.moments(c)
@@ -583,29 +627,35 @@ class MarkerDetector:
             (_, _), radius_px = cv2.minEnclosingCircle(c)
             radius_px = float(radius_px)
 
-            z_mm = camera_geometry.sample_depth_patch(
-                depth_mm, cx, cy, radius_px, self.DEPTH_SAMPLE_FRACTION, self.MIN_VALID_DEPTH_FRACTION,
-            )
-            if z_mm is None:
-                z_mm = camera_geometry.sample_depth_ring(
-                    depth_mm, cx, cy, radius_px, 1.0, 1.6, self.MIN_VALID_DEPTH_FRACTION,
+            if depth_mm is None:
+                if radius_px > self.MAX_MARKER_RADIUS_PX:
+                    if dbg is not None:
+                        cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_TOO_BIG, 1)
+                    continue
+                # ImageCellTracker consumes only cx/cy. Keep MarkerBlob's
+                # legacy 3-D fields populated without reading a depth image.
+                x_mm, y_mm, z_mm = cx, cy, 0.0
+            else:
+                z_mm = camera_geometry.sample_depth_patch(
+                    depth_mm, cx, cy, radius_px, self.DEPTH_SAMPLE_FRACTION, self.MIN_VALID_DEPTH_FRACTION,
                 )
-            if z_mm is None:
-                cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_DEPTH, 1)
-                continue
-
-            # Pixel area alone can't distinguish "small and close" from "big
-            # and far", so re-check size in real-world mm now that depth is
-            # known — this is what actually keeps the (much larger) ball
-            # from being mistaken for a marker.
-            radius_mm = radius_px * z_mm / fx
-            if radius_mm > self.max_marker_radius_mm:
-                cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_TOO_BIG, 1)
-                continue
-
-            x_mm, y_mm, _ = camera_geometry.unproject_pixel(cx, cy, z_mm, fx, fy, ppx, ppy)
+                if z_mm is None:
+                    z_mm = camera_geometry.sample_depth_ring(
+                        depth_mm, cx, cy, radius_px, 1.0, 1.6, self.MIN_VALID_DEPTH_FRACTION,
+                    )
+                if z_mm is None:
+                    if dbg is not None:
+                        cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_DEPTH, 1)
+                    continue
+                radius_mm = radius_px * z_mm / fx
+                if radius_mm > self.max_marker_radius_mm:
+                    if dbg is not None:
+                        cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_TOO_BIG, 1)
+                    continue
+                x_mm, y_mm, _ = camera_geometry.unproject_pixel(cx, cy, z_mm, fx, fy, ppx, ppy)
             blobs.append(MarkerBlob(cx=cx, cy=cy, radius_px=radius_px, x_mm=x_mm, y_mm=y_mm, z_mm=z_mm))
-            cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_OK, 2)
+            if dbg is not None:
+                cv2.circle(dbg, (int(round(cx)), int(round(cy))), int(round(radius_px)), _CLR_OK, 2)
 
         if len(blobs) < expected_marker_count:
             raise DetectionError(
@@ -621,17 +671,20 @@ _DETECTOR = MarkerDetector()
 
 def detect_markers(
     ir_uint16: np.ndarray,
-    depth_mm: np.ndarray,
+    depth_mm: Optional[np.ndarray],
     fx: float,
     fy: float,
     ppx: float,
     ppy: float,
     ir_min_counts: Optional[float] = None,
-) -> tuple[list[MarkerBlob], np.ndarray]:
+    debug: bool = True,
+) -> tuple[list[MarkerBlob], Optional[np.ndarray]]:
     """Free-function wrapper around the module's default MarkerDetector."""
     return _DETECTOR.detect(
         ir_uint16, depth_mm, fx, fy, ppx, ppy,
-        expected_marker_count=_GEOMETRY.expected_marker_count, ir_min_counts=ir_min_counts,
+        expected_marker_count=_GEOMETRY.expected_marker_count,
+        ir_min_counts=ir_min_counts,
+        debug=debug,
     )
 
 

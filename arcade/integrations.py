@@ -17,6 +17,9 @@ class BallObservation:
     confidence: float = 0.0
     age_s: float | None = None
     pose_fresh: bool = False
+    frame_seq: int | None = None
+    processing_ms: float | None = None
+    capture_to_observation_ms: float | None = None
 
 
 @dataclass(frozen=True)

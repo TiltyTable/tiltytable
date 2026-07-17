@@ -136,11 +136,8 @@ async function fetchState() {
 function renderState(state) {
   cameraDot.className = `status-dot ${state.camera.status}`;
   cameraStatus.textContent = state.camera.status;
-  const dims = state.depth_image?.width && state.depth_image?.height
-    ? `${state.depth_image.width} x ${state.depth_image.height}`
-    : 'depth stream';
   const fps = state.camera.fps ? `${state.camera.fps.toFixed(1)} fps` : 'fps pending';
-  cameraMeta.textContent = state.camera.error || `${dims}, ${fps}`;
+  cameraMeta.textContent = state.camera.error || `Active Brightness, ${fps}`;
 
   renderBall(state.ball);
   renderTablePose(state.table_pose);
@@ -250,7 +247,7 @@ function renderTablePose(pose) {
 }
 
 function searchingLabel(rejectCounts) {
-  const names = { shape: 'not circular', fill: 'not filled', depth: 'no depth', size: 'wrong size' };
+  const names = { shape: 'not circular', fill: 'not filled', size: 'wrong size' };
   const rejects = Object.entries(rejectCounts ?? {})
     .filter(([key, count]) => key !== 'accepted' && count > 0)
     .sort((a, b) => b[1] - a[1]);

@@ -105,8 +105,12 @@ The Azure Kinect path additionally requires the system Azure Kinect Sensor SDK
 ```
 
 The camera service must be able to import `pyk4a` and open device 0. It uses
-the Kinect's factory depth/IMU calibration directly; `extrinsics.json` is not
-part of the active ball/table tracking path.
+the Kinect's factory IR camera calibration directly; `extrinsics.json` is not
+part of the active ball/table tracking path. RGB capture is disabled, and the
+tracker consumes and streams only Active Brightness images—not depth or RGB
+frames. Azure Kinect still requires an active depth mode and its OpenGL-backed
+depth engine to illuminate and produce Active Brightness; the paired depth
+result is generated inside the SDK but is never materialized by this service.
 
 Install Arduino cores and the two non-core sketch libraries:
 
@@ -336,6 +340,11 @@ the four corner fiducials define the cell-map bounds, so no separate table
 length configuration is needed. Thresholds, ball radius, and camera settings
 live in `config.json`.
 
+The tracking algorithms are image-space-only. RGB capture is forced off, and
+neither the integrated arcade nor the diagnostic camera page reads or streams
+depth/RGB frames. `/stream/ir.mjpg`, `/stream/tracker.mjpg`, and
+`/stream/pose.mjpg` contain only raw or annotated Active Brightness images.
+
 Set `table_pose.marker_world_points` in `config.json` to the measured center
 of each fiducial, in millimetres: `corner_origin`, `corner_x`, `corner_xy`,
 `corner_y`, `edge_x`, and `edge_y`. Each value is `[x, y, z]` in the table
@@ -379,8 +388,9 @@ calibration directly.
 When launched from SSH, `run_arcade.sh` attaches the arcade process to the local
 GPU-backed projector display (`:0`) before starting Kinect capture. The Azure
 Kinect depth engine requires that OpenGL display even though the integrated
-tracker does not render preview windows; an SSH-forwarded display such as
-`localhost:10.0` is not sufficient.
+tracker does not consume depth frames or render preview windows; Active
+Brightness illumination still comes from that engine. An SSH-forwarded display
+such as `localhost:10.0` is not sufficient.
 
 Set `TILTYTABLE_ARCADE_PORT` only when the default port `8080` is unavailable:
 

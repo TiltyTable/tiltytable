@@ -19,6 +19,18 @@ from .storage import ScoreStore
 
 STATIC_DIR = Path(__file__).with_name("static")
 EDITOR_DIR = Path(__file__).with_name("editor")
+DEFAULT_ARCADE_CONFIG = Path(__file__).with_name("config.json")
+
+
+def load_game_tick_ms(config_path: Path = DEFAULT_ARCADE_CONFIG) -> int:
+    import json
+
+    with Path(config_path).open(encoding="utf-8") as config_file:
+        config = json.load(config_file)
+    value = config.get("tracking", {}).get("game_tick_ms")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError("arcade tracking.game_tick_ms must be a positive integer")
+    return value
 
 
 def create_app(
@@ -29,7 +41,14 @@ def create_app(
     auto_setup: bool = False,
     ball_adapter: BallTrackingAdapter | None = None,
     tilt_adapter: TiltControlAdapter | None = None,
+    game_tick_ms: int | None = None,
 ) -> Flask:
+    if game_tick_ms is not None and (
+        isinstance(game_tick_ms, bool)
+        or not isinstance(game_tick_ms, int)
+        or game_tick_ms <= 0
+    ):
+        raise ValueError("game_tick_ms must be a positive integer")
     app = Flask(__name__, static_folder=None)
     table = hardware or SimulatedTableHardware()
     scores = ScoreStore(score_path) if score_path else ScoreStore()
@@ -44,6 +63,9 @@ def create_app(
     app.config["GAME_ENGINE"] = engine
 
     stop_event = threading.Event()
+    tick_interval_s = (
+        (game_tick_ms if game_tick_ms is not None else load_game_tick_ms()) / 1000.0
+    )
     tracking.start()
     try:
         if tilt_adapter is not None:
@@ -59,7 +81,14 @@ def create_app(
             tilt_adapter.set_active(engine.tilt_requested())
 
     def ticker() -> None:
-        while not stop_event.wait(0.05):
+        wait_for_frame = getattr(tracking, "wait_for_frame", None)
+        while not stop_event.is_set():
+            if callable(wait_for_frame):
+                wait_for_frame(tick_interval_s)
+                if stop_event.is_set():
+                    break
+            elif stop_event.wait(tick_interval_s):
+                break
             try:
                 engine.tick()
                 sync_tilt()
@@ -233,4 +262,3 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

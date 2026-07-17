@@ -37,6 +37,35 @@ def load_navigation_counts_per_step(
     return value
 
 
+def load_button_debounce_ms(
+    config_path: Path = DEFAULT_ARCADE_CONFIG,
+) -> int:
+    with Path(config_path).open(encoding="utf-8") as config_file:
+        config = json.load(config_file)
+    value = config.get("trackball", {}).get("button_debounce_ms")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(
+            "arcade trackball.button_debounce_ms must be a non-negative integer"
+        )
+    return value
+
+
+def debounce_button_presses(
+    presses: int,
+    now: float,
+    last_accepted_at: float | None,
+    delay_s: float,
+) -> tuple[int, float | None]:
+    """Accept at most one press inside a button's debounce window."""
+    if presses <= 0:
+        return 0, last_accepted_at
+    if delay_s <= 0.0:
+        return presses, now
+    if last_accepted_at is not None and now - last_accepted_at < delay_s:
+        return 0, last_accepted_at
+    return 1, now
+
+
 def navigation_steps(
     delta_y: int,
     remainder: int,
@@ -68,6 +97,7 @@ class StewartTiltService:
         self.navigation_counts_per_step = load_navigation_counts_per_step(
             arcade_config_path
         )
+        self.button_debounce_s = load_button_debounce_ms(arcade_config_path) / 1000.0
         self.controller = controller
         self.trackball = trackball
 
@@ -83,6 +113,8 @@ class StewartTiltService:
         self._navigation_up = 0
         self._navigation_down = 0
         self._navigation_remainder = 0
+        self._last_confirm_at: float | None = None
+        self._last_back_at: float | None = None
         self._args = None
         self._desired_roll = 0.0
         self._desired_pitch = 0.0
@@ -178,6 +210,18 @@ class StewartTiltService:
                 pop_buttons = getattr(self.trackball, "pop_buttons", None)
                 left_presses, right_presses = (
                     pop_buttons() if pop_buttons is not None else (0, 0)
+                )
+                left_presses, self._last_back_at = debounce_button_presses(
+                    left_presses,
+                    now,
+                    self._last_back_at,
+                    self.button_debounce_s,
+                )
+                right_presses, self._last_confirm_at = debounce_button_presses(
+                    right_presses,
+                    now,
+                    self._last_confirm_at,
+                    self.button_debounce_s,
                 )
                 with self._lock:
                     self._back_presses += left_presses

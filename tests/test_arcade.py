@@ -7,15 +7,21 @@ import time
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 from arcade.engine import GameEngine, GameState
-from arcade.hardware import HardwareError, ModuleGridHardware, SimulatedTableHardware
+from arcade.hardware import (
+    HardwareError,
+    ModuleGridHardware,
+    SimulatedTableHardware,
+    load_module_start_delay_ms,
+)
 from arcade.ball_adapters import InProcessKinectBallAdapter, ManualBallAdapter
 from arcade.integrations import BallObservation, TiltStatus
 from arcade.levels import load_levels
-from arcade.server import create_app
+from arcade.server import create_app, load_game_tick_ms
 from arcade.storage import ScoreStore
-from game_runner import load_table_configs
+from game_runner import Table, load_table_configs
 
 
 class FakeClock:
@@ -174,7 +180,7 @@ class IntegratedTrackingTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.clock = FakeClock()
-        self.hardware = SimulatedTableHardware()
+        self.hardware = TrackingHardware()
         self.ball = LiveBallAdapter()
         self.store = ScoreStore(Path(self.temp_dir.name) / "scores.json")
         self.engine = GameEngine(
@@ -212,6 +218,16 @@ class IntegratedTrackingTests(unittest.TestCase):
         self.clock.advance(0.26)
         self.engine.tick()
         self.assertEqual(self.engine.state, GameState.LEVEL_CLEAR)
+        finish = self.engine.current_level.end_cell
+        finish_updates = [
+            update for update in self.hardware.updates if update["key"] == finish
+        ]
+        self.assertEqual(finish_updates[-1]["value"], -1)
+        self.assertEqual(finish_updates[-1]["color"], "#FF00AA")
+        finish_state = next(
+            cell for cell in self.engine.map_cells if cell["key"] == finish
+        )
+        self.assertTrue(finish_state["sunk"])
 
     def test_public_state_does_not_advance_game_state(self) -> None:
         self.engine.start_gauntlet()
@@ -223,17 +239,46 @@ class IntegratedTrackingTests(unittest.TestCase):
         self.engine.tick()
         self.assertEqual(self.engine.state, GameState.PLACEMENT)
 
+    def test_ball_frame_latency_is_recorded_on_game_ingest(self) -> None:
+        class TimedBallAdapter(ManualBallAdapter):
+            def observation(self) -> BallObservation:
+                return BallObservation(
+                    cell="A1",
+                    confidence=0.9,
+                    pose_fresh=True,
+                    frame_seq=23,
+                    processing_ms=5.0,
+                    capture_to_observation_ms=14.0,
+                )
+
+        self.engine.ball_adapter = TimedBallAdapter()
+        self.begin_level_one_placement()
+        self.engine.confirm_placement()
+        self.engine.tick()
+        latency = self.engine.public_state()["ball"]["latency"]
+        self.assertEqual(latency["frameSeq"], 23)
+        self.assertEqual(latency["sensorToTrackerMs"], 5.0)
+        self.assertEqual(latency["trackerToGameMs"], 9.0)
+        self.assertEqual(latency["captureToGameMs"], 14.0)
+        self.assertEqual(latency["averageCaptureToGameMs"], 14.0)
+        self.assertEqual(latency["p95CaptureToGameMs"], 14.0)
+
     def test_headless_adapter_publishes_latest_hub_observation(self) -> None:
         class FakeHub:
             def __init__(self) -> None:
                 self.started = False
                 self.stopped = False
+                self.frame_waits = 0
 
             def start(self) -> None:
                 self.started = True
 
             def stop(self) -> None:
                 self.stopped = True
+
+            def wait_for_ball_frame(self, last_seq: int, timeout: float) -> int:
+                self.frame_waits += 1
+                return 17
 
             @staticmethod
             def get_ball_state() -> dict:
@@ -243,18 +288,33 @@ class IntegratedTrackingTests(unittest.TestCase):
                     "table_tracking": True,
                     "pose_stale": False,
                     "pose_age_s": 0.1,
+                    "frame_seq": 17,
+                    "processing_ms": 6.5,
+                    "capture_to_observation_ms": 11.0,
                 }
 
         hub = FakeHub()
         adapter = InProcessKinectBallAdapter(Path("unused.json"), hub=hub)
         adapter.start()
+        self.assertTrue(adapter.wait_for_frame(0.01))
+        self.assertEqual(hub.frame_waits, 1)
         observation = adapter.observation()
         self.assertTrue(hub.started)
         self.assertEqual(observation.cell, "C5")
         self.assertEqual(observation.confidence, 0.9)
         self.assertTrue(observation.pose_fresh)
+        self.assertEqual(observation.frame_seq, 17)
+        self.assertEqual(observation.processing_ms, 6.5)
+        self.assertEqual(observation.capture_to_observation_ms, 11.0)
         adapter.stop()
         self.assertTrue(hub.stopped)
+
+    def test_game_tick_interval_loads_from_arcade_config(self) -> None:
+        self.assertEqual(load_game_tick_ms(), 10)
+
+    def test_invalid_explicit_game_tick_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            create_app(start_ticker=False, game_tick_ms=0)
 
 
 class ArcadeEngineTests(unittest.TestCase):
@@ -420,6 +480,48 @@ class ScoreStoreTests(unittest.TestCase):
 
 
 class ModuleGridHardwareTests(unittest.TestCase):
+    def test_module_start_delay_is_loaded_and_applied_between_boards(self) -> None:
+        delay_s = load_module_start_delay_ms() / 1000.0
+        self.assertGreater(delay_s, 0.0)
+
+        class FakeLink:
+            dry_run = False
+
+            def __init__(self) -> None:
+                self.boards: list[str] = []
+
+            def send(self, _command: str) -> None:
+                return
+
+            def select_board(self, address: str) -> None:
+                self.boards.append(address)
+
+        link = FakeLink()
+        table = Table(
+            link,
+            {"cells": {}, "strips": {}},
+            {
+                "cells": {
+                    "0,0": {"address": "0x40", "channel": 0},
+                    "0,1": {"address": "0x41", "channel": 0},
+                }
+            },
+            {
+                "0x40": {"servos": {"0": {"neutral": 1500}}},
+                "0x41": {"servos": {"0": {"neutral": 1500}}},
+            },
+            module_start_delay_s=delay_s,
+        )
+        cells = [
+            {"key": "A1", "row": 0, "col": 0, "value": 0, "color": "#000000"},
+            {"key": "B1", "row": 0, "col": 1, "value": 0, "color": "#000000"},
+        ]
+        with redirect_stdout(io.StringIO()), patch("game_runner.time.sleep") as sleep:
+            table.apply_cells(cells)
+
+        self.assertEqual(link.boards, ["0x40", "0x41"])
+        sleep.assert_any_call(delay_s)
+
     def test_current_calibration_has_complete_144_cell_coverage(self) -> None:
         led, servo_grid, servo_configs = load_table_configs()
         ModuleGridHardware._validate_calibration(led, servo_grid, servo_configs)

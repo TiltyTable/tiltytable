@@ -11,7 +11,7 @@
     <div>
       <p class="eyebrow">Azure Kinect + PCA9685</p>
       <h1>TiltyTable Command Center</h1>
-      <p class="lede">Live ball detection, fiducial table-pose tracking, and the raw color feed.</p>
+      <p class="lede">Active Brightness ball detection and fiducial table-pose tracking.</p>
     </div>
     <div class="status-card">
       <span class="status-dot" id="cameraDot"></span>
@@ -46,14 +46,13 @@
             <dl class="readout ball-readout">
               <div><dt>X</dt><dd id="ballX">--</dd></div>
               <div><dt>Y</dt><dd id="ballY">--</dd></div>
-              <div><dt>Z (depth)</dt><dd id="ballZ">--</dd></div>
-              <div><dt>Radius</dt><dd id="ballR">--</dd></div>
+              <div><dt>Z (estimated)</dt><dd id="ballZ">--</dd></div>
+              <div><dt>Radius (estimated)</dt><dd id="ballR">--</dd></div>
             </dl>
             <p class="hint">Table frame: <strong id="ballWorld">not tracking</strong></p>
             <p class="hint">
               <span style="color:#3cc850">&#9644;</span> accepted &nbsp;
               <span style="color:#c8c830">&#9644;</span> wrong size &nbsp;
-              <span style="color:#ff6020">&#9644;</span> no depth &nbsp;
               <span style="color:#3050c8">&#9644;</span> not circular &nbsp;
               <span style="color:#c800c8">&#9644;</span> not filled &nbsp;
               <span style="color:#808080">&#9644;</span> table edge
@@ -93,18 +92,6 @@
       </article>
     </section>
   </main>
-
-  <section class="bottom-feed">
-    <article class="panel feed-panel">
-      <div class="panel-head">
-        <h2>Color Video</h2>
-        <span class="pill">live</span>
-      </div>
-      <div class="color-stage" id="colorStage">
-        <img class="feed-img" id="colorFeed" src="/stream/color.mjpg" alt="Azure Kinect color stream">
-      </div>
-    </article>
-  </section>
 
   <script src="/app.js"></script>
 </body>

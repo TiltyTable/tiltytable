@@ -1,5 +1,12 @@
 {
   "trackball": {
-    "navigation_counts_per_step": 100
+    "navigation_counts_per_step": 100,
+    "button_debounce_ms": 200
+  },
+  "modules": {
+    "start_delay_ms": 10
+  },
+  "tracking": {
+    "game_tick_ms": 10
   }
 }

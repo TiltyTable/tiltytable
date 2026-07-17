@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -130,6 +131,7 @@ class InProcessKinectBallAdapter:
         self._lock = threading.Lock()
         self._hub = hub
         self._started = False
+        self._wait_frame_seq = 0
 
     def start(self) -> None:
         with self._lock:
@@ -151,6 +153,20 @@ class InProcessKinectBallAdapter:
             hub.start()
             self._started = True
 
+    def wait_for_frame(self, timeout_s: float) -> bool:
+        """Wait until the Kinect publishes a new frame or the tick is due."""
+        with self._lock:
+            hub = self._hub
+            started = self._started
+            last_seq = self._wait_frame_seq
+        if not started or hub is None or not hasattr(hub, "wait_for_ball_frame"):
+            time.sleep(timeout_s)
+            return False
+        frame_seq = hub.wait_for_ball_frame(last_seq, timeout=timeout_s)
+        changed = frame_seq != last_seq
+        self._wait_frame_seq = frame_seq
+        return changed
+
     def stop(self) -> None:
         with self._lock:
             hub = self._hub
@@ -167,13 +183,18 @@ class InProcessKinectBallAdapter:
             return BallObservation()
 
         state = hub.get_ball_state()
+        latency = {
+            "frame_seq": state.get("frame_seq"),
+            "processing_ms": state.get("processing_ms"),
+            "capture_to_observation_ms": state.get("capture_to_observation_ms"),
+        }
         cell_data = state.get("cell")
         if not state.get("detected") or not isinstance(cell_data, dict):
-            return BallObservation(age_s=state.get("pose_age_s"))
+            return BallObservation(age_s=state.get("pose_age_s"), **latency)
         try:
             cell = row_col_to_cell_key(int(cell_data["row"]), int(cell_data["col"]))
         except (KeyError, TypeError, ValueError):
-            return BallObservation(age_s=state.get("pose_age_s"))
+            return BallObservation(age_s=state.get("pose_age_s"), **latency)
 
         pose_fresh = bool(state.get("table_tracking")) and not bool(
             state.get("pose_stale")
@@ -183,6 +204,7 @@ class InProcessKinectBallAdapter:
             confidence=0.9 if pose_fresh else 0.4,
             age_s=state.get("pose_age_s"),
             pose_fresh=pose_fresh,
+            **latency,
         )
 
     def current_cell(self) -> str | None:

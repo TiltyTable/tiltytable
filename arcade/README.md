@@ -42,6 +42,14 @@ if needed. The arcade process then owns Kinect tracking, the trackball/Stewart
 motion client, the module grid, game engine, and UI. Do not also run the
 standalone Kinect or Stewart controller programs.
 
+The live Kinect path disables RGB capture and uses only Active Brightness for
+ball detection and image-space table/cell mapping. It does not read or stream
+depth or RGB frames. The Kinect SDK still needs an active depth mode—and thus
+the GPU/OpenGL depth engine—to illuminate the Active Brightness image.
+If the ball or another reflection passes the marker threshold, the pose solver
+selects the six-blob arrangement that best matches the configured fiducial
+geometry and discards extra blobs.
+
 Before starting, the launcher verifies the HTTP port, all level maps referenced
 in `arcade/levels.json`, and—in live mode—the module serial alias, Stewart
 supervisor socket, trackball, Kinect, and complete 144-cell LED/servo
@@ -103,9 +111,32 @@ The cabinet trackball buttons mirror the keyboard controls:
 - Pink left button: back/end-run menu (Escape)
 - Roll the trackball up/down: move through menus and change the selected initial
 
+The cabinet UI is physical-control-only: it shows no mouse cursor or small
+on-screen action buttons. On initials entry, green advances to the next letter
+and locks the initials after the third; on the end-run screen, green confirms
+exit and pink returns to the game.
+
 Trackball menu sensitivity is configured by
 `trackball.navigation_counts_per_step` in `arcade/config.json`. Larger values
 require more physical movement for each UI step.
+
+Physical button debounce is configured in the same file with
+`trackball.button_debounce_ms`. Left and right buttons are debounced
+independently; set it to `0` to disable debouncing.
+
+Level setup batches servo commands by physical module. The extra stagger before
+starting each subsequent module is configured with `modules.start_delay_ms` in
+`arcade/config.json`; set it to `0` to disable the added stagger.
+
+Ball observations are ingested by the game at the interval configured by
+`tracking.game_tick_ms` in `arcade/config.json` (10 ms by default). During
+placement and play, the ball overlay shows measured capture-to-game latency;
+the overlay includes the latest, rolling average, and rolling p95 over up to
+120 frames. The `/api/state` ball payload also breaks the latest sample into
+sensor-to-tracker and tracker-to-game timing. Live Kinect frames wake the game
+ticker immediately, while the configured interval remains its fallback. The
+browser requests current state every 16 ms so visible telemetry follows game
+ingestion within roughly one display frame.
 
 During placement and play, the ball-tracking overlay reports zero-based
 `(x,y)` cells from `(0,0)` at the top-left through `(11,11)` at the bottom-right.
