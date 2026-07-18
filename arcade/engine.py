@@ -427,7 +427,7 @@ class GameEngine:
         else:
             self._end_cell_since = None
 
-        if self._remaining_seconds() <= 0:
+        if self.current_level.is_timed and self._remaining_seconds() <= 0:
             self._finish_attempt_elapsed()
             self.hardware.pause()
             self.state = GameState.TIME_UP

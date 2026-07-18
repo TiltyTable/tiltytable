@@ -34,7 +34,7 @@ def blank_cells() -> dict[str, dict[str, object]]:
 
 
 class CatalogTests(unittest.TestCase):
-    def test_catalog_contains_the_four_arcade_modes(self) -> None:
+    def test_catalog_contains_the_five_arcade_modes(self) -> None:
         catalog = load_levels()
         self.assertEqual(
             [(level.id, level.mode) for level in catalog.levels],
@@ -43,13 +43,29 @@ class CatalogTests(unittest.TestCase):
                 ("hex-a-fall", "hex_fall"),
                 ("snake", "target_hunt"),
                 ("food-frenzy", "food_frenzy"),
+                ("maze", "maze"),
             ],
         )
         for level in catalog.levels:
             self.assertEqual(level.start_cell, "A1")
             colors = {str(cell["color"]).upper() for cell in load_map(level).values()}
-            self.assertNotIn("#680056", colors)
-            self.assertNotIn("#FF00AA", colors)
+            if level.mode != "maze":
+                self.assertNotIn("#680056", colors)
+                self.assertNotIn("#FF00AA", colors)
+
+    def test_maze_restores_original_timed_gates_and_finish(self) -> None:
+        maze = next(level for level in load_levels().levels if level.mode == "maze")
+        cells = load_map(maze)
+        self.assertTrue(maze.has_finish)
+        self.assertFalse(maze.is_timed)
+        self.assertEqual(maze.countdown_seconds, 0)
+        self.assertNotIn("timeLimitSeconds", maze.public_dict())
+        self.assertEqual(cells["A1"]["color"], "#00FFFF")
+        self.assertEqual(cells["L12"]["color"], "#680056")
+        self.assertEqual(
+            [cells[key]["dynamic"]["intervalSeconds"] for key in ("E7", "G7", "I7")],
+            [2.5, 2.5, 2.5],
+        )
 
 
 class HexFallTests(unittest.TestCase):

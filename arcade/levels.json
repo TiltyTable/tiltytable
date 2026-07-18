@@ -115,6 +115,24 @@
         "pointsPerFood": 1
       },
       "seed": 10
+    },
+    {
+      "id": "maze",
+      "number": 5,
+      "title": "Maze",
+      "subtitle": "Race through the shifting maze",
+      "mode": "maze",
+      "map": "maps/arcade-level-4.json",
+      "startCell": "A1",
+      "endCell": "L12",
+      "feature": "Green bridge tiles move on a timer. Cross while they are flush or wait for the next beat.",
+      "rules": [
+        "Follow the orange path from cyan to magenta.",
+        "Green tiles are raised walls; the three gates change every 2.5 seconds.",
+        "Reach magenta at your own pace."
+      ],
+      "kenLine": "Timing puzzle! Green gates cycle every few seconds — roll on the orange beat.",
+      "trollLine": "Dance, little prisoner! The floor moves when I say so."
     }
   ]
 }

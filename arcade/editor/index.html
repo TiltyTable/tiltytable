@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>TiltyTable Maze Editor</title>
+  <link rel="stylesheet" href="/editor/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div><p>MAZE WORKSHOP</p><h1>Trapdoor Tango Editor</h1></div>
+    <div class="header-actions">
+      <a class="button ghost" href="/">Arcade</a>
+      <button id="reloadBtn" class="button ghost">Reload</button>
+      <label class="button ghost">Import<input id="fileInput" type="file" accept=".json,application/json"></label>
+      <button id="exportBtn" class="button ghost">Export</button>
+      <button id="saveBtn" class="button primary">Save Maze</button>
+    </div>
+  </header>
+
+  <main class="workspace">
+    <aside class="panel tools">
+      <section>
+        <h2>Paint cells</h2>
+        <div id="presets" class="presets"></div>
+        <div class="button-grid">
+          <button id="fillBtn">Fill region</button>
+          <button id="undoBtn">Undo</button>
+          <button id="redoBtn">Redo</button>
+          <button id="clearDynamicBtn">Make static</button>
+        </div>
+        <p class="help">Choose a preset, then click each cell you want to change. Hovering and dragging never edit cells.</p>
+      </section>
+
+      <section>
+        <h2>Selected cell</h2>
+        <div class="selected"><strong id="cellKey">A1</strong><span id="cellSummary">Neutral</span></div>
+        <label>Physical state
+          <select id="cellValue">
+            <option value="1">Raised (+1)</option>
+            <option value="0">Neutral (0)</option>
+            <option value="-1">Lowered (-1)</option>
+          </select>
+        </label>
+        <label>LED color <input id="cellColor" type="color"></label>
+      </section>
+
+      <section>
+        <h2>Map checks</h2>
+        <div id="diagnostics"></div>
+      </section>
+    </aside>
+
+    <section class="stage">
+      <div class="board-meta">
+        <span>Screen orientation · origin is bottom right</span>
+        <label><input id="previewToggle" type="checkbox"> Preview dynamics</label>
+        <button id="restartPreviewBtn">Restart preview</button>
+      </div>
+      <div id="board" class="board" role="grid" aria-label="12 by 12 maze editor"></div>
+      <div id="status" class="status">Loading maze…</div>
+    </section>
+
+    <aside class="panel dynamics">
+      <section>
+        <h2>Dynamic behavior</h2>
+        <label>Behavior
+          <select id="dynamicType">
+            <option value="">Static</option>
+            <option value="cycle">Repeating cycle</option>
+            <option value="delayed_trap">Delayed trap</option>
+          </select>
+        </label>
+        <div id="dynamicFields"></div>
+      </section>
+      <section>
+        <h2>Physical states</h2>
+        <ul class="legend">
+          <li><i class="raised"></i><b>Raised</b> wall/blocker</li>
+          <li><i class="neutral"></i><b>Neutral</b> rollable floor</li>
+          <li><i class="lowered"></i><b>Lowered</b> pit/trap</li>
+          <li><i class="dynamic-mark"></i><b>Dot</b> dynamic cell</li>
+        </ul>
+      </section>
+      <section>
+        <h2>Saving</h2>
+        <p class="help">Save writes <code>maps/arcade-level-4.json</code>. The next Maze load uses the new layout; the currently running game is not changed.</p>
+      </section>
+    </aside>
+  </main>
+
+  <script src="/editor/logic.js"></script>
+  <script src="/editor/app.js"></script>
+</body>
+</html>

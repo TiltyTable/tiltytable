@@ -14,11 +14,14 @@ from .engine import GameEngine
 from .hardware import BaseTableHardware, ModuleGridHardware, SimulatedTableHardware
 from .integrations import BallTrackingAdapter, TiltControlAdapter
 from .levels import load_levels
+from .maze_editor import MazeValidationError, load_maze, save_maze
 from .stewart_tilt import StewartTiltService
 from .storage import ScoreStore
 
 STATIC_DIR = Path(__file__).with_name("static")
+EDITOR_DIR = Path(__file__).with_name("editor")
 DEFAULT_ARCADE_CONFIG = Path(__file__).with_name("config.json")
+DEFAULT_MAZE_MAP = Path(__file__).resolve().parents[1] / "maps" / "arcade-level-4.json"
 
 
 def load_game_tick_ms(config_path: Path = DEFAULT_ARCADE_CONFIG) -> int:
@@ -41,6 +44,7 @@ def create_app(
     ball_adapter: BallTrackingAdapter | None = None,
     tilt_adapter: TiltControlAdapter | None = None,
     game_tick_ms: int | None = None,
+    editor_map_path: Path | None = None,
 ) -> Flask:
     if game_tick_ms is not None and (
         isinstance(game_tick_ms, bool)
@@ -60,6 +64,7 @@ def create_app(
         tilt_adapter=tilt_adapter,
     )
     app.config["GAME_ENGINE"] = engine
+    maze_map_path = Path(editor_map_path or DEFAULT_MAZE_MAP)
 
     stop_event = threading.Event()
     tick_interval_s = (
@@ -118,6 +123,42 @@ def create_app(
     @app.get("/PressStart2P-Regular.ttf")
     def pixel_font():
         return send_from_directory(STATIC_DIR, "PressStart2P-Regular.ttf")
+
+    @app.get("/editor")
+    @app.get("/editor/")
+    def maze_editor():
+        return send_from_directory(EDITOR_DIR, "index.html")
+
+    @app.get("/editor/<path:filename>")
+    def maze_editor_asset(filename: str):
+        return send_from_directory(EDITOR_DIR, filename)
+
+    @app.get("/api/editor/maze")
+    def editor_load_maze():
+        try:
+            cells = load_maze(maze_map_path)
+        except (OSError, ValueError) as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({
+            "ok": True,
+            "map": maze_map_path.name,
+            "cells": cells,
+        })
+
+    @app.post("/api/editor/maze")
+    def editor_save_maze():
+        body: dict[str, Any] = request.get_json(silent=True) or {}
+        try:
+            cells = save_maze(maze_map_path, body.get("cells"))
+        except MazeValidationError as exc:
+            return jsonify({"ok": False, "error": str(exc), "errors": exc.errors}), 400
+        except OSError as exc:
+            return jsonify({"ok": False, "error": str(exc)}), 500
+        return jsonify({
+            "ok": True,
+            "map": maze_map_path.name,
+            "cells": cells,
+        })
 
     @app.get("/api/state")
     def state():

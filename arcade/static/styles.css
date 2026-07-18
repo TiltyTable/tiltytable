@@ -1137,6 +1137,7 @@ h1,
 .legend-swatch.orange { background: var(--yellow); }
 .legend-swatch.blue { background: var(--blue); }
 .legend-swatch.green { background: var(--green); }
+.legend-swatch.pink { background: var(--pink); }
 .legend-swatch.red { background: var(--red); }
 .legend-swatch.white { background: #fff; }
 .legend-swatch.blinking { animation: danger 500ms steps(2) infinite; }

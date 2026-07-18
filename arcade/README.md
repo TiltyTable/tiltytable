@@ -4,7 +4,7 @@ Jetson-hosted 854×480 Open Sauce cabinet game.
 
 ## Games
 
-The cabinet opens directly to four game modes:
+The cabinet opens directly to five game modes:
 
 - **Lava Survival** — touched tiles score, warn, and sink. Survive 40 seconds.
 - **Hex-A-Fall** — unique touched tiles score while random tiles warn and sink.
@@ -13,6 +13,7 @@ The cabinet opens directly to four game modes:
   and sinks one floor tile. The run ends when the ball falls into a pit.
 - **Food Frenzy** — collect every food before a 30-second round timer expires;
   each cleared round flashes the board and adds one more simultaneous food.
+- **Trapdoor Tango** — an unlimited-time maze with raised walls and cycling gates.
 
 Lava and Hex keep their mode-specific score when the timer expires. Snake has
 no timer. Dynamic modes have no magenta finish tile.
@@ -81,6 +82,7 @@ The active catalog is `arcade/levels.json`. Maps:
 - `maps/arcade-hex-a-fall.json`
 - `maps/arcade-snake.json`
 - `maps/arcade-food-frenzy.json`
+- `maps/arcade-level-4.json`
 
 Servo `value` controls physics:
 
@@ -88,8 +90,16 @@ Servo `value` controls physics:
 - `1`: raised wall
 - `-1`: recessed pit
 
-The old browser editor and `LevelPackage` pipeline live under
-`archive/arcade/`; they are not served or tested.
+## Maze editor
+
+Open `http://127.0.0.1:8080/editor` while the arcade server is running. The
+editor can set any clicked cell raised, neutral, or lowered; edit LED colors; and
+configure repeating cycles or delayed traps. It supports undo/redo, flood
+fill, dynamic previews, JSON import/export, and validated atomic saves to
+`maps/arcade-level-4.json`.
+
+Saving does not move live hardware or alter a Maze game already in progress.
+The edited map is applied the next time Maze is loaded.
 
 ## Hardware behavior
 

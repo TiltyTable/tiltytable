@@ -159,6 +159,31 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.engine.confirm_placement()
         self.assertEqual(self.engine.state, GameState.PLAYING)
 
+    def test_maze_reaches_magenta_with_unlimited_time(self) -> None:
+        self.begin_dynamic_level("maze")
+        state = self.engine.public_state()
+        self.assertFalse(state["timer"]["running"])
+        self.assertEqual(
+            next(cell for cell in state["mapCells"] if cell["key"] == "L12")["color"],
+            "#680056",
+        )
+
+        self.ball.set_cell("L12")
+        self.engine.tick()
+        self.clock.advance(0.26)
+        self.engine.tick()
+
+        self.assertEqual(self.engine.state, GameState.LEVEL_CLEAR)
+        self.assertEqual(self.engine.last_level_result.remaining_seconds, 0)
+        self.assertEqual(self.engine.last_level_result.score, 1000)
+
+    def test_maze_does_not_time_out(self) -> None:
+        self.begin_dynamic_level("maze")
+        self.ball.set_cell(None)
+        self.clock.advance(3600.0)
+        self.engine.tick()
+        self.assertEqual(self.engine.state, GameState.PLAYING)
+
     def test_hex_scores_touched_tiles_and_keeps_timer(self) -> None:
         self.begin_dynamic_level("hex-a-fall")
         self.clock.advance(0.11)
@@ -247,14 +272,14 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.assertEqual(state["ball"]["confidence"], 1.0)
         self.assertFalse(state["integrations"]["tracking"]["enabled"])
 
-    def test_catalog_contains_four_dynamic_modes(self) -> None:
+    def test_catalog_contains_five_arcade_modes(self) -> None:
         self.assertEqual(
             [level.id for level in self.catalog.levels],
-            ["lava-survival", "hex-a-fall", "snake", "food-frenzy"],
+            ["lava-survival", "hex-a-fall", "snake", "food-frenzy", "maze"],
         )
         self.assertEqual(
             {level.mode for level in self.catalog.levels},
-            {"survival_lava", "hex_fall", "target_hunt", "food_frenzy"},
+            {"survival_lava", "hex_fall", "target_hunt", "food_frenzy", "maze"},
         )
 
 

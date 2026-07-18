@@ -38,11 +38,11 @@ class Level:
 
     @property
     def is_timed(self) -> bool:
-        return self.mode != "target_hunt"
+        return self.mode not in ("target_hunt", "maze")
 
     @property
     def has_finish(self) -> bool:
-        return self.mode is None
+        return self.mode in (None, "maze")
 
     @property
     def countdown_seconds(self) -> float:
@@ -203,9 +203,9 @@ def validate_level(level: Level) -> None:
         )
     if level.start_cell not in raw or level.end_cell not in raw:
         raise ValueError(f"{level.id}: invalid start/end cell")
-    if level.mode is None and level.start_cell == level.end_cell:
+    if level.has_finish and level.start_cell == level.end_cell:
         raise ValueError(f"{level.id}: start and end must differ")
-    if level.has_finish and (
+    if level.has_finish and level.is_timed and (
         level.time_limit_seconds is None or level.time_limit_seconds <= 0
     ):
         raise ValueError(f"{level.id}: time limit must be positive")

@@ -447,6 +447,12 @@ function legendItem(color, label, detail, extraClass = "") {
 
 function modeLegend(level) {
   const common = legendItem("cyan", "CYAN", "Start here");
+  if (level.mode === "maze") {
+    return common
+      + legendItem("orange", "ORANGE", "Open path")
+      + legendItem("green", "GREEN", "Wall / timed gate")
+      + legendItem("pink", "MAGENTA", "Finish");
+  }
   if (level.mode === "survival_lava") {
     return common
       + legendItem("gray", "GRAY", "Open floor")
@@ -575,7 +581,7 @@ function renderPlacement() {
         <p class="hud-level">GAME ${level.number} · ${escapeHtml(level.title)}</p>
         <h1>PLACE<br>THE BALL</h1>
         <p class="hud-instruction">${instruction}</p>
-        ${level.mode === "target_hunt" ? "" : `
+        ${["target_hunt", "maze"].includes(level.mode) ? "" : `
           <div class="hud-stats single">
             <div class="hud-stat"><span>TIME LIMIT</span><strong>${levelTimerSeconds(level)}s</strong></div>
           </div>`}
@@ -592,6 +598,7 @@ function renderPlaying() {
   const hex = level.mode === "hex_fall";
   const hunt = level.mode === "target_hunt";
   const frenzy = level.mode === "food_frenzy";
+  const maze = level.mode === "maze";
   const tracked = isTrackedMode();
   const visited = game.survival?.tilesVisited ?? 0;
   const heating = Boolean(game.survival?.heating);
@@ -617,7 +624,9 @@ function renderPlaying() {
         ? "HEX-A-FALL"
         : survival
           ? "LAVA SURVIVAL"
-          : null;
+          : maze
+            ? "MAZE"
+            : null;
   const instruction = hunt
     ? `Food <strong>${cellKeyToCoordinates(modeState.targetCell)}</strong> · points ${modeState.targetsReached || 0}`
     : frenzy
@@ -640,7 +649,7 @@ function renderPlaying() {
       <div class="hud">
         <p class="hud-level">GAME ${level.number} · ${escapeHtml(level.title)}</p>
         ${modeLabel ? `<p class="hud-kicker ${heating ? "danger" : ""}">${modeLabel}</p>` : ""}
-        ${hunt ? "" : `<div class="timer ${remaining <= 10 ? "danger" : remaining <= 20 ? "warn" : ""}">${String(remaining).padStart(2, "0")}</div>`}
+        ${hunt || maze ? "" : `<div class="timer ${remaining <= 10 ? "danger" : remaining <= 20 ? "warn" : ""}">${String(remaining).padStart(2, "0")}</div>`}
         <div class="hud-stats">
           <div class="hud-stat"><span>RUN SCORE</span><strong>${Number(game.score).toLocaleString()}</strong></div>
           ${tracked ? `<div class="hud-stat"><span>${hunt || frenzy ? "FOOD" : "TILES"}</span><strong>${hunt ? (modeState.targetsReached || 0) : frenzy ? (modeState.foodsCollected || 0) : hex ? (modeState.tilesTouched || 0) : visited}</strong></div>` : ""}
@@ -678,9 +687,12 @@ function renderTimeUp() {
 
 function renderLevelClear() {
   const survival = ["survival_lava", "hex_fall"].includes(game.level?.mode);
+  const maze = game.level?.mode === "maze";
   const sub = survival
     ? "Timer cleared"
-    : `${game.lastLevelResult.remainingSeconds}s left`;
+    : maze
+      ? "Maze completed"
+      : `${game.lastLevelResult.remainingSeconds}s left`;
   return shell(`
     <article class="message-card">
       <p class="kicker">GAME ${game.level.number}</p>
@@ -701,6 +713,7 @@ function renderLevelScore() {
     : (isLastGauntlet ? "FINAL SCORE" : "NEXT CHAMBER");
   const resultLevel = game.levels.find(l => l.id === result.levelId);
   const survival = ["survival_lava", "hex_fall"].includes(resultLevel?.mode);
+  const maze = resultLevel?.mode === "maze";
   const touchedTiles = resultLevel?.mode === "hex_fall"
     ? (game.modeState?.tilesTouched ?? "—")
     : (game.survival?.tilesVisited ?? "—");
@@ -714,6 +727,12 @@ function renderLevelScore() {
         <div><span>Points / tile</span><strong>${pointsPerTile}</strong></div>
         ${survivalThirdStat}
       </div>`
+    : maze
+      ? `<div class="result-grid">
+          <div><span>Clear</span><strong>1,000</strong></div>
+          <div><span>Timer</span><strong>UNLIMITED</strong></div>
+          <div><span>Finish</span><strong>CLEARED</strong></div>
+        </div>`
     : `<div class="result-grid">
         <div><span>Clear</span><strong>1,000</strong></div>
         <div><span>Time bonus</span><strong>+${result.remainingSeconds * 10}</strong></div>
