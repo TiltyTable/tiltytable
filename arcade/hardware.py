@@ -74,10 +74,18 @@ class BaseTableHardware:
     def apply_cell_updates(self, updates: list[dict[str, Any]]) -> None:
         raise NotImplementedError
 
+    def apply_cell_updates_now(self, updates: list[dict[str, Any]]) -> None:
+        """Apply a small terminal update before play is paused."""
+        self.apply_cell_updates(updates)
+
     def unstick_cell(self, row: int, col: int) -> bool:
         raise NotImplementedError
 
-    def flash_all_leds(self, duration_s: float = 1.0) -> bool:
+    def flash_all_leds(
+        self,
+        duration_s: float = 1.0,
+        restore_color: str = "#567DBB",
+    ) -> bool:
         raise NotImplementedError
 
     def shutdown(self) -> None:
@@ -96,6 +104,7 @@ class SimulatedTableHardware(BaseTableHardware):
         self.level = ""
         self.unstick_calls: list[tuple[int, int]] = []
         self.flash_calls = 0
+        self.flash_restore_colors: list[str] = []
 
     def initialize(self) -> None:
         self.ready = True
@@ -125,9 +134,14 @@ class SimulatedTableHardware(BaseTableHardware):
         self.unstick_calls.append((row, col))
         return self.playing
 
-    def flash_all_leds(self, duration_s: float = 1.0) -> bool:
+    def flash_all_leds(
+        self,
+        duration_s: float = 1.0,
+        restore_color: str = "#567DBB",
+    ) -> bool:
         del duration_s
         self.flash_calls += 1
+        self.flash_restore_colors.append(restore_color)
         return self.playing
 
     def shutdown(self) -> None:
@@ -185,6 +199,9 @@ class ModuleGridHardware(BaseTableHardware):
         self._play_started_at: float | None = None
         self._unstick_busy = False
         self._effect_busy = False
+        self._servo_release_lock = threading.Lock()
+        self._servo_release_done = threading.Event()
+        self._servo_release_done.set()
         self._load_phase = ""
         # LED-only effects must never hold up the camera/game tick. Touch
         # feedback has its own priority queue so warning blinks cannot delay a
@@ -319,6 +336,10 @@ class ModuleGridHardware(BaseTableHardware):
     ) -> None:
         assert self.table is not None
         try:
+            # pause() releases servos asynchronously so the UI can leave a
+            # game immediately. Hardware loading still waits for that safety
+            # operation before applying the next map.
+            self._servo_release_done.wait()
             raw = json.loads(map_path.read_text(encoding="utf-8"))
             raw = copy.deepcopy(raw)
             raw[start_cell]["color"] = START_COLOR
@@ -439,7 +460,7 @@ class ModuleGridHardware(BaseTableHardware):
         self._clear_led_updates()
         self._clear_motion_updates()
         self._animation_stop.set()
-        self._release_servos()
+        self._release_servos_async()
 
     def cancel_load(self) -> None:
         """Abort an in-flight level load without disturbing an active play session."""
@@ -470,6 +491,17 @@ class ModuleGridHardware(BaseTableHardware):
         if motion_updates:
             self._enqueue_motion_updates(motion_updates)
 
+    def apply_cell_updates_now(self, updates: list[dict[str, Any]]) -> None:
+        if not updates or not self.table:
+            return
+        with self._state_lock:
+            if not self.playing:
+                return
+        # Finish-cell drops must complete before GameEngine.pause() clears the
+        # asynchronous motion queue.
+        with self._io_lock:
+            self.table.apply_cells(updates)
+
     def _start_led_update_worker(self) -> None:
         if self._led_update_worker is not None and self._led_update_worker.is_alive():
             return
@@ -488,6 +520,14 @@ class ModuleGridHardware(BaseTableHardware):
                     if self._stop.is_set():
                         return
                     if not ready:
+                        continue
+                    with self._state_lock:
+                        effect_busy = self._effect_busy
+                    if effect_busy:
+                        # A full-board flash ends with its restore fill. Keep
+                        # per-cell updates queued so that new food/tiles are
+                        # applied after that fill instead of being overwritten.
+                        self._led_update_ready.wait(timeout=0.02)
                         continue
                     queue = (
                         self._priority_led_update_queue
@@ -625,7 +665,11 @@ class ModuleGridHardware(BaseTableHardware):
         ).start()
         return True
 
-    def flash_all_leds(self, duration_s: float = 1.0) -> bool:
+    def flash_all_leds(
+        self,
+        duration_s: float = 1.0,
+        restore_color: str = "#567DBB",
+    ) -> bool:
         if not self.table:
             return False
         with self._state_lock:
@@ -636,7 +680,6 @@ class ModuleGridHardware(BaseTableHardware):
         def worker() -> None:
             try:
                 with self._io_lock:
-                    floor_rgb = self.table.average_led_rgb("#567DBB")
                     step_s = max(0.05, duration_s / 4.0)
                     for index in range(4):
                         self.table.fill_all_leds(
@@ -644,12 +687,32 @@ class ModuleGridHardware(BaseTableHardware):
                         )
                         if not self.dry_run:
                             time.sleep(step_s)
-                    self.table.fill_all_leds(floor_rgb)
+                    # The initial map load resolves every LED through its
+                    # per-cell calibration. Do the same after a board flash;
+                    # one averaged RGB makes later Food Frenzy rounds visibly
+                    # inconsistent with round one.
+                    self.table.apply_cells(
+                        [
+                            {
+                                "key": f"{chr(65 + col)}{row + 1}",
+                                "row": row,
+                                "col": col,
+                                "value": 0,
+                                "color": restore_color,
+                                "rgb": (0, 0, 0),
+                            }
+                            for row in range(12)
+                            for col in range(12)
+                        ],
+                        leds_only=True,
+                    )
             except Exception as exc:
                 self.error = str(exc)
             finally:
                 with self._state_lock:
                     self._effect_busy = False
+                with self._led_update_ready:
+                    self._led_update_ready.notify_all()
 
         threading.Thread(
             target=worker,
@@ -665,6 +728,26 @@ class ModuleGridHardware(BaseTableHardware):
             for address in BOARD_ORDER:
                 self.link.select_board(address)
                 self.link.send("X")
+
+    def _release_servos_async(self) -> None:
+        with self._servo_release_lock:
+            if not self._servo_release_done.is_set():
+                return
+            self._servo_release_done.clear()
+
+        def worker() -> None:
+            try:
+                self._release_servos()
+            except Exception as exc:
+                self.error = str(exc)
+            finally:
+                self._servo_release_done.set()
+
+        threading.Thread(
+            target=worker,
+            name="arcade-servo-release",
+            daemon=True,
+        ).start()
 
     def _stop_animations(self) -> None:
         with self._state_lock:

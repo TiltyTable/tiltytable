@@ -13,16 +13,18 @@
       "endCell": "L12",
       "feature": "Touched tiles blink red, then fall away.",
       "rules": [
-        "Touch new tiles for points.",
+        "Survive for 100 points per second.",
+        "Touch each new tile for another 100 points.",
         "Move before a blinking tile falls.",
-        "The run ends when the ball falls into a pit."
+        "The run ends after the ball remains in a pit for 2 seconds."
       ],
       "modeParams": {
         "survivalSeconds": 40,
         "dwellSeconds": 1.5,
         "warnSeconds": 2.0,
-        "pitConfirmSeconds": 0.5,
-        "pointsPerTile": 25
+        "pitConfirmSeconds": 2.0,
+        "pointsPerTile": 100,
+        "pointsPerSecond": 100
       }
     },
     {
@@ -31,6 +33,7 @@
       "title": "Hex-A-Fall",
       "subtitle": "Claim the floor before it disappears",
       "mode": "hex_fall",
+      "selectable": false,
       "map": "maps/arcade-hex-a-fall.json",
       "startCell": "A1",
       "endCell": "L12",
@@ -38,11 +41,11 @@
       "rules": [
         "Touch each floor tile once for a point.",
         "Move away from blinking red tiles.",
-        "The run ends when the ball falls into a pit."
+        "The run ends after the ball remains in a pit for 2 seconds."
       ],
       "modeParams": {
         "survivalSeconds": 45,
-        "pitConfirmSeconds": 0.5,
+        "pitConfirmSeconds": 2.0,
         "collapseWarnSeconds": 1.2,
         "pointsPerTile": 1,
         "collapseStages": [
@@ -76,19 +79,19 @@
       "endCell": "L12",
       "feature": "Each food pickup raises a wall and drops a floor tile.",
       "rules": [
-        "Reach the flashing blue food for one point.",
-        "Each point adds one wall and one pit.",
-        "The run ends when the ball falls into a pit."
+        "Reach flashing blue food for 100 points.",
+        "Each pickup adds one wall and one pit.",
+        "The run ends after the ball remains in a pit for 2 seconds."
       ],
       "modeParams": {
         "targetConfirmFrames": 2,
-        "pointsPerTarget": 1,
+        "pointsPerTarget": 100,
         "spawnPitCount": 1,
         "spawnWallCount": 1,
         "minimumReachableCells": 2,
         "minimumTargetDistance": 3,
         "blinkSeconds": 0.25,
-        "pitConfirmSeconds": 0.5
+        "pitConfirmSeconds": 2.0
       },
       "seed": 9
     },
@@ -103,16 +106,16 @@
       "endCell": "L12",
       "feature": "Each round adds another flashing food tile.",
       "rules": [
-        "Collect every flashing blue food before time expires.",
-        "The board flashes, then the next round adds one more food.",
-        "Clear as many foods as possible."
+        "Collect flashing blue food against the yellow floor.",
+        "Clearing every food completes one level for 500 points.",
+        "Clear as many levels as possible before time expires."
       ],
       "modeParams": {
         "roundSeconds": 30,
         "targetConfirmFrames": 2,
         "blinkSeconds": 0.25,
         "celebrationSeconds": 1.0,
-        "pointsPerFood": 1
+        "pointsPerLevel": 500
       },
       "seed": 10
     },
@@ -129,7 +132,8 @@
       "rules": [
         "Follow the orange path from cyan to magenta.",
         "Green tiles are raised walls; the three gates change every 2.5 seconds.",
-        "Reach magenta at your own pace."
+        "Reach magenta as quickly as possible.",
+        "The run ends after the ball remains in a red lowered pit for 2 seconds."
       ],
       "kenLine": "Timing puzzle! Green gates cycle every few seconds — roll on the orange beat.",
       "trollLine": "Dance, little prisoner! The floor moves when I say so."

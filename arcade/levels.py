@@ -31,6 +31,7 @@ class Level:
     pit_confirm_seconds: float | None = None
     mode_params: dict[str, Any] | None = None
     seed: int = 1
+    selectable: bool = True
 
     @property
     def is_survival_lava(self) -> bool:
@@ -172,6 +173,7 @@ def load_levels(path: Path = MANIFEST_PATH) -> LevelCatalog:
             ),
             mode_params=mode_params,
             seed=int(item.get("seed", 1)),
+            selectable=bool(item.get("selectable", True)),
         )
         validate_level(level)
         levels.append(level)

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 DEFAULT_MIN_CONFIDENCE = 0.7
 DEFAULT_DROPOUT_GRACE_SECONDS = 0.15
+PIT_CONFIRM_SECONDS = 2.0
 
 
 @dataclass

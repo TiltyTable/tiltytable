@@ -379,18 +379,20 @@ function renderSetup() {
     dialogue(lore.ken, lore.troll, true));
 }
 
-function leaderboardRows(limit = 8) {
-  const rows = (game.leaderboard || []).slice(0, limit);
-  const total = gauntletTotal();
+function leaderboardRows(limit = 8, levelId = game.level?.id) {
+  const rows = (game.leaderboards?.[levelId] || game.leaderboard || []).slice(0, limit);
+  const level = game.levels.find(item => item.id === levelId) || game.level;
   if (!rows.length) {
-    return `<p class="empty-score">No scores yet — be the first to free Tilty.</p>`;
+    return `<p class="empty-score">No scores yet — be the first.</p>`;
   }
   return rows.map((row, index) => `
     <div class="score-row">
       <span class="rank">${String(index + 1).padStart(2, "0")}</span>
       <span class="initials">${escapeHtml(row.initials)}</span>
-      <span class="points">${Number(row.score).toLocaleString()}</span>
-      <span class="cleared">${row.levelsCleared}/${row.gauntletLevelCount || total}</span>
+      <span class="points">${level?.mode === "maze"
+        ? `${(Number(row.elapsedMs || row.score || 0) / 1000).toFixed(1)}s`
+        : Number(row.score).toLocaleString()}</span>
+      <span class="cleared">${level?.mode === "maze" ? "TIME" : `${(Number(row.elapsedMs || 0) / 1000).toFixed(1)}s`}</span>
     </div>`).join("");
 }
 
@@ -400,10 +402,14 @@ function renderAttract() {
 
 function renderInitials() {
   const chars = initialsDraft.padEnd(3, "A").slice(0, 3).split("");
+  const result = game.lastLevelResult;
+  const scoreText = game.level?.mode === "maze"
+    ? `${(Number(result?.elapsedMs || 0) / 1000).toFixed(1)} seconds`
+    : `${Number(result?.score ?? game.score).toLocaleString()} points`;
   return shell(`
     <div>
-      <h1>YOUR MARK</h1>
-      <p class="hero-sub">Three letters for the escape board</p>
+      <h1>SAVE SCORE</h1>
+      <p class="hero-sub">${escapeHtml(game.level?.title || "Game")} · ${scoreText}</p>
       <p class="initial-progress">LETTER ${initialsCursor + 1} OF 3</p>
       <div class="initials-picker">
         ${chars.map((char, index) => `
@@ -415,23 +421,30 @@ function renderInitials() {
     joinHints(
       navigationHint("CHANGE LETTER"),
       confirmHint(initialsCursor < 2 ? "NEXT LETTER" : "LOCK IN"),
-      backHint(),
+      backHint("SKIP"),
     ),
     dialogue(LORE.initials.ken, LORE.initials.troll, true));
 }
 
 function renderLevelSelect() {
+  const selectedLevel = game.levels[levelChoice] || game.levels[0];
   return shell(`
-    <div style="width:100%">
+    <div class="level-select-layout">
+      <div>
       <h1 class="screen-title">SELECT GAME</h1>
       <p class="hero-sub">${game.levels.length} game modes</p>
       <div class="menu level-select-menu">
         ${game.levels.map((level, index) => `
           <div class="menu-item ${levelChoice === index ? "selected" : ""}">
-            <strong>${String(level.number).padStart(2, "0")} ${escapeHtml(level.title)}</strong>
+            <strong>${String(index + 1).padStart(2, "0")} ${escapeHtml(level.title)}</strong>
             <span class="menu-sub">${escapeHtml(level.subtitle)}</span>
           </div>`).join("")}
       </div>
+      </div>
+      <aside class="leader-card game-leaders">
+        <h2>${escapeHtml(selectedLevel.title)} TOP 8</h2>
+        ${leaderboardRows(8, selectedLevel.id)}
+      </aside>
     </div>`,
     joinHints(navigationHint(), confirmHint("SELECT")),
     dialogue(LORE.levelSelect.ken, LORE.levelSelect.troll, true));
@@ -451,6 +464,7 @@ function modeLegend(level) {
     return common
       + legendItem("orange", "ORANGE", "Open path")
       + legendItem("green", "GREEN", "Wall / timed gate")
+      + legendItem("red", "RED", "Lowered pit / lose", "pit")
       + legendItem("pink", "MAGENTA", "Finish");
   }
   if (level.mode === "survival_lava") {
@@ -469,8 +483,8 @@ function modeLegend(level) {
   }
   if (level.mode === "food_frenzy") {
     return common
-      + legendItem("gray", "GRAY", "Open floor")
-      + legendItem("blue", "FLASHING BLUE", "Food +1", "blinking")
+      + legendItem("orange", "YELLOW", "Open floor")
+      + legendItem("blue", "FLASHING BLUE", "Food", "blinking")
       + legendItem("white", "WHITE FLASH", "Round clear");
   }
   return common
@@ -627,17 +641,42 @@ function renderPlaying() {
           : maze
             ? "MAZE"
             : null;
+  const primaryLabel = frenzy
+    ? "TIME LEFT"
+    : maze
+      ? "CURRENT TIME"
+      : "CURRENT SCORE";
+  const primaryValue = frenzy
+    ? String(remaining).padStart(2, "0")
+    : maze
+      ? `${Number(game.timer.elapsedSeconds || 0).toFixed(1)}s`
+      : Number(game.score || 0).toLocaleString();
+  const primaryStateClass = frenzy
+    ? (remaining <= 10 ? "danger" : remaining <= 20 ? "warn" : "")
+    : "";
   const instruction = hunt
-    ? `Food <strong>${cellKeyToCoordinates(modeState.targetCell)}</strong> · points ${modeState.targetsReached || 0}`
+    ? `Food <strong>${cellKeyToCoordinates(modeState.targetCell)}</strong> · run score <strong>${Number(game.currentModeScore || 0).toLocaleString()}</strong>`
     : frenzy
       ? modeState.celebrating
-        ? `Round cleared · next round adds one more food`
-        : `Food left <strong>${(modeState.targetCells || []).length}</strong> · collected ${modeState.foodsCollected || 0}`
+        ? `Level ${modeState.levelsCompleted || 0} cleared · +500 · run score <strong>${Number(game.currentModeScore || 0).toLocaleString()}</strong>`
+        : `Time left <strong>${remaining}s</strong> · food left <strong>${(modeState.targetCells || []).length}</strong>`
     : hex
       ? `Tiles touched <strong>${modeState.tilesTouched || 0}</strong> · floor ${openTiles}`
       : survival
-        ? `Tiles touched <strong>${visited}</strong> · +${level.pointsPerTile || 0} each`
-        : `Reach magenta <strong>${cellKeyToCoordinates(level.endCell)}</strong>`;
+        ? `Time ${Math.floor(game.timer.elapsedSeconds || 0)}s · tiles <strong>${visited}</strong> · +100 each`
+        : `Time <strong>${Number(game.timer.elapsedSeconds || 0).toFixed(1)}s</strong> · reach magenta <strong>${cellKeyToCoordinates(level.endCell)}</strong>`;
+  const secondaryStats = maze
+    ? `<div class="hud-stat"><span>FINISH</span><strong>${cellKeyToCoordinates(level.endCell)}</strong></div>`
+    : frenzy
+      ? `<div class="hud-stat"><span>RUN SCORE</span><strong>${Number(game.score || 0).toLocaleString()}</strong></div>
+         <div class="hud-stat"><span>LEVELS</span><strong>${modeState.levelsCompleted || 0}</strong></div>`
+      : hunt
+        ? `<div class="hud-stat"><span>FOOD COLLECTED</span><strong>${modeState.targetsReached || 0}</strong></div>`
+        : survival
+          ? `<div class="hud-stat"><span>TIME UP</span><strong>${Math.floor(game.timer.elapsedSeconds || 0)}s</strong></div>
+             <div class="hud-stat"><span>TILES</span><strong>${visited}</strong></div>`
+          : `<div class="hud-stat"><span>TILES</span><strong>${modeState.tilesTouched || 0}</strong></div>
+             <div class="hud-stat"><span>OPEN FLOOR</span><strong>${openTiles}</strong></div>`;
   const footer = joinHints(
     `<span>ROLL TO TILT</span>`,
     confirmHint("UNSTICK"),
@@ -649,11 +688,9 @@ function renderPlaying() {
       <div class="hud">
         <p class="hud-level">GAME ${level.number} · ${escapeHtml(level.title)}</p>
         ${modeLabel ? `<p class="hud-kicker ${heating ? "danger" : ""}">${modeLabel}</p>` : ""}
-        ${hunt || maze ? "" : `<div class="timer ${remaining <= 10 ? "danger" : remaining <= 20 ? "warn" : ""}">${String(remaining).padStart(2, "0")}</div>`}
-        <div class="hud-stats">
-          <div class="hud-stat"><span>RUN SCORE</span><strong>${Number(game.score).toLocaleString()}</strong></div>
-          ${tracked ? `<div class="hud-stat"><span>${hunt || frenzy ? "FOOD" : "TILES"}</span><strong>${hunt ? (modeState.targetsReached || 0) : frenzy ? (modeState.foodsCollected || 0) : hex ? (modeState.tilesTouched || 0) : visited}</strong></div>` : ""}
-        </div>
+        <p class="hud-primary-label">${primaryLabel}</p>
+        <div class="timer ${primaryStateClass}">${primaryValue}</div>
+        <div class="hud-stats ${maze || hunt ? "single" : ""}">${secondaryStats}</div>
         <p class="hud-instruction">${instruction}</p>
       </div>
     </div>`,
@@ -663,14 +700,15 @@ function renderPlaying() {
 
 function renderSurvivalFail() {
   const timedOut = game.level?.mode === "food_frenzy";
+  const resultText = `${Number(game.score).toLocaleString()} PTS`;
   return shell(`
     <article class="message-card">
       <p class="kicker">Game ${game.level.number}</p>
       <h1 style="color:var(--red)">${timedOut ? "TIME!" : "PIT!"}</h1>
       <p class="decision-copy">${timedOut ? "The feast got away." : "The ball fell through the floor."}</p>
-      <p class="result-number">${Number(game.score).toLocaleString()} PTS</p>
+      <p class="result-number">${resultText}</p>
     </article>`,
-    joinHints(confirmHint("TRY AGAIN"), backHint("END RUN")),
+    joinHints(confirmHint("SAVE SCORE"), backHint("SKIP")),
     dialogue(LORE.survivalFail.ken, game.level?.trollLine || LORE.survivalFail.troll, true));
 }
 
@@ -681,7 +719,7 @@ function renderTimeUp() {
       <h1 style="color:var(--red)">TIME UP</h1>
       <p class="result-number">−100</p>
     </article>`,
-    joinHints(confirmHint("TRY AGAIN"), backHint("END RUN")),
+    joinHints(confirmHint("SAVE SCORE"), backHint("SKIP")),
     dialogue(LORE.timeUp.ken, game.level?.trollLine || LORE.timeUp.troll, true));
 }
 
@@ -693,14 +731,17 @@ function renderLevelClear() {
     : maze
       ? "Maze completed"
       : `${game.lastLevelResult.remainingSeconds}s left`;
+  const resultText = maze
+    ? `${(Number(game.lastLevelResult.elapsedMs || 0) / 1000).toFixed(1)}s`
+    : `+${Number(game.lastLevelResult.score).toLocaleString()}`;
   return shell(`
     <article class="message-card">
       <p class="kicker">GAME ${game.level.number}</p>
       <h1>${survival ? "SURVIVED!" : "CLEAR!"}</h1>
-      <p class="result-number">+${Number(game.lastLevelResult.score).toLocaleString()}</p>
+      <p class="result-number">${resultText}</p>
       <p class="decision-copy">${sub}</p>
     </article>`,
-    confirmHint("CONTINUE"),
+    joinHints(confirmHint("CONTINUE"), backHint("SKIP")),
     dialogue(LORE.levelClear.ken, LORE.levelClear.troll, true));
 }
 
@@ -709,7 +750,7 @@ function renderLevelScore() {
   const total = gauntletTotal();
   const isLastGauntlet = game.mode === "gauntlet" && result.levelNumber >= total;
   const nextLabel = game.mode !== "gauntlet"
-    ? "GAME SELECT"
+    ? "ENTER NAME"
     : (isLastGauntlet ? "FINAL SCORE" : "NEXT CHAMBER");
   const resultLevel = game.levels.find(l => l.id === result.levelId);
   const survival = ["survival_lava", "hex_fall"].includes(resultLevel?.mode);
@@ -720,17 +761,16 @@ function renderLevelScore() {
   const pointsPerTile = resultLevel?.mode === "hex_fall"
     ? (resultLevel?.modeParams?.pointsPerTile || 0)
     : (resultLevel?.pointsPerTile || 0);
-  const survivalThirdStat = "<div><span>Timer</span><strong>CLEARED</strong></div>";
   const breakdown = survival
     ? `<div class="result-grid">
         <div><span>Tiles touched</span><strong>${touchedTiles}</strong></div>
-        <div><span>Points / tile</span><strong>${pointsPerTile}</strong></div>
-        ${survivalThirdStat}
+        <div><span>Tile points</span><strong>${Number(touchedTiles || 0) * pointsPerTile}</strong></div>
+        <div><span>Time points</span><strong>${Math.floor(Number(result.elapsedMs || 0) / 1000) * 100}</strong></div>
       </div>`
     : maze
       ? `<div class="result-grid">
-          <div><span>Clear</span><strong>1,000</strong></div>
-          <div><span>Timer</span><strong>UNLIMITED</strong></div>
+          <div><span>Time</span><strong>${(Number(result.elapsedMs || 0) / 1000).toFixed(1)}s</strong></div>
+          <div><span>Score</span><strong>FASTEST WINS</strong></div>
           <div><span>Finish</span><strong>CLEARED</strong></div>
         </div>`
     : `<div class="result-grid">
@@ -741,11 +781,11 @@ function renderLevelScore() {
   return shell(`
     <article class="message-card">
       <p class="kicker">Game ${result.levelNumber} score</p>
-      <h1>${Number(result.score).toLocaleString()} PTS</h1>
+      <h1>${maze ? `${(Number(result.elapsedMs || 0) / 1000).toFixed(1)} SECONDS` : `${Number(result.score).toLocaleString()} PTS`}</h1>
       ${breakdown}
       <p class="next-action-label">${escapeHtml(nextLabel)}</p>
     </article>`,
-    confirmHint("CONTINUE"),
+    joinHints(confirmHint("SAVE SCORE"), backHint("SKIP")),
     dialogue(LORE.levelScore.ken, LORE.levelScore.troll, true));
 }
 
@@ -781,10 +821,10 @@ function renderAbandoned() {
 function renderLeaderboard() {
   return shell(`
     <div style="width:min(670px,90vw)">
-      <h1 class="screen-title">ESCAPE BOARD</h1>
+      <h1 class="screen-title">${escapeHtml(game.level?.title || "GAME")} TOP 10</h1>
       <aside class="leader-card" style="margin-top:16px">${leaderboardRows(10)}</aside>
     </div>`,
-    confirmHint("TITLE"),
+    joinHints(confirmHint("TRY AGAIN"), backHint("GAME SELECT")),
     dialogue(LORE.leaderboard.ken, LORE.leaderboard.troll, true));
 }
 
@@ -940,7 +980,8 @@ function handleStateAudio() {
     lastTimerBand = null;
   }
   audio.setMusic(["attract", "initials", "rules", "leaderboard"].includes(game.state));
-  if (game.state === "playing" && game.timer.running) {
+  const showsCountdown = ["food_frenzy", "hex_fall"].includes(game.level?.mode);
+  if (game.state === "playing" && game.timer.running && showsCountdown) {
     const second = game.timer.remainingSeconds;
     if (second !== lastTimerSecond && second <= 10) audio.warning();
     if (second !== lastTimerSecond) {
@@ -1075,9 +1116,11 @@ document.addEventListener("keydown", event => {
     case "level_clear":
     case "level_score":
     case "run_summary":
-    case "leaderboard":
     case "abandoned":
       if (key === "Enter" || key === " ") postAction("continue");
+      break;
+    case "leaderboard":
+      if (key === "Enter" || key === " ") postAction("retry");
       break;
     case "placement":
       if (key === "Enter" || key === " ") postAction("confirm-placement");

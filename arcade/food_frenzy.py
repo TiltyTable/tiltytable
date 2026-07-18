@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 FOOD_COLOR = "#001FFF"
-FLOOR_COLOR = "#567DBB"
+FLOOR_COLOR = "#F49400"
 
 
 @dataclass(frozen=True)
@@ -16,7 +16,7 @@ class FoodFrenzyParams:
     target_confirm_frames: int = 2
     blink_seconds: float = 0.25
     celebration_seconds: float = 1.0
-    points_per_food: int = 1
+    points_per_level: int = 500
     seed: int = 1
 
 
@@ -30,6 +30,7 @@ class FoodFrenzySession:
     remaining_seconds: float
     last_tick_at: float
     round_number: int = 1
+    levels_completed: int = 0
     foods_collected: int = 0
     confirm_cell: str | None = None
     confirm_frames: int = 0
@@ -45,6 +46,7 @@ class FoodFrenzyTickResult:
     hardware_updates: list[dict[str, Any]]
     target_cells: tuple[str, ...]
     round_number: int
+    levels_completed: int
     foods_collected: int
     remaining_seconds: float
     score: int
@@ -136,7 +138,8 @@ def tick_food_frenzy(
             round_number=session.round_number,
             foods_collected=session.foods_collected,
             remaining_seconds=session.remaining_seconds,
-            score=session.foods_collected * session.params.points_per_food,
+            score=session.levels_completed * session.params.points_per_level,
+            levels_completed=session.levels_completed,
             celebrating=session.celebrating_until is not None,
             lost=False,
         )
@@ -151,7 +154,7 @@ def tick_food_frenzy(
     ):
         session.target_blink_on = not session.target_blink_on
         session.last_blink_at = now
-        blink_color = FOOD_COLOR if session.target_blink_on else "#000000"
+        blink_color = FOOD_COLOR if session.target_blink_on else FLOOR_COLOR
         updates.extend(
             _entry(key, session.row_col, blink_color)
             for key in sorted(session.target_cells)
@@ -178,6 +181,7 @@ def tick_food_frenzy(
             session.confirm_cell = None
             session.confirm_frames = 0
             if not session.target_cells:
+                session.levels_completed += 1
                 session.celebrating_until = (
                     now + session.params.celebration_seconds
                 )
@@ -190,9 +194,10 @@ def tick_food_frenzy(
         hardware_updates=updates,
         target_cells=tuple(sorted(session.target_cells)),
         round_number=session.round_number,
+        levels_completed=session.levels_completed,
         foods_collected=session.foods_collected,
         remaining_seconds=session.remaining_seconds,
-        score=session.foods_collected * session.params.points_per_food,
+        score=session.levels_completed * session.params.points_per_level,
         celebrating=session.celebrating_until is not None,
         lost=lost,
         effect=effect,
@@ -205,6 +210,6 @@ def params_from_dict(raw: dict[str, Any], seed: int = 1) -> FoodFrenzyParams:
         target_confirm_frames=max(1, int(raw.get("targetConfirmFrames", 2))),
         blink_seconds=float(raw.get("blinkSeconds", 0.25)),
         celebration_seconds=float(raw.get("celebrationSeconds", 1)),
-        points_per_food=int(raw.get("pointsPerFood", 1)),
+        points_per_level=int(raw.get("pointsPerLevel", 500)),
         seed=seed,
     )

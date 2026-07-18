@@ -9,6 +9,7 @@ from arcade.survival_lava import (
     WARN_OFF_COLOR,
     SurvivalLavaSession,
     SurvivalParams,
+    survival_score,
     tick_survival_lava,
 )
 
@@ -83,7 +84,7 @@ class SurvivalLavaLogicTests(unittest.TestCase):
         tick_survival_lava(session, "F6", 3.6, self.row_col)
         result = tick_survival_lava(session, "F6", 3.8, self.row_col)
         self.assertFalse(result.ball_on_lava)
-        result = tick_survival_lava(session, "F6", 4.2, self.row_col)
+        result = tick_survival_lava(session, "F6", 5.81, self.row_col)
         self.assertTrue(result.ball_on_lava)
 
     def test_flicker_over_pit_does_not_lose(self) -> None:
@@ -102,7 +103,7 @@ class SurvivalLavaLogicTests(unittest.TestCase):
         tick_survival_lava(session, "F6", 3.6, self.row_col)
         tick_survival_lava(session, "F6", 3.7, self.row_col)
         tick_survival_lava(session, None, 3.75, self.row_col)
-        result = tick_survival_lava(session, "F6", 4.25, self.row_col)
+        result = tick_survival_lava(session, "F6", 5.71, self.row_col)
         self.assertTrue(result.ball_on_lava)
 
     def test_low_confidence_does_not_confirm_pit(self) -> None:
@@ -153,6 +154,17 @@ class SurvivalLavaLogicTests(unittest.TestCase):
         tick_survival_lava(session, "F6", 0.0, self.row_col)
         result = tick_survival_lava(session, "G6", 1.0, self.row_col)
         self.assertEqual(result.visited_count, 2)
+
+    def test_score_combines_whole_seconds_and_unique_tiles(self) -> None:
+        self.assertEqual(
+            survival_score(
+                3,
+                7.9,
+                points_per_tile=100,
+                points_per_second=100,
+            ),
+            1000,
+        )
 
     def test_kinect_jitter_does_not_reset_touch_timer(self) -> None:
         """Brief neighbor flicker must not reset an armed tile's touch clock."""

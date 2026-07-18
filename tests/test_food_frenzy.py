@@ -57,7 +57,8 @@ class FoodFrenzyTests(unittest.TestCase):
             0.14,
             observation_frame=2,
         )
-        self.assertEqual(cleared.score, 1)
+        self.assertEqual(cleared.score, 500)
+        self.assertEqual(cleared.levels_completed, 1)
         self.assertTrue(cleared.celebrating)
         self.assertEqual(cleared.effect, "flash_all")
 
@@ -68,6 +69,7 @@ class FoodFrenzyTests(unittest.TestCase):
             observation_frame=3,
         )
         self.assertEqual(next_round.round_number, 2)
+        self.assertEqual(next_round.score, 500)
         self.assertEqual(len(next_round.target_cells), 2)
         self.assertEqual(next_round.remaining_seconds, 30)
 
@@ -75,7 +77,7 @@ class FoodFrenzyTests(unittest.TestCase):
         target = next(iter(self.session.target_cells))
         off = tick_food_frenzy(self.session, None, 0.25)
         self.assertEqual(off.hardware_updates[-1]["key"], target)
-        self.assertEqual(off.hardware_updates[-1]["color"], "#000000")
+        self.assertEqual(off.hardware_updates[-1]["color"], "#F49400")
 
         on = tick_food_frenzy(self.session, None, 0.50)
         self.assertEqual(on.hardware_updates[-1]["key"], target)

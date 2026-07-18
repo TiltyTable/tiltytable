@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from .pit_detection import DEFAULT_MIN_CONFIDENCE, PitDetector
+from .pit_detection import DEFAULT_MIN_CONFIDENCE, PIT_CONFIRM_SECONDS, PitDetector
 
 LAVA_COLOR = "#FF0000"
 # Palette ``floor`` hex — legacy map #567DBB nearest-neighbors to ``points`` (blue) on LEDs.
@@ -14,7 +14,7 @@ FLOOR_COLOR = "#C8D0D8"
 VISITED_COLOR = "#F49400"
 WARN_OFF_COLOR = "#000000"
 DEFAULT_SETTLE_SECONDS = 0.0
-DEFAULT_PIT_CONFIRM_SECONDS = 0.5
+DEFAULT_PIT_CONFIRM_SECONDS = PIT_CONFIRM_SECONDS
 DEFAULT_MIN_PIT_CONFIDENCE = DEFAULT_MIN_CONFIDENCE
 # Keep the warning animation at a readable cadence even though ball-cell
 # selection now runs on every camera frame.
@@ -302,6 +302,14 @@ def tick_survival_lava(
 
 def survival_score(
     visited_count: int,
-    points_per_tile: int,
+    elapsed_seconds: float,
+    *,
+    points_per_tile: int = 100,
+    points_per_second: int = 100,
 ) -> int:
-    return max(0, visited_count * points_per_tile)
+    survived_whole_seconds = max(0, int(elapsed_seconds))
+    return max(
+        0,
+        visited_count * points_per_tile
+        + survived_whole_seconds * points_per_second,
+    )

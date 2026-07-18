@@ -136,9 +136,9 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.assertEqual(self.engine.state, GameState.LEVEL_CLEAR)
         result = self.engine.last_level_result
         self.assertIsNotNone(result)
-        self.assertEqual(result.score, 0)
+        self.assertEqual(result.score, 4000)
 
-    def test_survival_lava_fail_allows_retry(self) -> None:
+    def test_survival_lava_fail_saves_to_its_leaderboard(self) -> None:
         self.begin_lava_survival()
         for _ in range(60):
             self.clock.advance(0.12)
@@ -147,8 +147,33 @@ class ArcadeSurvivalTests(unittest.TestCase):
                 break
         self.assertEqual(self.engine.state, GameState.SURVIVAL_FAIL)
         self.engine.continue_action()
+        self.assertEqual(self.engine.state, GameState.INITIALS)
+        self.engine.set_initials("ACE")
+        self.assertEqual(self.engine.state, GameState.LEADERBOARD)
+        rows = self.engine.public_state()["leaderboards"]["lava-survival"]
+        self.assertEqual(rows[0]["initials"], "ACE")
+        self.assertEqual(rows[0]["levelId"], "lava-survival")
+
+        self.engine.retry_level()
+        self.assertEqual(self.engine.state, GameState.RESTARTING)
+        self.assertEqual(self.engine.initials, "ACE")
         self.engine.tick()
-        self.assertEqual(self.engine.state, GameState.PLACEMENT)
+        self.engine.confirm_placement()
+        for _ in range(60):
+            self.clock.advance(0.12)
+            self.engine.tick()
+            if self.engine.state == GameState.SURVIVAL_FAIL:
+                break
+        self.assertEqual(self.engine.state, GameState.SURVIVAL_FAIL)
+
+        self.engine.continue_action()
+        self.assertEqual(self.engine.state, GameState.INITIALS)
+        self.assertEqual(self.engine.initials, "ACE")
+        self.engine.set_initials("ACE")
+        self.assertEqual(self.engine.state, GameState.LEADERBOARD)
+        rows = self.store.top_for_level("lava-survival")
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(row["initials"] == "ACE" for row in rows))
 
     def begin_dynamic_level(self, level_id: str) -> None:
         self.engine.show_level_select()
@@ -175,7 +200,24 @@ class ArcadeSurvivalTests(unittest.TestCase):
 
         self.assertEqual(self.engine.state, GameState.LEVEL_CLEAR)
         self.assertEqual(self.engine.last_level_result.remaining_seconds, 0)
-        self.assertEqual(self.engine.last_level_result.score, 1000)
+        self.assertEqual(self.engine.last_level_result.score, 260)
+        finish_update = next(
+            update for update in reversed(self.hardware.updates)
+            if update["key"] == "L12"
+        )
+        self.assertEqual(finish_update["value"], -1)
+        self.assertEqual(finish_update["color"], "#FF00AA")
+
+        self.engine.continue_action()
+        self.assertEqual(self.engine.state, GameState.LEVEL_SCORE)
+        self.engine.continue_action()
+        self.assertEqual(self.engine.state, GameState.INITIALS)
+        self.engine.set_initials("MAZ")
+        self.assertEqual(self.engine.state, GameState.LEADERBOARD)
+        self.assertEqual(
+            self.engine.public_state()["leaderboard"][0]["initials"],
+            "MAZ",
+        )
 
     def test_maze_does_not_time_out(self) -> None:
         self.begin_dynamic_level("maze")
@@ -184,24 +226,33 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.engine.tick()
         self.assertEqual(self.engine.state, GameState.PLAYING)
 
-    def test_hex_scores_touched_tiles_and_keeps_timer(self) -> None:
-        self.begin_dynamic_level("hex-a-fall")
-        self.clock.advance(0.11)
+    def test_maze_red_pit_ends_game_and_cannot_be_unstuck(self) -> None:
+        self.begin_dynamic_level("maze")
+        pit = next(
+            cell for cell in self.engine.map_cells if int(cell["value"]) == -1
+        )
+        self.ball.set_cell(pit["key"])
         self.engine.tick()
-        state = self.engine.public_state()
-        self.assertTrue(state["timer"]["running"])
-        self.assertEqual(state["timer"]["remainingSeconds"], 45)
-        self.assertEqual(state["modeState"]["tilesTouched"], 1)
-        self.assertEqual(state["score"], 1)
-        self.assertNotIn("#680056", {cell["color"] for cell in state["mapCells"]})
+        self.assertEqual(self.engine.state, GameState.PLAYING)
+        self.assertFalse(self.engine.unstick())
 
-    def test_hex_survives_when_timer_expires(self) -> None:
-        self.begin_dynamic_level("hex-a-fall")
-        self.ball.set_cell(None)
-        self.clock.advance(45.0)
+        self.clock.advance(1.99)
         self.engine.tick()
-        self.assertEqual(self.engine.state, GameState.LEVEL_CLEAR)
+        self.assertEqual(self.engine.state, GameState.PLAYING)
+
+        self.clock.advance(0.02)
+        self.engine.tick()
+
+        self.assertEqual(self.engine.state, GameState.SURVIVAL_FAIL)
         self.assertEqual(self.engine.last_level_result.score, 0)
+
+    def test_hex_is_hidden_and_cannot_be_selected(self) -> None:
+        self.assertNotIn(
+            "hex-a-fall",
+            {level["id"] for level in self.engine.public_state()["levels"]},
+        )
+        with self.assertRaises(ValueError):
+            self.engine.select_practice_level("hex-a-fall")
 
     def test_snake_scores_food_and_has_no_timer(self) -> None:
         self.begin_dynamic_level("snake")
@@ -216,11 +267,26 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.engine.tick()
         state = self.engine.public_state()
         self.assertFalse(state["timer"]["running"])
-        self.assertEqual(state["score"], 1)
+        self.assertEqual(state["score"], 100)
         self.assertEqual(sum(cell["value"] == 1 for cell in state["mapCells"]), 1)
         self.assertEqual(sum(cell["value"] == -1 for cell in state["mapCells"]), 1)
 
-    def test_unstick_only_pulses_confident_neutral_ball_cell(self) -> None:
+    def test_snake_game_over_opens_initials_and_pink_can_skip(self) -> None:
+        self.begin_dynamic_level("snake")
+        self.engine._mode_session.cells["A1"]["value"] = -1
+        self.ball.set_cell("A1")
+        self.engine.tick()
+        self.clock.advance(2.01)
+        self.engine.tick()
+        self.assertEqual(self.engine.state, GameState.SURVIVAL_FAIL)
+
+        self.engine.continue_action()
+        self.assertEqual(self.engine.state, GameState.INITIALS)
+        self.engine.abandon()
+        self.assertEqual(self.engine.state, GameState.LEVEL_SELECT)
+        self.assertEqual(self.store.top_for_level("snake"), [])
+
+    def test_unstick_pulses_non_red_cells_but_not_recessed_or_red(self) -> None:
         self.begin_dynamic_level("snake")
         self.ball.set_cell("A1")
         self.assertTrue(self.engine.unstick())
@@ -231,6 +297,16 @@ class ArcadeSurvivalTests(unittest.TestCase):
         cell = next(cell for cell in self.engine.map_cells if cell["key"] == "A1")
         cell["value"] = -1
         cell["sunk"] = True
+        self.assertFalse(self.engine.unstick())
+
+        cell["value"] = 1
+        cell["sunk"] = False
+        cell["color"] = "#4DFF00"
+        self.assertTrue(self.engine.unstick())
+
+        self.clock.advance(2.5)
+        cell["value"] = 0
+        cell["color"] = "#FF0000"
         self.assertFalse(self.engine.unstick())
 
     def test_food_frenzy_round_clear_triggers_board_flash(self) -> None:
@@ -244,7 +320,34 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.clock.advance(0.01)
         self.engine.tick()
         self.assertEqual(self.hardware.flash_calls, 1)
-        self.assertEqual(self.engine.public_state()["score"], 1)
+        self.assertEqual(self.hardware.flash_restore_colors, ["#F49400"])
+        self.assertEqual(self.engine.public_state()["score"], 500)
+
+    def test_food_frenzy_recessed_cell_ends_game(self) -> None:
+        self.begin_dynamic_level("food-frenzy")
+        self.clock.advance(0.01)
+        self.engine.tick()
+        target_cells = set(
+            self.engine.public_state()["modeState"]["targetCells"]
+        )
+        pit = next(
+            cell
+            for cell in self.engine.map_cells
+            if cell["key"] not in target_cells
+            and cell["key"] != self.engine.current_level.start_cell
+        )
+        pit["value"] = -1
+        self.ball.set_cell(pit["key"])
+        self.engine.tick()
+        self.assertEqual(self.engine.state, GameState.PLAYING)
+
+        self.clock.advance(1.99)
+        self.engine.tick()
+        self.assertEqual(self.engine.state, GameState.PLAYING)
+
+        self.clock.advance(0.02)
+        self.engine.tick()
+        self.assertEqual(self.engine.state, GameState.SURVIVAL_FAIL)
 
     def test_new_lava_cell_is_selected_on_next_tracking_frame(self) -> None:
         self.begin_lava_survival()
@@ -444,7 +547,7 @@ class ArcadeEngineTests(unittest.TestCase):
         self.assertEqual(engine.state, GameState.LEVEL_LOADING)
         self.assertTrue(hardware.snapshot()["busy"])
         engine.abandon()
-        self.assertEqual(engine.state, GameState.ABANDONED)
+        self.assertEqual(engine.state, GameState.LEVEL_SELECT)
         self.assertFalse(hardware.snapshot()["busy"])
 
     def test_manual_restart_exposes_restarting_state(self) -> None:
@@ -497,8 +600,107 @@ class ScoreStoreTests(unittest.TestCase):
             raw = json.loads((Path(temp) / "scores.json").read_text())
             self.assertEqual(raw["version"], 1)
 
+    def test_game_mode_leaderboards_are_separate_and_rank_by_score(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            store = ScoreStore(Path(temp) / "scores.json")
+            base = {
+                "levelsCleared": 0,
+                "gauntletLevelCount": 1,
+                "elapsedMs": 1000,
+                "complete": False,
+            }
+            store.add({**base, "initials": "LOW", "score": 2, "levelId": "snake"})
+            store.add({**base, "initials": "TOP", "score": 9, "levelId": "snake"})
+            store.add({**base, "initials": "LAV", "score": 50, "levelId": "lava-survival"})
+
+            self.assertEqual(
+                [row["initials"] for row in store.top_for_level("snake")],
+                ["TOP", "LOW"],
+            )
+            self.assertEqual(
+                [row["initials"] for row in store.top_for_level("lava-survival")],
+                ["LAV"],
+            )
+
+    def test_maze_leaderboard_ranks_fastest_time_first(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            store = ScoreStore(Path(temp) / "scores.json")
+            base = {
+                "levelId": "maze",
+                "levelTitle": "Maze",
+                "scoreType": "time",
+                "scoringVersion": 2,
+                "levelsCleared": 1,
+                "gauntletLevelCount": 1,
+                "complete": True,
+            }
+            store.add({**base, "initials": "SLO", "score": 2500, "elapsedMs": 2500})
+            store.add({**base, "initials": "FST", "score": 900, "elapsedMs": 900})
+            self.assertEqual(
+                [row["initials"] for row in store.top_for_level("maze")],
+                ["FST", "SLO"],
+            )
+
 
 class ModuleGridHardwareTests(unittest.TestCase):
+    def test_pause_returns_before_slow_servo_release_finishes(self) -> None:
+        class BlockingLink:
+            def __init__(self) -> None:
+                self.started = threading.Event()
+                self.unblock = threading.Event()
+
+            def select_board(self, address: str) -> None:
+                del address
+                self.started.set()
+                self.unblock.wait(0.5)
+
+            def send(self, command: str) -> None:
+                del command
+
+        hardware = ModuleGridHardware(dry_run=True)
+        link = BlockingLink()
+        hardware.link = link  # type: ignore[assignment]
+        hardware.playing = True
+
+        started_at = time.perf_counter()
+        hardware.pause()
+        elapsed = time.perf_counter() - started_at
+
+        self.assertLess(elapsed, 0.1)
+        self.assertTrue(link.started.wait(0.1))
+        self.assertFalse(hardware._servo_release_done.is_set())
+        link.unblock.set()
+        self.assertTrue(hardware._servo_release_done.wait(0.5))
+
+    def test_board_flash_restores_each_cell_through_calibration(self) -> None:
+        class FakeTable:
+            def __init__(self) -> None:
+                self.fills: list[tuple[int, int, int]] = []
+                self.restored: list[dict] = []
+                self.called = threading.Event()
+
+            def fill_all_leds(self, rgb: tuple[int, int, int]) -> None:
+                self.fills.append(rgb)
+
+            def apply_cells(self, updates: list[dict], leds_only: bool = False) -> None:
+                self.assert_leds_only = leds_only
+                self.restored = updates
+                self.called.set()
+
+        hardware = ModuleGridHardware(dry_run=True)
+        table = FakeTable()
+        hardware.table = table  # type: ignore[assignment]
+        hardware.playing = True
+
+        self.assertTrue(hardware.flash_all_leds(1.0, restore_color="#F49400"))
+        self.assertTrue(table.called.wait(0.25))
+        self.assertEqual(len(table.fills), 4)
+        self.assertTrue(table.assert_leds_only)
+        self.assertEqual(len(table.restored), 144)
+        self.assertTrue(
+            all(update["color"] == "#F49400" for update in table.restored)
+        )
+
     def test_led_worker_survives_an_empty_queue_timeout(self) -> None:
         hardware = ModuleGridHardware(dry_run=True)
         hardware._start_led_update_worker()
@@ -534,6 +736,41 @@ class ModuleGridHardwareTests(unittest.TestCase):
 
         self.assertTrue(table.called.wait(0.25))
         self.assertEqual(table.calls, [([update], True)])
+        hardware._stop.set()
+        with hardware._led_update_ready:
+            hardware._led_update_ready.notify_all()
+
+    def test_led_updates_wait_until_full_board_effect_restores_color(self) -> None:
+        class FakeTable:
+            def __init__(self) -> None:
+                self.calls: list[list[dict]] = []
+                self.called = threading.Event()
+
+            def apply_cells(self, updates: list[dict], leds_only: bool = False) -> None:
+                del leds_only
+                self.calls.append(updates)
+                self.called.set()
+
+        hardware = ModuleGridHardware(dry_run=True)
+        table = FakeTable()
+        hardware.table = table  # type: ignore[assignment]
+        hardware.playing = True
+        hardware._effect_busy = True
+        hardware._start_led_update_worker()
+        update = {
+            "key": "A1", "row": 0, "col": 0, "value": 0,
+            "color": "#001FFF", "leds_only": True,
+        }
+
+        hardware.apply_cell_updates([update])
+        self.assertFalse(table.called.wait(0.08))
+
+        with hardware._state_lock:
+            hardware._effect_busy = False
+        with hardware._led_update_ready:
+            hardware._led_update_ready.notify_all()
+        self.assertTrue(table.called.wait(0.25))
+        self.assertEqual(table.calls, [[update]])
         hardware._stop.set()
         with hardware._led_update_ready:
             hardware._led_update_ready.notify_all()
@@ -716,7 +953,8 @@ class ArcadeApiTests(unittest.TestCase):
             self.assertEqual(state["integrations"]["tilt"]["navigationDown"], 4)
             client.post("/api/action", json={"action": "confirm-placement"})
             self.assertTrue(tilt.active)
-            client.post("/api/action", json={"action": "abandon"})
+            response = client.post("/api/action", json={"action": "abandon"})
+            self.assertEqual(response.get_json()["game"]["state"], "level_select")
             self.assertFalse(tilt.active)
             app.config["ARCADE_SHUTDOWN"]()
             self.assertFalse(tilt.started)
@@ -736,8 +974,13 @@ class ArcadeApiTests(unittest.TestCase):
                 "/api/action",
                 json={"action": "select-level", "levelId": "hex-a-fall"},
             )
+            self.assertEqual(response.status_code, 400)
+            response = client.post(
+                "/api/action",
+                json={"action": "select-level", "levelId": "snake"},
+            )
             self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get_json()["game"]["level"]["id"], "hex-a-fall")
+            self.assertEqual(response.get_json()["game"]["level"]["id"], "snake")
             self.assertEqual(response.get_json()["game"]["state"], "rules")
 
     def test_campaign_actions_are_removed(self) -> None:

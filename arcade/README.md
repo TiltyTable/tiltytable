@@ -4,19 +4,19 @@ Jetson-hosted 854×480 Open Sauce cabinet game.
 
 ## Games
 
-The cabinet opens directly to five game modes:
+The cabinet opens directly to four selectable game modes:
 
-- **Lava Survival** — touched tiles score, warn, and sink. Survive 40 seconds.
-- **Hex-A-Fall** — unique touched tiles score while random tiles warn and sink.
-  Survive 45 seconds.
-- **Snake** — collect flashing food for one point; every pickup raises one wall
+- **Lava Survival** — survive 40 seconds while touched tiles warn and sink. The
+  score is 100 points per whole second survived plus 100 per unique tile.
+- **Snake** — collect flashing food for 100 points; every pickup raises one wall
   and sinks one floor tile. The run ends when the ball falls into a pit.
-- **Food Frenzy** — collect every food before a 30-second round timer expires;
-  each cleared round flashes the board and adds one more simultaneous food.
-- **Trapdoor Tango** — an unlimited-time maze with raised walls and cycling gates.
+- **Food Frenzy** — collect flashing blue food against a yellow floor before a
+  30-second round timer expires. Each completed level awards 500 points.
+- **Maze** — an unlimited-time maze with raised walls, lowered pits, and cycling
+  gates. Falling into a pit ends the run; the fastest finish ranks first.
 
-Lava and Hex keep their mode-specific score when the timer expires. Snake has
-no timer. Dynamic modes have no magenta finish tile.
+Snake has no timer. Dynamic modes have no magenta finish tile. Hex-A-Fall remains
+in the internal catalog for compatibility, but is hidden and cannot be selected.
 
 Hex collapse pacing is configured directly in `arcade/levels.json` with
 `modeParams.collapseStages`. Each stage defines `afterSeconds`, `everySeconds`,
@@ -24,7 +24,8 @@ and `count`; the shipped 45-second round progresses from one tile every 2.0
 seconds, to two every 1.6 seconds, to three every 1.2 seconds.
 
 All modes share `arcade.pit_detection.PitDetector`: neutral-floor observations
-apply immediately, while pits require sustained high-confidence tracking.
+apply immediately, while a pit requires two seconds of sustained,
+high-confidence tracking before ending the game.
 
 The generic `reach_end` engine capability remains available for a future
 procedural level generator, but no reach-the-finish maps ship in this build.
@@ -69,10 +70,18 @@ tools at the same time.
 - `R`: restart.
 - `M`: mute.
 
-During play, green/right triggers a host-side unstick pulse only when Kinect
-confidently places the ball on a neutral floor tile. The tile lifts 15% toward
-extended, returns to neutral, and immediately releases; the 2.5-second cooldown
-prevents repeated servo pulses.
+During every game, green/right triggers a host-side jump-assist pulse when
+Kinect confidently locates the ball on any non-red, non-recessed cell. The cell
+lifts 15% toward extended, returns to neutral, and immediately releases; the
+2.5-second cooldown prevents repeated servo pulses.
+
+## Per-game leaderboards
+
+Every selectable game has its own top-ten board. After every clear, pit, or
+timeout, press green/right to enter three letters or pink/left to skip. Roll the
+trackball up/down to choose each letter and press green/right to advance and
+save. Point scores are ranked highest first; Maze times are ranked fastest
+first. The game selector previews the selected game's leaderboard.
 
 ## Maps and tiles
 

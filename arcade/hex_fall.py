@@ -6,7 +6,7 @@ import random
 from dataclasses import dataclass, field
 from typing import Any
 
-from .pit_detection import PitDetector
+from .pit_detection import PIT_CONFIRM_SECONDS, PitDetector
 from .survival_lava import (
     FLOOR_COLOR,
     LAVA_COLOR,
@@ -36,7 +36,7 @@ DEFAULT_COLLAPSE_STAGES = (
 @dataclass(frozen=True)
 class HexFallParams:
     survival_seconds: float = 45.0
-    pit_confirm_seconds: float = 0.5
+    pit_confirm_seconds: float = PIT_CONFIRM_SECONDS
     collapse_stages: tuple[HexFallStage, ...] = DEFAULT_COLLAPSE_STAGES
     collapse_warn_seconds: float = 1.0
     points_per_tile: int = 1
@@ -285,7 +285,7 @@ def params_from_dict(raw: dict[str, Any], seed: int = 1) -> HexFallParams:
         )
     return HexFallParams(
         survival_seconds=float(raw.get("survivalSeconds", 45)),
-        pit_confirm_seconds=float(raw.get("pitConfirmSeconds", 0.5)),
+        pit_confirm_seconds=float(raw.get("pitConfirmSeconds", PIT_CONFIRM_SECONDS)),
         collapse_stages=stages,
         collapse_warn_seconds=float(raw.get("collapseWarnSeconds", 1)),
         points_per_tile=int(raw.get("pointsPerTile", 1)),

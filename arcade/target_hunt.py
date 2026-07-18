@@ -7,7 +7,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from .pit_detection import PitDetector
+from .pit_detection import PIT_CONFIRM_SECONDS, PitDetector
 
 TARGET_COLOR = "#001FFF"
 FLOOR_COLOR = "#567DBB"
@@ -18,13 +18,13 @@ WALL_COLOR = "#4DFF00"
 @dataclass(frozen=True)
 class TargetHuntParams:
     target_confirm_frames: int = 2
-    points_per_target: int = 1
+    points_per_target: int = 100
     spawn_pit_count: int = 1
     spawn_wall_count: int = 1
     minimum_reachable_cells: int = 2
     minimum_target_distance: int = 3
     blink_seconds: float = 0.25
-    pit_confirm_seconds: float = 0.5
+    pit_confirm_seconds: float = PIT_CONFIRM_SECONDS
     seed: int = 1
 
 
@@ -280,12 +280,12 @@ def tick_target_hunt(
 def params_from_dict(raw: dict[str, Any], seed: int = 1) -> TargetHuntParams:
     return TargetHuntParams(
         target_confirm_frames=max(1, int(raw.get("targetConfirmFrames", 2))),
-        points_per_target=int(raw.get("pointsPerTarget", 1)),
+        points_per_target=int(raw.get("pointsPerTarget", 100)),
         spawn_pit_count=int(raw.get("spawnPitCount", 1)),
         spawn_wall_count=int(raw.get("spawnWallCount", 1)),
         minimum_reachable_cells=int(raw.get("minimumReachableCells", 2)),
         minimum_target_distance=int(raw.get("minimumTargetDistance", 3)),
         blink_seconds=float(raw.get("blinkSeconds", 0.25)),
-        pit_confirm_seconds=float(raw.get("pitConfirmSeconds", 0.5)),
+        pit_confirm_seconds=float(raw.get("pitConfirmSeconds", PIT_CONFIRM_SECONDS)),
         seed=seed,
     )

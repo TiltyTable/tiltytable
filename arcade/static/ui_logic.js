@@ -13,6 +13,9 @@
   function backIntent(state, overlayOpen = false, mode = null) {
     if (overlayOpen) return "close-overlay";
     if (state === "initials") return "abandon";
+    if (["time_up", "survival_fail", "level_clear", "level_score"].includes(state)) {
+      return "abandon";
+    }
     if (state === "level_select") return null;
     if (state === "rules" && mode !== "gauntlet") return "level-select";
     if (state === "leaderboard") return "continue";

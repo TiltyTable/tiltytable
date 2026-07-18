@@ -386,7 +386,7 @@ class Table:
         lift_s=0.18,
         neutral_s=0.10,
     ):
-        """Briefly lift one neutral tile, return to neutral, then release."""
+        """Briefly lift one tile, return it to neutral, then release."""
         loc = self.servo_at(row, col)
         if not loc:
             return False

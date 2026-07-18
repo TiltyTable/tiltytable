@@ -186,12 +186,16 @@ def create_app(
                 engine.show_level_select()
             elif name == "select-level":
                 engine.select_practice_level(str(body.get("levelId", "")))
+            elif name == "set-initials":
+                engine.set_initials(str(body.get("initials", "")))
             elif name == "continue":
                 engine.continue_action()
             elif name == "confirm-placement":
                 engine.confirm_placement()
             elif name == "restart":
                 engine.restart()
+            elif name == "retry":
+                engine.retry_level()
             elif name == "unstick":
                 engine.unstick()
             elif name == "complete":

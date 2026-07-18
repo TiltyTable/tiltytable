@@ -124,6 +124,7 @@ def tick_mode(
                 "remainingSeconds": result.remaining_seconds,
                 "targetCells": list(result.target_cells),
                 "round": result.round_number,
+                "levelsCompleted": result.levels_completed,
                 "foodsCollected": result.foods_collected,
                 "celebrating": result.celebrating,
             },

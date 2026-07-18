@@ -52,8 +52,26 @@ class CatalogTests(unittest.TestCase):
             if level.mode != "maze":
                 self.assertNotIn("#680056", colors)
                 self.assertNotIn("#FF00AA", colors)
+        by_id = {level.id: level for level in catalog.levels}
+        self.assertFalse(by_id["hex-a-fall"].selectable)
+        self.assertTrue(all(
+            level.selectable
+            for level in catalog.levels
+            if level.id != "hex-a-fall"
+        ))
 
-    def test_maze_restores_original_timed_gates_and_finish(self) -> None:
+        food = by_id["food-frenzy"]
+        food_cells = load_map(food)
+        self.assertEqual(
+            {
+                str(cell["color"]).upper()
+                for key, cell in food_cells.items()
+                if key != food.start_cell
+            },
+            {"#F49400"},
+        )
+
+    def test_maze_map_supports_edited_dynamic_gates_and_finish(self) -> None:
         maze = next(level for level in load_levels().levels if level.mode == "maze")
         cells = load_map(maze)
         self.assertTrue(maze.has_finish)
@@ -62,10 +80,9 @@ class CatalogTests(unittest.TestCase):
         self.assertNotIn("timeLimitSeconds", maze.public_dict())
         self.assertEqual(cells["A1"]["color"], "#00FFFF")
         self.assertEqual(cells["L12"]["color"], "#680056")
-        self.assertEqual(
-            [cells[key]["dynamic"]["intervalSeconds"] for key in ("E7", "G7", "I7")],
-            [2.5, 2.5, 2.5],
-        )
+        dynamic = [cell["dynamic"] for cell in cells.values() if cell.get("dynamic")]
+        self.assertTrue(dynamic)
+        self.assertTrue(all(item.get("type", "cycle") in ("cycle", "delayed_trap") for item in dynamic))
 
 
 class HexFallTests(unittest.TestCase):
@@ -146,7 +163,7 @@ class SnakeTests(unittest.TestCase):
         duplicate = tick_target_hunt(session, target, 0.01, observation_frame=10)
         self.assertEqual(duplicate.score, 0)
         result = tick_target_hunt(session, target, 0.04, observation_frame=11)
-        self.assertEqual(result.score, 1)
+        self.assertEqual(result.score, 100)
         self.assertEqual(result.targets_reached, 1)
         self.assertEqual(
             sum(int(cell["value"]) == 1 for cell in session.cells.values()),
@@ -182,7 +199,7 @@ class SnakeTests(unittest.TestCase):
             tick_target_hunt(
                 session,
                 "A1",
-                100.4,
+                102.09,
                 tracking_confidence=0.9,
             ).lost
         )
@@ -190,7 +207,7 @@ class SnakeTests(unittest.TestCase):
             tick_target_hunt(
                 session,
                 "A1",
-                100.61,
+                102.11,
                 tracking_confidence=0.9,
             ).lost
         )
