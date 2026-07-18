@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import secrets
 import threading
 import time
 from collections import deque
@@ -258,10 +259,16 @@ class GameEngine:
                 self._neutralize_survival_start_cell()
             elif self.current_level.mode in ("hex_fall", "target_hunt", "food_frenzy"):
                 self._survival = None
+                mode_params = dict(self.current_level.mode_params or {})
+                runtime_seed = (
+                    secrets.randbits(63)
+                    if mode_params.get("randomizeSeed")
+                    else self.current_level.seed
+                )
                 self._mode_session = start_mode(
                     self.current_level.mode,
-                    dict(self.current_level.mode_params or {}),
-                    seed=self.current_level.seed,
+                    mode_params,
+                    seed=runtime_seed,
                     now=self.attempt_started_at,
                     cells={cell["key"]: dict(cell) for cell in self.map_cells},
                     row_col=self._row_col_by_key,

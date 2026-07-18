@@ -271,6 +271,18 @@ class ArcadeSurvivalTests(unittest.TestCase):
         self.assertEqual(sum(cell["value"] == 1 for cell in state["mapCells"]), 1)
         self.assertEqual(sum(cell["value"] == -1 for cell in state["mapCells"]), 1)
 
+    def test_snake_uses_fresh_random_seed_for_each_attempt(self) -> None:
+        with patch("arcade.engine.secrets.randbits", side_effect=[101, 202]):
+            self.begin_dynamic_level("snake")
+            first_seed = self.engine._mode_session.params.seed
+
+            self.engine.restart()
+            self.engine.tick()
+            self.engine.confirm_placement()
+            second_seed = self.engine._mode_session.params.seed
+
+        self.assertEqual((first_seed, second_seed), (101, 202))
+
     def test_snake_game_over_opens_initials_and_pink_can_skip(self) -> None:
         self.begin_dynamic_level("snake")
         self.engine._mode_session.cells["A1"]["value"] = -1
@@ -675,17 +687,13 @@ class ModuleGridHardwareTests(unittest.TestCase):
     def test_board_flash_restores_each_cell_through_calibration(self) -> None:
         class FakeTable:
             def __init__(self) -> None:
-                self.fills: list[tuple[int, int, int]] = []
-                self.restored: list[dict] = []
+                self.fills: list[str] = []
                 self.called = threading.Event()
 
-            def fill_all_leds(self, rgb: tuple[int, int, int]) -> None:
-                self.fills.append(rgb)
-
-            def apply_cells(self, updates: list[dict], leds_only: bool = False) -> None:
-                self.assert_leds_only = leds_only
-                self.restored = updates
-                self.called.set()
+            def fill_all_leds_calibrated(self, color: str) -> None:
+                self.fills.append(color)
+                if len(self.fills) == 3:
+                    self.called.set()
 
         hardware = ModuleGridHardware(dry_run=True)
         table = FakeTable()
@@ -694,11 +702,9 @@ class ModuleGridHardwareTests(unittest.TestCase):
 
         self.assertTrue(hardware.flash_all_leds(1.0, restore_color="#F49400"))
         self.assertTrue(table.called.wait(0.25))
-        self.assertEqual(len(table.fills), 4)
-        self.assertTrue(table.assert_leds_only)
-        self.assertEqual(len(table.restored), 144)
-        self.assertTrue(
-            all(update["color"] == "#F49400" for update in table.restored)
+        self.assertEqual(
+            table.fills,
+            ["#00FFFF", "#000000", "#F49400"],
         )
 
     def test_led_worker_survives_an_empty_queue_timeout(self) -> None:

@@ -91,7 +91,8 @@
         "minimumReachableCells": 2,
         "minimumTargetDistance": 3,
         "blinkSeconds": 0.25,
-        "pitConfirmSeconds": 2.0
+        "pitConfirmSeconds": 2.0,
+        "randomizeSeed": true
       },
       "seed": 9
     },

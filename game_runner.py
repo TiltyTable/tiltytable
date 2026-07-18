@@ -419,6 +419,20 @@ class Table:
         for strip in sorted(self._strip_led_counts):
             self.link.send(f"L {strip} {r} {g} {b}")
 
+    def fill_all_leds_calibrated(self, color):
+        """Fill the grid through each cell's palette calibration."""
+        for row in range(GRID_ROWS):
+            for col in range(GRID_COLS):
+                rgb = self.cell_led_rgb(
+                    {
+                        "row": row,
+                        "col": col,
+                        "color": color,
+                        "rgb": (0, 0, 0),
+                    }
+                )
+                self.set_led(row, col, rgb)
+
     def average_led_rgb(self, color):
         samples = []
         for row in range(GRID_ROWS):

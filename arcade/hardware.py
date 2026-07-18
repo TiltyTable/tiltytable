@@ -406,7 +406,8 @@ class ModuleGridHardware(BaseTableHardware):
             ):
                 with self._io_lock:
                     for entry in self._blink_entries:
-                        rgb = self.table.cell_led_rgb(entry) if on else (0, 0, 0)
+                        visible_entry = entry if on else {**entry, "color": "#000000"}
+                        rgb = self.table.cell_led_rgb(visible_entry)
                         self.table.set_led(entry["row"], entry["col"], rgb)
                 on = not on
 
@@ -680,10 +681,10 @@ class ModuleGridHardware(BaseTableHardware):
         def worker() -> None:
             try:
                 with self._io_lock:
-                    step_s = max(0.05, duration_s / 4.0)
-                    for index in range(4):
-                        self.table.fill_all_leds(
-                            (255, 255, 255) if index % 2 == 0 else (0, 0, 0)
+                    step_s = max(0.05, duration_s / 2.0)
+                    for index in range(2):
+                        self.table.fill_all_leds_calibrated(
+                            "#00FFFF" if index % 2 == 0 else "#000000"
                         )
                         if not self.dry_run:
                             time.sleep(step_s)
@@ -691,21 +692,7 @@ class ModuleGridHardware(BaseTableHardware):
                     # per-cell calibration. Do the same after a board flash;
                     # one averaged RGB makes later Food Frenzy rounds visibly
                     # inconsistent with round one.
-                    self.table.apply_cells(
-                        [
-                            {
-                                "key": f"{chr(65 + col)}{row + 1}",
-                                "row": row,
-                                "col": col,
-                                "value": 0,
-                                "color": restore_color,
-                                "rgb": (0, 0, 0),
-                            }
-                            for row in range(12)
-                            for col in range(12)
-                        ],
-                        leds_only=True,
-                    )
+                    self.table.fill_all_leds_calibrated(restore_color)
             except Exception as exc:
                 self.error = str(exc)
             finally:

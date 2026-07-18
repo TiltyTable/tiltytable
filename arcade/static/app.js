@@ -485,7 +485,7 @@ function modeLegend(level) {
     return common
       + legendItem("orange", "YELLOW", "Open floor")
       + legendItem("blue", "FLASHING BLUE", "Food", "blinking")
-      + legendItem("white", "WHITE FLASH", "Round clear");
+      + legendItem("cyan", "CYAN FLASH", "Round clear");
   }
   return common
     + legendItem("gray", "GRAY", "Open floor")
@@ -523,12 +523,28 @@ function renderLoading() {
   return shell(`
     <div>
       <p class="kicker">GAME ${game.level.number}</p>
-      <h1 class="screen-title">${restarting || applying ? "RESETTING BOARD" : "GET READY"}</h1>
+      <h1 class="screen-title" id="loading-title">${restarting || applying ? "RESETTING BOARD" : "GET READY"}</h1>
       <div class="loading-bars"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <p class="decision-copy">${applying ? "MOVING ALL 144 TILES · ABOUT 15 SECONDS" : escapeHtml(game.level.title)}</p>
+      <p class="decision-copy" id="loading-status">${applying ? "MOVING ALL 144 TILES · ABOUT 15 SECONDS" : escapeHtml(game.level.title)}</p>
     </div>`,
     `STAND CLEAR`,
     dialogue(LORE.loading.ken, game.level?.trollLine || LORE.loading.troll, true));
+}
+
+function updateLoadingScreen() {
+  const applying = game.hardware?.loadPhase === "applying";
+  const title = document.querySelector("#loading-title");
+  const status = document.querySelector("#loading-status");
+  if (title) {
+    title.textContent = game.state === "restarting" || applying
+      ? "RESETTING BOARD"
+      : "GET READY";
+  }
+  if (status) {
+    status.textContent = applying
+      ? "MOVING ALL 144 TILES · ABOUT 15 SECONDS"
+      : game.level.title;
+  }
 }
 
 function tileClass(cell) {
@@ -878,12 +894,20 @@ async function refresh() {
   if (requestInFlight || refreshInFlight) return;
   refreshInFlight = true;
   try {
+    const previousState = game?.state;
     const response = await fetch("/api/state", { cache: "no-store" });
     const payload = await response.json();
     game = payload.game;
     if (liveBall) game.ball = liveBall;
     handleStateAudio();
-    render();
+    if (
+      previousState === game.state
+      && ["level_loading", "restarting"].includes(game.state)
+    ) {
+      updateLoadingScreen();
+    } else {
+      render();
+    }
     handleCabinetButtons();
   } catch (error) {
     console.error("State refresh failed", error);
