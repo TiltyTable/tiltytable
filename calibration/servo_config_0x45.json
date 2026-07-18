@@ -3,9 +3,9 @@
   "i2c_address": "0x45",
   "servos": {
     "0": {
-      "extended": 2000,
-      "neutral": 1550,
-      "recessed": 1050
+      "extended": 2200,
+      "neutral": 1710,
+      "recessed": 1460
     },
     "1": {
       "extended": 2210,

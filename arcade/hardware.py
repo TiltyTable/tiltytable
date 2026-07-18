@@ -361,6 +361,12 @@ class ModuleGridHardware(BaseTableHardware):
             ] + blink_entries
             if generation != self._generation:
                 return
+            self._load_phase = "raising"
+            raised = [{**cell, "value": 1} for cell in initial]
+            with self._io_lock:
+                self.table.apply_cells(raised)
+            if generation != self._generation:
+                return
             self._load_phase = "applying"
             with self._io_lock:
                 self.table.apply_cells(initial)

@@ -519,30 +519,34 @@ function renderRules() {
 
 function renderLoading() {
   const restarting = game.state === "restarting";
+  const raising = game.hardware?.loadPhase === "raising";
   const applying = game.hardware?.loadPhase === "applying";
   return shell(`
     <div>
       <p class="kicker">GAME ${game.level.number}</p>
-      <h1 class="screen-title" id="loading-title">${restarting || applying ? "RESETTING BOARD" : "GET READY"}</h1>
+      <h1 class="screen-title" id="loading-title">${restarting || raising || applying ? "RESETTING BOARD" : "GET READY"}</h1>
       <div class="loading-bars"><i></i><i></i><i></i><i></i><i></i><i></i></div>
-      <p class="decision-copy" id="loading-status">${applying ? "MOVING ALL 144 TILES · ABOUT 15 SECONDS" : escapeHtml(game.level.title)}</p>
+      <p class="decision-copy" id="loading-status">${raising ? "RAISING ALL 144 TILES" : applying ? "APPLYING NEUTRAL, WALL, AND PIT POSITIONS" : escapeHtml(game.level.title)}</p>
     </div>`,
     `STAND CLEAR`,
     dialogue(LORE.loading.ken, game.level?.trollLine || LORE.loading.troll, true));
 }
 
 function updateLoadingScreen() {
+  const raising = game.hardware?.loadPhase === "raising";
   const applying = game.hardware?.loadPhase === "applying";
   const title = document.querySelector("#loading-title");
   const status = document.querySelector("#loading-status");
   if (title) {
-    title.textContent = game.state === "restarting" || applying
+    title.textContent = game.state === "restarting" || raising || applying
       ? "RESETTING BOARD"
       : "GET READY";
   }
   if (status) {
-    status.textContent = applying
-      ? "MOVING ALL 144 TILES · ABOUT 15 SECONDS"
+    status.textContent = raising
+      ? "RAISING ALL 144 TILES"
+      : applying
+      ? "APPLYING NEUTRAL, WALL, AND PIT POSITIONS"
       : game.level.title;
   }
 }

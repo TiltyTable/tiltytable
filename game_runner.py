@@ -60,6 +60,7 @@ BOARD_ORDER = [f"0x{a:02x}" for a in range(0x40, 0x49)]
 HARD_MIN, HARD_MAX = 0, 3000
 SAFETY_MARGIN = 0.8
 SERVO_SETTLE_S = 0.45
+BOARD_SELECT_SETTLE_S = 0.05
 HEARTBEAT_INTERVAL_S = 2.0
 
 # Map value → calibrated named position
@@ -303,7 +304,7 @@ class Link:
             return
         self.send(f"A {addr}")
         if not self.dry_run:
-            time.sleep(0.3)
+            time.sleep(BOARD_SELECT_SETTLE_S)
         self._active_addr = addr
 
 

@@ -4,7 +4,7 @@
   "servos": {
     "0": {
       "extended": 1870,
-      "neutral": 1120,
+      "neutral": 1100,
       "recessed": 650
     },
     "1": {
@@ -19,7 +19,7 @@
     },
     "3": {
       "extended": 2650,
-      "neutral": 1930,
+      "neutral": 1900,
       "recessed": 1480
     },
     "4": {

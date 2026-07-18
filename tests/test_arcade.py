@@ -22,7 +22,7 @@ from arcade.integrations import BallObservation, TiltStatus
 from arcade.levels import load_levels
 from arcade.server import create_app, load_game_tick_ms
 from arcade.storage import ScoreStore
-from game_runner import Table, load_table_configs
+from game_runner import BOARD_SELECT_SETTLE_S, Link, Table, load_table_configs
 
 
 class FakeClock:
@@ -655,6 +655,51 @@ class ScoreStoreTests(unittest.TestCase):
 
 
 class ModuleGridHardwareTests(unittest.TestCase):
+    def test_board_selection_uses_short_settle_delay(self) -> None:
+        link = Link.__new__(Link)
+        link.dry_run = False
+        link._active_addr = None
+        sent: list[str] = []
+        link.send = sent.append  # type: ignore[method-assign]
+
+        with patch("game_runner.time.sleep") as sleep:
+            link.select_board("0x40")
+
+        self.assertEqual(sent, ["A 0x40"])
+        sleep.assert_called_once_with(BOARD_SELECT_SETTLE_S)
+        self.assertEqual(BOARD_SELECT_SETTLE_S, 0.05)
+
+    def test_level_load_raises_every_cell_before_applying_map_positions(self) -> None:
+        class FakeTable:
+            def __init__(self) -> None:
+                self.calls: list[list[dict]] = []
+
+            def apply_cells(self, cells: list[dict]) -> None:
+                self.calls.append([dict(cell) for cell in cells])
+
+        hardware = ModuleGridHardware(dry_run=True)
+        table = FakeTable()
+        hardware.table = table  # type: ignore[assignment]
+        hardware._generation = 1
+        hardware.busy = True
+        level = load_levels().levels[2]
+
+        with patch.object(hardware, "_start_blink"):
+            hardware._load_worker(
+                level.map_path,
+                level.start_cell,
+                level.end_cell,
+                1,
+            )
+
+        self.assertEqual(len(table.calls), 2)
+        self.assertTrue(all(cell["value"] == 1 for cell in table.calls[0]))
+        self.assertTrue(any(cell["value"] == 0 for cell in table.calls[1]))
+        self.assertEqual(
+            [cell["key"] for cell in table.calls[0]],
+            [cell["key"] for cell in table.calls[1]],
+        )
+
     def test_pause_returns_before_slow_servo_release_finishes(self) -> None:
         class BlockingLink:
             def __init__(self) -> None:
