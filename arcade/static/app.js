@@ -117,8 +117,7 @@ const {
 } = window.ArcadeUiLogic;
 
 function cabinetHint(kind, label) {
-  const button = kind === "confirm" ? "RIGHT" : "LEFT";
-  return `<span class="cabinet-hint ${kind}"><i class="pixel-button ${kind}" aria-hidden="true"></i><span>${button} ${escapeHtml(label)}</span></span>`;
+  return `<span class="cabinet-hint ${kind}"><i class="pixel-button ${kind}" aria-hidden="true"></i><span>${escapeHtml(label)}</span></span>`;
 }
 
 function confirmHint(label) { return cabinetHint("confirm", label); }

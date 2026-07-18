@@ -13,10 +13,10 @@
       "endCell": "L12",
       "feature": "Touched tiles blink red, then fall away.",
       "rules": [
-        "Survive for 100 points per second.",
-        "Touch each new tile for another 100 points.",
-        "Move before a blinking tile falls.",
-        "The run ends after the ball remains in a pit for 2 seconds."
+        "Earn 100 points each second.",
+        "New tiles are worth 100 points.",
+        "Leave blinking tiles before they drop.",
+        "Two seconds in a pit ends the run."
       ],
       "modeParams": {
         "survivalSeconds": 40,
@@ -39,9 +39,9 @@
       "endCell": "L12",
       "feature": "Random tiles blink red, then fall away.",
       "rules": [
-        "Touch each floor tile once for a point.",
-        "Move away from blinking red tiles.",
-        "The run ends after the ball remains in a pit for 2 seconds."
+        "Touch new floor tiles for points.",
+        "Leave blinking red tiles.",
+        "Two seconds in a pit ends the run."
       ],
       "modeParams": {
         "survivalSeconds": 45,
@@ -79,9 +79,9 @@
       "endCell": "L12",
       "feature": "Each food pickup raises a wall and drops a floor tile.",
       "rules": [
-        "Reach flashing blue food for 100 points.",
-        "Each pickup adds one wall and one pit.",
-        "The run ends after the ball remains in a pit for 2 seconds."
+        "Blue food is worth 100 points.",
+        "Each food adds a green wall and red pit.",
+        "Two seconds in a red pit ends the run."
       ],
       "modeParams": {
         "targetConfirmFrames": 2,
@@ -107,9 +107,9 @@
       "endCell": "L12",
       "feature": "Each round adds another flashing food tile.",
       "rules": [
-        "Collect flashing blue food against the yellow floor.",
-        "Clearing every food completes one level for 500 points.",
-        "Clear as many levels as possible before time expires."
+        "Collect blue food on the yellow floor.",
+        "Clear a level for 500 points.",
+        "Clear levels before time runs out."
       ],
       "modeParams": {
         "roundSeconds": 30,
@@ -129,12 +129,12 @@
       "map": "maps/arcade-level-4.json",
       "startCell": "A1",
       "endCell": "L12",
-      "feature": "Green bridge tiles move on a timer. Cross while they are flush or wait for the next beat.",
+      "feature": "Green gates move on a timer. Cross while flat.",
       "rules": [
-        "Follow the orange path from cyan to magenta.",
-        "Green tiles are raised walls; the three gates change every 2.5 seconds.",
-        "Reach magenta as quickly as possible.",
-        "The run ends after the ball remains in a red lowered pit for 2 seconds."
+        "Follow orange from cyan to magenta.",
+        "Green walls and gates move every 2.5 seconds.",
+        "Reach magenta as fast as possible.",
+        "Two seconds in a red pit ends the run."
       ],
       "kenLine": "Timing puzzle! Green gates cycle every few seconds — roll on the orange beat.",
       "trollLine": "Dance, little prisoner! The floor moves when I say so."

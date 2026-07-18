@@ -1452,8 +1452,8 @@ html, body, body * { cursor: none !important; }
 /* Physical-control-only cabinet chrome. */
 .footer {
   justify-content: center;
-  min-height: 40px;
-  padding: 4px 8px 0;
+  min-height: 52px;
+  padding: 6px 10px 0;
   border-top: 3px solid var(--cyan);
   color: var(--cream);
 }
@@ -1462,17 +1462,17 @@ html, body, body * { cursor: none !important; }
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 12px;
   width: 100%;
 }
 
 .cabinet-hint {
-  min-height: 30px;
-  padding: 4px 9px;
-  border: 2px solid var(--line);
+  min-height: 40px;
+  padding: 7px 14px;
+  border: 3px solid var(--line);
   background: #0d0631;
   font-family: var(--pixel);
-  font-size: clamp(10px, 1.05vw, 17px);
+  font-size: clamp(13px, 1.3vw, 21px);
   letter-spacing: .06em;
 }
 
@@ -1487,17 +1487,18 @@ html, body, body * { cursor: none !important; }
 }
 
 .navigation-hint {
-  padding: 7px 10px;
-  border: 2px solid var(--cyan);
+  min-height: 40px;
+  padding: 9px 14px;
+  border: 3px solid var(--cyan);
   background: #0d0631;
   color: var(--cyan);
   font-family: var(--pixel);
-  font-size: clamp(7px, .8vw, 10px);
+  font-size: clamp(11px, 1.05vw, 17px);
 }
 
 .pixel-button {
-  width: 26px;
-  height: 17px;
+  width: 34px;
+  height: 23px;
   flex: 0 0 auto;
 }
 
@@ -1546,13 +1547,13 @@ html, body, body * { cursor: none !important; }
 }
 
 @media (width: 854px) and (height: 480px) {
-  .scene { grid-template-rows: 42px 1fr 72px; }
+  .scene { grid-template-rows: 42px 1fr 84px; }
   .topbar { font-size: 12px; }
   .brand { font-size: 15px; }
-  .footer { min-height: 72px; font-size: 20px; }
+  .footer { min-height: 84px; font-size: 24px; }
   .cabinet-hint,
-  .navigation-hint { font-size: 20px; padding-inline: 6px; }
-  .pixel-button { width: 28px; height: 19px; }
+  .navigation-hint { font-size: 24px; padding-inline: 10px; }
+  .pixel-button { width: 36px; height: 24px; }
   .cabinet-decision { margin-top: 12px; }
   .cabinet-choice .cabinet-hint { font-size: 24px; }
   .rules-layout { grid-template-columns: 48% 1fr; gap: 16px; padding: 8px 16px; }
@@ -1564,4 +1565,70 @@ html, body, body * { cursor: none !important; }
   .rule { font-size: 16px; line-height: 1.35; }
   .rules-copy .feature { font-size: 15px; line-height: 1.4; }
   .hud-instruction { font-size: 16px; line-height: 1.4; }
+}
+
+/* Readability pass: approximately 30% larger cabinet typography. */
+.topbar,
+.footer { font-size: clamp(13px, 1.3vw, 22px); }
+.brand { font-size: clamp(15px, 1.65vw, 27px); }
+.kicker,
+.panel-label { font-size: clamp(10px, 1.15vw, 20px); }
+.hero-sub { font-size: clamp(10px, 1.25vw, 21px); }
+.decision-copy { font-size: clamp(12px, 1.3vw, 22px); line-height: 1.5; }
+.screen-title { font-size: clamp(38px, 5.2vw, 86px); }
+.menu-item { font-size: clamp(10px, 1.15vw, 19px); }
+.menu-item strong { font-size: clamp(13px, 1.45vw, 25px); }
+.menu-sub { font-size: clamp(9px, 1vw, 16px); }
+.leader-card h2 { font-size: clamp(15px, 1.8vw, 31px); }
+.score-row { font-size: clamp(10px, 1.15vw, 19px); }
+.empty-score { font-size: clamp(12px, 1.3vw, 22px); }
+.setup-list { font-size: clamp(10px, 1.15vw, 19px); }
+.prompt { font-size: clamp(12px, 1.4vw, 23px); }
+.legend-title { font-size: clamp(15px, 1.75vw, 28px); }
+.legend-item strong { font-size: clamp(12px, 1.3vw, 21px); }
+.legend-item span { font-size: clamp(9px, 1.05vw, 16px); }
+.rules-copy .feature { font-size: clamp(12px, 1.3vw, 22px); line-height: 1.45; }
+.rule { font-size: clamp(10px, 1.15vw, 19px); line-height: 1.45; }
+.hud-level { font-size: clamp(10px, 1.15vw, 19px); }
+.hud-primary-label { font-size: clamp(9px, .95vw, 16px); }
+.hud-stat span { font-size: clamp(9px, .95vw, 16px); }
+.hud-stat strong { font-size: clamp(18px, 2.15vw, 36px); }
+.hud-instruction { font-size: clamp(10px, 1.15vw, 19px); line-height: 1.5; }
+.result-number { font-size: clamp(58px, 8.5vw, 145px); }
+.result-grid span { font-size: clamp(9px, 1vw, 17px); }
+.result-grid strong { font-size: clamp(19px, 2.3vw, 38px); }
+.initial-progress,
+.next-action-label { font-size: 12px; }
+.ball-track-overlay { font-size: 12px; }
+.ball-track-conf { font-size: 10px; }
+
+@media (width: 854px) and (height: 480px) {
+  .topbar { font-size: 15px; }
+  .brand { font-size: 19px; }
+  .screen-title { font-size: 44px; }
+  .hero-sub,
+  .decision-copy { font-size: 12px; }
+  .level-select-menu .menu-item strong { font-size: 11px; }
+  .level-select-menu .menu-sub { font-size: 8px; line-height: 1.15; }
+  .leader-card h2 { font-size: 16px; }
+  .score-row { height: 31px; font-size: 11px; }
+  .empty-score { font-size: 12px; }
+  .initials-picker .initial-box { font-size: 36px; }
+  .legend-title { font-size: 16px; }
+  .legend-item strong { font-size: 14px; }
+  .legend-item span { font-size: 18px; }
+  .rule { margin-block: 5px; font-size: 18px; line-height: 1.25; }
+  .rules-copy .feature { margin-block: 6px; font-size: 18px; line-height: 1.25; }
+  .hud-level { font-size: 11px; }
+  .hud-primary-label { font-size: 10px; }
+  .timer { font-size: 82px; }
+  .hud-stat span { font-size: 10px; }
+  .hud-stat strong { font-size: 20px; }
+  .hud-instruction { font-size: 19px; line-height: 1.25; }
+  .result-grid span { font-size: 10px; }
+  .result-grid strong { font-size: 20px; }
+  .initial-progress,
+  .next-action-label { font-size: 12px; }
+  .cabinet-hint,
+  .navigation-hint { font-size: 26px; }
 }
