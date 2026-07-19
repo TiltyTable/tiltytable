@@ -8,7 +8,7 @@ The cabinet opens directly to four selectable game modes:
 
 - **Lava Survival** — survive 40 seconds while touched tiles warn and sink. The
   score is 100 points per whole second survived plus 100 per unique tile.
-- **Snake** — collect flashing food for 100 points; every pickup raises one wall
+- **Food Hunt** — collect flashing food for 100 points; every pickup raises one wall
   and sinks one floor tile. The run ends when the ball falls into a pit.
 - **Food Frenzy** — collect flashing blue food against a yellow floor before a
   30-second round timer expires. Each completed level awards 500 points.

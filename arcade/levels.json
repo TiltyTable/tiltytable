@@ -71,7 +71,7 @@
     {
       "id": "snake",
       "number": 3,
-      "title": "Snake",
+      "title": "Food Hunt",
       "subtitle": "Chase the flashing food",
       "mode": "target_hunt",
       "map": "maps/arcade-snake.json",
@@ -84,7 +84,7 @@
         "Two seconds in a red pit ends the run."
       ],
       "modeParams": {
-        "targetConfirmFrames": 2,
+        "targetConfirmFrames": 1,
         "pointsPerTarget": 100,
         "spawnPitCount": 1,
         "spawnWallCount": 1,
@@ -116,7 +116,8 @@
         "targetConfirmFrames": 2,
         "blinkSeconds": 0.25,
         "celebrationSeconds": 1.0,
-        "pointsPerLevel": 500
+        "pointsPerLevel": 500,
+        "randomizeSeed": true
       },
       "seed": 10
     },

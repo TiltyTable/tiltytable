@@ -83,11 +83,11 @@ echo "TiltyTable Arcade: $URL"
 if [[ "$KIOSK" -eq 1 ]]; then
   if command -v chromium-browser >/dev/null 2>&1; then
     SNAP_REEXEC=0 chromium-browser --kiosk --app="$URL" --window-size=854,480 \
-      --no-first-run --disable-gpu &
+      --no-first-run --disable-gpu --autoplay-policy=no-user-gesture-required &
     BROWSER_PID=$!
   elif command -v chromium >/dev/null 2>&1; then
     SNAP_REEXEC=0 chromium --kiosk --app="$URL" --window-size=854,480 \
-      --no-first-run --disable-gpu &
+      --no-first-run --disable-gpu --autoplay-policy=no-user-gesture-required &
     BROWSER_PID=$!
   elif command -v firefox >/dev/null 2>&1; then
     firefox --kiosk "$URL" &

@@ -94,6 +94,7 @@ let initialsDraft = "AAA";
 let initialsCursor = 0;
 let abandonOpen = false;
 let lastState = "";
+let lastFoodCount = null;
 let lastTimerSecond = null;
 let lastTimerBand = null;
 let requestInFlight = false;
@@ -177,7 +178,7 @@ class ArcadeAudio {
     if (!this.ctx) {
       this.ctx = new (window.AudioContext || window.webkitAudioContext)();
       this.master = this.ctx.createGain();
-      this.master.gain.value = 0.11;
+      this.master.gain.value = 0.2;
       this.master.connect(this.ctx.destination);
     }
     if (this.ctx.state === "suspended") this.ctx.resume();
@@ -186,7 +187,7 @@ class ArcadeAudio {
   toggleMute() {
     this.enable();
     this.muted = !this.muted;
-    this.master.gain.setTargetAtTime(this.muted ? 0 : 0.11, this.ctx.currentTime, 0.02);
+    this.master.gain.setTargetAtTime(this.muted ? 0 : 0.2, this.ctx.currentTime, 0.02);
   }
 
   tone(frequency, duration = 0.08, type = "square", volume = 0.7, delay = 0) {
@@ -225,6 +226,29 @@ class ArcadeAudio {
   warning() { this.tone(880, 0.045, "square", 0.28); }
   trollTaunt() { this.tone(140, 0.12, "sawtooth", 0.4); }
 
+  foodPickup() {
+    [659, 988, 1319, 1760].forEach((note, index) =>
+      this.tone(note, 0.16, "square", 1.0, index * 0.075));
+    this.tone(2637, 0.12, "sine", 0.72, 0.225);
+  }
+
+  pitFall() {
+    if (!this.ctx || this.muted) return;
+    const start = this.ctx.currentTime;
+    const oscillator = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    oscillator.type = "sawtooth";
+    oscillator.frequency.setValueAtTime(260, start);
+    oscillator.frequency.exponentialRampToValueAtTime(42, start + 0.62);
+    gain.gain.setValueAtTime(0.0001, start);
+    gain.gain.exponentialRampToValueAtTime(0.62, start + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.68);
+    oscillator.connect(gain);
+    gain.connect(this.master);
+    oscillator.start(start);
+    oscillator.stop(start + 0.7);
+  }
+
   setMusic(active) {
     if (!active) {
       clearInterval(this.musicTimer);
@@ -232,12 +256,16 @@ class ArcadeAudio {
       return;
     }
     if (this.musicTimer) return;
-    const notes = [110, 165, 196, 165, 123, 165, 220, 196];
+    const notes = [330, 392, 440, 523, 440, 392, 330, 294, 330, 392, 494, 587, 494, 392, 330, 294];
     this.musicTimer = setInterval(() => {
       if (!this.ctx || this.muted) return;
-      this.tone(notes[this.musicStep % notes.length], 0.09, "triangle", 0.15);
+      const step = this.musicStep % notes.length;
+      this.tone(notes[step], 0.18, "triangle", 0.62);
+      if (step % 4 === 0) {
+        this.tone(notes[step] / 2, 0.24, "square", 0.36);
+      }
       this.musicStep += 1;
-    }, 260);
+    }, 220);
   }
 }
 
@@ -267,7 +295,10 @@ function timerTrollLine(remaining) {
 }
 
 function brand() {
-  return `<span class="brand"><span class="brand-bars"><i></i><i></i><i></i></span>TILTYTABLE</span>`;
+  return `<div class="brand-block">
+    <span class="brand"><span class="brand-bars"><i></i><i></i><i></i></span>TILTYTABLE</span>
+    <span class="social-handle">Instagram/Youtube: UnreliableEngineering</span>
+  </div>`;
 }
 
 function hardwareStatus() {
@@ -987,6 +1018,10 @@ function handleCabinetButtons() {
 
 function handleStateAudio() {
   if (!game) return;
+  audio.enable();
+  const foodCount = ["target_hunt", "food_frenzy"].includes(game.level?.mode)
+    ? Number(game.modeState?.targetsReached ?? game.modeState?.foodsCollected ?? 0)
+    : null;
   if (game.state !== lastState) {
     if (game.state === "initials") {
       initialsDraft = "AAA";
@@ -1000,13 +1035,26 @@ function handleStateAudio() {
       }
     }
     else if (game.state === "level_clear") audio.success();
-    else if (game.state === "time_up" || game.state === "survival_fail" || game.state === "abandoned") audio.fail();
+    else if (game.state === "survival_fail") {
+      audio.pitFall();
+      audio.fail();
+    }
+    else if (game.state === "time_up" || game.state === "abandoned") audio.fail();
     else if (game.state === "hardware_fault") audio.fail();
     else if (lastState) audio.confirm();
     lastState = game.state;
+    lastFoodCount = foodCount;
     lastTimerBand = null;
+  } else if (
+    game.state === "playing"
+    && foodCount !== null
+    && lastFoodCount !== null
+    && foodCount > lastFoodCount
+  ) {
+    audio.foodPickup();
   }
-  audio.setMusic(["attract", "initials", "rules", "leaderboard"].includes(game.state));
+  lastFoodCount = foodCount;
+  audio.setMusic(Boolean(game.state));
   const showsCountdown = ["food_frenzy", "hex_fall"].includes(game.level?.mode);
   if (game.state === "playing" && game.timer.running && showsCountdown) {
     const second = game.timer.remainingSeconds;

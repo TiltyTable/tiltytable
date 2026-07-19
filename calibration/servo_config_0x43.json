@@ -14,8 +14,8 @@
     },
     "2": {
       "extended": 2550,
-      "neutral": 1890,
-      "recessed": 1400
+      "neutral": 1790,
+      "recessed": 1440
     },
     "3": {
       "extended": 2450,
@@ -43,8 +43,8 @@
       "recessed": 1250
     },
     "8": {
-      "extended": 2600,
-      "neutral": 1800,
+      "extended": 2320,
+      "neutral": 1720,
       "recessed": 1350
     },
     "9": {

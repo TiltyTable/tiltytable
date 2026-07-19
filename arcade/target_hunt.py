@@ -117,7 +117,25 @@ def _entry(
     return entry
 
 
-def _choose_target(session: TargetHuntSession, ball_cell: str) -> str | None:
+def _choose_target(
+    session: TargetHuntSession,
+    ball_cell: str,
+    *,
+    opening_target: bool = False,
+) -> str | None:
+    if opening_target:
+        perimeter_neighbors = [
+            key
+            for key in _neighbors(ball_cell, session.row_col)
+            if int(session.cells[key].get("value", 0)) == 0
+            and (
+                session.row_col[key][0] in (0, 11)
+                or session.row_col[key][1] in (0, 11)
+            )
+        ]
+        if perimeter_neighbors:
+            return session.rng.choice(sorted(perimeter_neighbors))
+
     distances = reachable_distances(ball_cell, session.cells, session.row_col)
     preferred = sorted(
         key
@@ -180,7 +198,7 @@ def start_target_hunt(
         target_cell=None,
         last_blink_at=now,
     )
-    session.target_cell = _choose_target(session, ball_cell)
+    session.target_cell = _choose_target(session, ball_cell, opening_target=True)
     if session.target_cell:
         session.updates.append(
             _entry(session.target_cell, row_col, 0, TARGET_COLOR, led_only=True)
